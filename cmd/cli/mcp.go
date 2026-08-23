@@ -18,10 +18,61 @@ import (
 
 	"github.com/alash3al/stash/internal/bootstrap"
 	"github.com/alash3al/stash/internal/brain"
+	"github.com/alash3al/stash/internal/web"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/urfave/cli/v3"
 )
+
+type contextKey string
+
+const (
+	keyMode    contextKey = "mode"
+	keySSOUser contextKey = "sso_user"
+)
+
+func httpContextFunc(ctx context.Context, r *http.Request) context.Context {
+	ctx = context.WithValue(ctx, keyMode, "remote")
+	if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+		token := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
+		ctx = context.WithValue(ctx, keySSOUser, token)
+	} else if user := r.Header.Get("X-Forwarded-User"); user != "" {
+		ctx = context.WithValue(ctx, keySSOUser, user)
+	}
+	return ctx
+}
+
+func stdioContextFunc(ctx context.Context) context.Context {
+	return context.WithValue(ctx, keyMode, "local")
+}
+
+func resolveNamespaces(ctx context.Context, nsRaw string) ([]string, error) {
+	var rawList []string
+	for _, ns := range strings.Split(nsRaw, ",") {
+		if ns = strings.TrimSpace(ns); ns != "" {
+			rawList = append(rawList, ns)
+		}
+	}
+	if len(rawList) == 0 {
+		rawList = []string{"/"}
+	}
+
+	mode, _ := ctx.Value(keyMode).(string)
+	if mode == "remote" {
+		user, ok := ctx.Value(keySSOUser).(string)
+		if !ok || user == "" {
+			return nil, fmt.Errorf("unauthorized: authentication token required for remote access")
+		}
+
+		var isolated []string
+		for _, ns := range rawList {
+			clean := strings.TrimPrefix(ns, "/")
+			isolated = append(isolated, "/sso/"+user+"/"+clean)
+		}
+		return isolated, nil
+	}
+	return rawList, nil
+}
 
 //go:embed mcp_prompts.tmpl
 var mcpPromptsFS string
@@ -66,7 +117,11 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 
 		var created []string
 		for _, ns := range scaffold {
-			_, err := bc.Brain.CreateNamespace(ctx, ns.slug, ns.name, ns.description)
+			resolved, err := resolveNamespaces(ctx, ns.slug)
+			if err != nil {
+				return nil, err
+			}
+			_, err = bc.Brain.CreateNamespace(ctx, resolved[0], ns.name, ns.description)
 			if err != nil {
 				return nil, fmt.Errorf("init: create namespace %s: %w", ns.slug, err)
 			}
@@ -84,7 +139,11 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		mcp.WithString("namespace", mcp.Description(render("remember_namespace"))),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		content := request.GetString("content", "")
-		namespace := request.GetString("namespace", "/")
+		nss, err := resolveNamespaces(ctx, request.GetString("namespace", "/"))
+		if err != nil {
+			return nil, err
+		}
+		namespace := nss[0]
 
 		id, err := bc.Brain.Remember(ctx, namespace, content, nil)
 		if err != nil {
@@ -131,13 +190,9 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		mcp.WithBoolean("dry_run", mcp.Description(render("forget_dry_run")), mcp.DefaultBool(false)),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		about := request.GetString("about", "")
-		nsRaw := request.GetString("namespaces", "/")
-
-		var namespaces []string
-		for _, ns := range strings.Split(nsRaw, ",") {
-			if ns = strings.TrimSpace(ns); ns != "" {
-				namespaces = append(namespaces, ns)
-			}
+		namespaces, err := resolveNamespaces(ctx, request.GetString("namespaces", "/"))
+		if err != nil {
+			return nil, err
 		}
 
 		opts := brain.ForgetOptions{
@@ -178,12 +233,9 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		mcp.WithDescription(render("consolidate_description")),
 		mcp.WithString("namespaces", mcp.Description(render("namespaces_param"))),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		nsRaw := request.GetString("namespaces", "/")
-		var namespaces []string
-		for _, ns := range strings.Split(nsRaw, ",") {
-			if ns = strings.TrimSpace(ns); ns != "" {
-				namespaces = append(namespaces, ns)
-			}
+		namespaces, err := resolveNamespaces(ctx, request.GetString("namespaces", "/"))
+		if err != nil {
+			return nil, err
 		}
 
 		ids, err := bc.Brain.ResolveNamespaceIDs(ctx, namespaces)
@@ -232,7 +284,11 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		mcp.WithString("namespace", mcp.Description(render("context_namespace_param")), mcp.Required()),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		focus := request.GetString("focus", "")
-		namespace := request.GetString("namespace", "")
+		nss, err := resolveNamespaces(ctx, request.GetString("namespace", ""))
+		if err != nil {
+			return nil, err
+		}
+		namespace := nss[0]
 		if namespace == "" {
 			return nil, fmt.Errorf("namespace is required for context tools")
 		}
@@ -246,7 +302,11 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		mcp.WithDescription(render("get_context_description")),
 		mcp.WithString("namespace", mcp.Description(render("context_namespace_param")), mcp.Required()),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		namespace := request.GetString("namespace", "")
+		nss, err := resolveNamespaces(ctx, request.GetString("namespace", ""))
+		if err != nil {
+			return nil, err
+		}
+		namespace := nss[0]
 		if namespace == "" {
 			return nil, fmt.Errorf("namespace is required for context tools")
 		}
@@ -265,7 +325,11 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		mcp.WithDescription(render("clear_context_description")),
 		mcp.WithString("namespace", mcp.Description(render("context_namespace_param")), mcp.Required()),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		namespace := request.GetString("namespace", "")
+		nss, err := resolveNamespaces(ctx, request.GetString("namespace", ""))
+		if err != nil {
+			return nil, err
+		}
+		namespace := nss[0]
 		if namespace == "" {
 			return nil, fmt.Errorf("namespace is required for context tools")
 		}
@@ -330,12 +394,9 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		mcp.WithNumber("limit", mcp.Description(render("pagination_limit")), mcp.DefaultNumber(100)),
 		mcp.WithNumber("offset", mcp.Description(render("pagination_offset")), mcp.DefaultNumber(0)),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		nsRaw := request.GetString("namespaces", "/")
-		var namespaces []string
-		for _, ns := range strings.Split(nsRaw, ",") {
-			if ns = strings.TrimSpace(ns); ns != "" {
-				namespaces = append(namespaces, ns)
-			}
+		namespaces, err := resolveNamespaces(ctx, request.GetString("namespaces", "/"))
+		if err != nil {
+			return nil, err
 		}
 
 		page := brain.Pagination{
@@ -357,12 +418,9 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		mcp.WithNumber("limit", mcp.Description(render("pagination_limit")), mcp.DefaultNumber(100)),
 		mcp.WithNumber("offset", mcp.Description(render("pagination_offset")), mcp.DefaultNumber(0)),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		nsRaw := request.GetString("namespaces", "/")
-		var namespaces []string
-		for _, ns := range strings.Split(nsRaw, ",") {
-			if ns = strings.TrimSpace(ns); ns != "" {
-				namespaces = append(namespaces, ns)
-			}
+		namespaces, err := resolveNamespaces(ctx, request.GetString("namespaces", "/"))
+		if err != nil {
+			return nil, err
 		}
 
 		page := brain.Pagination{
@@ -386,12 +444,9 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		mcp.WithNumber("limit", mcp.Description(render("pagination_limit")), mcp.DefaultNumber(100)),
 		mcp.WithNumber("offset", mcp.Description(render("pagination_offset")), mcp.DefaultNumber(0)),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		nsRaw := request.GetString("namespaces", "/")
-		var namespaces []string
-		for _, ns := range strings.Split(nsRaw, ",") {
-			if ns = strings.TrimSpace(ns); ns != "" {
-				namespaces = append(namespaces, ns)
-			}
+		namespaces, err := resolveNamespaces(ctx, request.GetString("namespaces", "/"))
+		if err != nil {
+			return nil, err
 		}
 
 		page := brain.Pagination{
@@ -413,12 +468,9 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		mcp.WithNumber("limit", mcp.Description(render("pagination_limit")), mcp.DefaultNumber(100)),
 		mcp.WithNumber("offset", mcp.Description(render("pagination_offset")), mcp.DefaultNumber(0)),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		nsRaw := request.GetString("namespaces", "/")
-		var namespaces []string
-		for _, ns := range strings.Split(nsRaw, ",") {
-			if ns = strings.TrimSpace(ns); ns != "" {
-				namespaces = append(namespaces, ns)
-			}
+		namespaces, err := resolveNamespaces(ctx, request.GetString("namespaces", "/"))
+		if err != nil {
+			return nil, err
 		}
 
 		page := brain.Pagination{
@@ -454,12 +506,9 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		mcp.WithNumber("limit", mcp.Description(render("pagination_limit")), mcp.DefaultNumber(100)),
 		mcp.WithNumber("offset", mcp.Description(render("pagination_offset")), mcp.DefaultNumber(0)),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		nsRaw := request.GetString("namespaces", "/")
-		var namespaces []string
-		for _, ns := range strings.Split(nsRaw, ",") {
-			if ns = strings.TrimSpace(ns); ns != "" {
-				namespaces = append(namespaces, ns)
-			}
+		namespaces, err := resolveNamespaces(ctx, request.GetString("namespaces", "/"))
+		if err != nil {
+			return nil, err
 		}
 
 		page := brain.Pagination{
@@ -485,7 +534,11 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		causeID := request.GetInt("cause_id", 0)
 		effectID := request.GetInt("effect_id", 0)
 		confidence := float32(request.GetFloat("confidence", 0.8))
-		namespace := request.GetString("namespace", "/")
+		nss, err := resolveNamespaces(ctx, request.GetString("namespace", "/"))
+		if err != nil {
+			return nil, err
+		}
+		namespace := nss[0]
 
 		nsIDs, err := bc.Brain.ResolveNamespaceIDs(ctx, []string{namespace})
 		if err != nil {
@@ -525,12 +578,9 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		mcp.WithNumber("limit", mcp.Description(render("pagination_limit")), mcp.DefaultNumber(100)),
 		mcp.WithNumber("offset", mcp.Description(render("pagination_offset")), mcp.DefaultNumber(0)),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		nsRaw := request.GetString("namespaces", "/")
-		var namespaces []string
-		for _, ns := range strings.Split(nsRaw, ",") {
-			if ns = strings.TrimSpace(ns); ns != "" {
-				namespaces = append(namespaces, ns)
-			}
+		namespaces, err := resolveNamespaces(ctx, request.GetString("namespaces", "/"))
+		if err != nil {
+			return nil, err
 		}
 
 		page := brain.Pagination{
@@ -558,7 +608,11 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		content := request.GetString("content", "")
 		verificationPlan := request.GetString("verification_plan", "")
 		confidence := float32(request.GetFloat("confidence", 0.5))
-		namespace := request.GetString("namespace", "/")
+		nss, err := resolveNamespaces(ctx, request.GetString("namespace", "/"))
+		if err != nil {
+			return nil, err
+		}
+		namespace := nss[0]
 
 		var sourceFactIDs []int64
 		if raw := request.GetString("source_fact_ids", ""); raw != "" {
@@ -624,12 +678,9 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		mcp.WithNumber("limit", mcp.Description(render("pagination_limit")), mcp.DefaultNumber(100)),
 		mcp.WithNumber("offset", mcp.Description(render("pagination_offset")), mcp.DefaultNumber(0)),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		nsRaw := request.GetString("namespaces", "/")
-		var namespaces []string
-		for _, ns := range strings.Split(nsRaw, ",") {
-			if ns = strings.TrimSpace(ns); ns != "" {
-				namespaces = append(namespaces, ns)
-			}
+		namespaces, err := resolveNamespaces(ctx, request.GetString("namespaces", "/"))
+		if err != nil {
+			return nil, err
 		}
 
 		page := brain.Pagination{
@@ -661,7 +712,11 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		content := request.GetString("content", "")
 		priority := request.GetInt("priority", 0)
-		namespace := request.GetString("namespace", "/")
+		nss, err := resolveNamespaces(ctx, request.GetString("namespace", "/"))
+		if err != nil {
+			return nil, err
+		}
+		namespace := nss[0]
 
 		var parentID *int64
 		if pid := request.GetInt("parent_id", 0); pid != 0 {
@@ -721,12 +776,9 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		mcp.WithNumber("limit", mcp.Description(render("pagination_limit")), mcp.DefaultNumber(100)),
 		mcp.WithNumber("offset", mcp.Description(render("pagination_offset")), mcp.DefaultNumber(0)),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		nsRaw := request.GetString("namespaces", "/")
-		var namespaces []string
-		for _, ns := range strings.Split(nsRaw, ",") {
-			if ns = strings.TrimSpace(ns); ns != "" {
-				namespaces = append(namespaces, ns)
-			}
+		namespaces, err := resolveNamespaces(ctx, request.GetString("namespaces", "/"))
+		if err != nil {
+			return nil, err
 		}
 
 		page := brain.Pagination{
@@ -759,7 +811,11 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		content := request.GetString("content", "")
 		reason := request.GetString("reason", "")
 		lesson := request.GetString("lesson", "")
-		namespace := request.GetString("namespace", "/")
+		nss, err := resolveNamespaces(ctx, request.GetString("namespace", "/"))
+		if err != nil {
+			return nil, err
+		}
+		namespace := nss[0]
 
 		var goalID *int64
 		if gid := request.GetInt("goal_id", 0); gid != 0 {
@@ -812,13 +868,14 @@ func mcpServeCmd(ctx context.Context, cmd *cli.Command) error {
 	//   POST/GET/DELETE /mcp       → Streamable HTTP (권장 기본값)
 	//   GET             /sse       → SSE 스트림
 	//   POST            /message   → SSE 세션의 클라이언트 → 서버 메시지 채널
-	streamableServer := server.NewStreamableHTTPServer(mcpServer)
-	sseServer := server.NewSSEServer(mcpServer)
+	streamableServer := server.NewStreamableHTTPServer(mcpServer, server.WithHTTPContextFunc(httpContextFunc))
+	sseServer := server.NewSSEServer(mcpServer, server.WithSSEContextFunc(httpContextFunc))
 
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", streamableServer)
 	mux.Handle("/sse", sseServer.SSEHandler())
 	mux.Handle("/message", sseServer.MessageHandler())
+	mux.Handle("/", web.GetUIHandler())
 
 	httpServer := &http.Server{
 		Addr:    addr,
@@ -882,7 +939,7 @@ func mcpExecuteCmd(ctx context.Context, cmd *cli.Command) error {
 		}()
 	}
 
-	err := server.ServeStdio(mcpServer)
+	err := server.ServeStdio(mcpServer, server.WithStdioContextFunc(stdioContextFunc))
 	wg.Wait()
 	return err
 }
