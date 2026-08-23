@@ -110,6 +110,9 @@ Point any MCP-compatible client at that URL. Example configs:
 
 Works with any agent that supports MCP over SSE — Claude Desktop, Cursor, Windsurf, Cline, Continue, OpenAI Agents, Ollama, OpenRouter, Atlas Cloud-backed setups, and more.
 
+### Auto-Save & Seamless Handoff
+To make your AI agents automatically save their memory and pass the baton between sessions without manual prompting, read the **[Seamless Agent Handoff Guide](docs/AGENT_HANDOFF.md)**. You can configure Cursor, Claude Desktop, or Antigravity IDE to mechanically load and save context.
+
 ## What It Does
 
 Stash is a cognitive layer between your AI agent and the world. Episodes become facts. Facts become relationships. Relationships become patterns. Patterns become wisdom.
