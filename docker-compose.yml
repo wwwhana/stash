@@ -15,11 +15,23 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   # Stash MCP server + background consolidation
   stash:
     build: .
-    command: ["mcp", "serve", "--host", "0.0.0.0", "--port", "8080", "--with-consolidation"]
+    command:
+      - "mcp"
+      - "serve"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      - "--with-consolidation"
+      - "--consolidate-namespaces=/projects"
+      - "--consolidate-namespaces=/users"
+      - "--consolidate-namespaces=/tooling"
+      - "--consolidate-namespaces=/self"
     ports:
       - "8080:8080"
     environment:

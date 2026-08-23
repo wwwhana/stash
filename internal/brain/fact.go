@@ -7,6 +7,7 @@ import (
 
 	"github.com/alash3al/stash/internal/models"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // QueryFacts returns facts across namespaces matching the given slug paths, within an optional time range.
@@ -78,11 +79,42 @@ func (b *Brain) UpdateFactConfidence(ctx context.Context, factID int64, confiden
 	return nil
 }
 
-// PurgeFact hard-deletes a fact by ID.
-func (b *Brain) PurgeFact(ctx context.Context, factID int64) error {
-	tag, err := b.pool.Exec(ctx, "DELETE FROM facts WHERE id = $1", factID)
+// PurgeFact removes a fact by ID.
+//
+// Soft by default (deleted_at), matching PurgeEpisode. Pass hard=true for an
+// irreversible DELETE. A soft-deleted fact stops appearing in recall and
+// query_facts but its provenance rows in fact_sources remain intact, so the
+// derivation can still be audited after the fact is retired.
+func (b *Brain) PurgeFact(ctx context.Context, factID int64, hard bool) error {
+	var (
+		tag pgconn.CommandTag
+		err error
+	)
+	if hard {
+		tag, err = b.pool.Exec(ctx, "DELETE FROM facts WHERE id = $1", factID)
+	} else {
+		tag, err = b.pool.Exec(ctx,
+			"UPDATE facts SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL",
+			factID,
+		)
+	}
 	if err != nil {
 		return fmt.Errorf("purge fact: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrFactNotFound
+	}
+	return nil
+}
+
+// RestoreFact clears deleted_at, undoing a soft delete.
+func (b *Brain) RestoreFact(ctx context.Context, factID int64) error {
+	tag, err := b.pool.Exec(ctx,
+		"UPDATE facts SET deleted_at = NULL WHERE id = $1 AND deleted_at IS NOT NULL",
+		factID,
+	)
+	if err != nil {
+		return fmt.Errorf("restore fact: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrFactNotFound

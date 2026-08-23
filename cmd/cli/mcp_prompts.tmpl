@@ -305,6 +305,14 @@ Skipping and answering from training data — you are guessing, not remembering
 COST OF NOT CALLING: Generic or wrong answer. User repeats themselves. You erode trust by appearing to forget what they told you.
 {{end}}
 
+{{define "recall_min_score"}}
+Drop vector candidates whose cosine similarity is below this value (0..1). Default 0 disables the floor.
+
+WHY THIS EXISTS: the vector search is `ORDER BY distance LIMIT n` — it always returns the n closest rows regardless of how unrelated they are. If the store only holds recipes, a query about Kubernetes still returns recipes, and the agent may present them as remembered context.
+
+The `score` field cannot tell you this, because it is a Reciprocal Rank Fusion value computed from rank position alone: the top hit always scores about 1/61 whether the match was near-exact or nonsense. Read `vector_score` and `keyword_score` in each result for the raw similarities, and set min_score (0.75-0.85 is a reasonable band) when a wrong answer is worse than no answer.
+{{end}}
+
 {{define "recall_query"}}
 What to search for. Natural language, 2-6 words describing the topic.
 Good: 'user authentication preference'. Bad: 'auth' or 'stuff'.
@@ -346,6 +354,16 @@ about: "database" — too broad, removes all database-related memories
 Skipping entirely — stale information compounds over sessions, user gets wrong advice
 
 COST OF NOT CALLING: You give advice based on facts the user explicitly corrected. They correct you again next session. Trust erodes permanently.
+{{end}}
+
+{{define "forget_min_score"}}
+Refuse to delete unless the nearest match reaches this cosine similarity (0..1). Default 0 disables the check.
+
+WHY THIS EXISTS: forget always deletes the single closest episode. Once your intended targets are gone, the next call quietly removes whatever is nearest — an unrelated memory. Set min_score (0.8 is a reasonable floor for near-exact text) whenever you are deleting more than one item, so the loop stops itself instead of eating into unrelated memories.
+{{end}}
+
+{{define "forget_dry_run"}}
+Report the episode that would be deleted without deleting it. Use this first when you are unsure the wording matches, and when scripting a multi-item cleanup.
 {{end}}
 
 {{define "forget_about"}}
@@ -507,6 +525,32 @@ User asks "what are my preferences?": query_facts /users/alice → structured us
 COST OF NOT CALLING: You rely on fuzzy recall when structured facts are available. Less precise answers. You miss high-confidence knowledge that consolidation extracted.
 {{end}}
 
+
+{{define "query_patterns_description"}}
+Lists higher-order patterns — abstractions the consolidation pipeline extracted from facts and relationships.
+
+Patterns are the top of the knowledge stack: episodes become facts, facts become relationships, relationships become patterns. Each pattern cites the facts and relationships it was derived from (source_fact_ids, source_rel_ids) and carries a coherence_score.
+
+BEFORE CALLING: Consolidation must have run on this namespace. Patterns are produced by stage 6 of the pipeline, not by remember calls. A namespace with few facts will have no patterns.
+
+CALL THIS WHEN:
+- You want the recurring shape of a domain rather than individual facts
+- You are about to make a design decision and want to know what tends to be true here
+- You are onboarding to a codebase or project and want the abstractions first
+- A user asks "what have you noticed?" or "what's the pattern here?"
+
+DO NOT CALL THIS WHEN:
+- You need a specific fact — use query_facts or recall
+- You need entity-to-entity edges — use query_relationships
+- You need what failed before — use list_failures
+
+WHAT TO DO WITH RESULTS:
+- Treat coherence_score as how internally consistent the pattern is, not how important it is
+- Verify a pattern against code or source material before acting on it — it is an LLM-derived abstraction, not an observation
+- Follow source_fact_ids back to the underlying facts when a pattern drives a decision
+
+COST OF NOT CALLING: You rediscover the same abstraction every session, or you make a decision that contradicts a regularity the system already detected.
+{{end}}
 
 {{define "query_relationships_description"}}
 Lists entity relationships for a namespace — the knowledge graph of how things connect.

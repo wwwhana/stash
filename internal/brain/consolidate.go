@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
 	"time"
 
 	"github.com/alash3al/stash/internal/models"
 	"github.com/alash3al/stash/internal/observability"
+	"github.com/jackc/pgx/v5"
 	"github.com/pgvector/pgvector-go"
 )
 
@@ -254,12 +256,16 @@ func (b *Brain) consolidateEpisodesToFacts(ctx context.Context, nsID int64, cp *
 		}
 
 		// Check for duplicate fact
-		dup, err := b.factExistsByVector(ctx, nsID, vec)
+		dupID, err := b.findDuplicateFact(ctx, nsID, vec)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("check duplicate: %v", err))
 			continue
 		}
-		if dup {
+		if dupID != 0 {
+			// 중복은 버리는 게 아니라 기존 fact 에 대한 재관측으로 기록한다.
+			if err := b.reinforceFact(ctx, dupID, cluster); err != nil {
+				errs = append(errs, err.Error())
+			}
 			deduped++
 			for _, e := range cluster {
 				processed[e.ID] = true
@@ -317,15 +323,34 @@ func (b *Brain) consolidateEpisodesToFacts(ctx context.Context, nsID int64, cp *
 	return
 }
 
+// clusterEpisodes groups episodes that describe the same thing, so each cluster can
+// be synthesized into one fact.
+//
+// Two properties this deliberately guarantees:
+//
+//  1. Deterministic — episodes are visited in ascending ID order, so the same input
+//     always yields the same clusters. The previous version iterated in whatever order
+//     the caller supplied, which made seed selection (and therefore the resulting
+//     facts) depend on query ordering.
+//
+//  2. Compared against the cluster centroid, not the seed. Comparing only to the seed
+//     admits chaining: with A~B and B~C but A far from C, seeding on A pulled C in
+//     anyway. Unrelated observations then got fused into a single fact. The centroid is
+//     recomputed as members join, so a candidate must resemble the group as a whole.
 func (b *Brain) clusterEpisodes(episodes []models.Episode) [][]models.Episode {
 	if len(episodes) == 0 {
 		return nil
 	}
 
-	clustered := make(map[int64]bool)
+	ordered := make([]models.Episode, len(episodes))
+	copy(ordered, episodes)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].ID < ordered[j].ID })
+
+	threshold := float32(b.config.SimilarityThreshold)
+	clustered := make(map[int64]bool, len(ordered))
 	var clusters [][]models.Episode
 
-	for _, seed := range episodes {
+	for _, seed := range ordered {
 		if clustered[seed.ID] {
 			continue
 		}
@@ -333,24 +358,36 @@ func (b *Brain) clusterEpisodes(episodes []models.Episode) [][]models.Episode {
 		cluster := []models.Episode{seed}
 		clustered[seed.ID] = true
 
-		if seed.Embedding.Slice() == nil {
+		seedVec := seed.Embedding.Slice()
+		if seedVec == nil {
+			// 임베딩이 없으면 비교 기준이 없다. 단독 클러스터로 둔다.
 			clusters = append(clusters, cluster)
 			continue
 		}
 
-		seedVec := seed.Embedding.Slice()
-		for _, candidate := range episodes {
+		centroid := make([]float32, len(seedVec))
+		copy(centroid, seedVec)
+		members := 1
+
+		for _, candidate := range ordered {
 			if clustered[candidate.ID] {
 				continue
 			}
 			candVec := candidate.Embedding.Slice()
-			if candVec == nil {
+			if candVec == nil || len(candVec) != len(centroid) {
 				continue
 			}
-			sim := cosineSimilarity(seedVec, candVec)
-			if sim >= float32(b.config.SimilarityThreshold) {
-				cluster = append(cluster, candidate)
-				clustered[candidate.ID] = true
+			if cosineSimilarity(centroid, candVec) < threshold {
+				continue
+			}
+
+			cluster = append(cluster, candidate)
+			clustered[candidate.ID] = true
+
+			// 중심을 이동 평균으로 갱신한다. 다음 후보는 갱신된 중심과 비교된다.
+			members++
+			for i := range centroid {
+				centroid[i] += (candVec[i] - centroid[i]) / float32(members)
 			}
 		}
 
@@ -360,7 +397,13 @@ func (b *Brain) clusterEpisodes(episodes []models.Episode) [][]models.Episode {
 	return clusters
 }
 
-func (b *Brain) factExistsByVector(ctx context.Context, nsID int64, vec []float32) (bool, error) {
+// findDuplicateFact returns the id of an existing fact close enough to be considered
+// the same statement, or 0 if there is none.
+//
+// Returns the id (not just a bool) so the caller can record the re-observation on the
+// existing row. Previously this returned only a bool and the caller did nothing with
+// it beyond skipping — see reinforceFact for why that mattered.
+func (b *Brain) findDuplicateFact(ctx context.Context, nsID int64, vec []float32) (int64, error) {
 	var id int64
 	var score float32
 	err := b.pool.QueryRow(ctx,
@@ -370,9 +413,51 @@ func (b *Brain) factExistsByVector(ctx context.Context, nsID int64, vec []float3
 		nsID, pgvector.NewVector(vec),
 	).Scan(&id, &score)
 	if err != nil {
-		return false, nil
+		if err == pgx.ErrNoRows {
+			// 이 네임스페이스에 fact 가 아직 없다. 중복이 아니라는 정상 결론이다.
+			return 0, nil
+		}
+		// 조회 실패를 "중복 아님"으로 삼키면 안 된다. 예전 코드는 `return false, nil` 이라
+		// DB 오류·타임아웃이 그대로 중복 fact 생성으로 이어졌다 — 오류가 데이터 오염이 됐다.
+		return 0, fmt.Errorf("find duplicate fact: %w", err)
 	}
-	return score >= float32(b.config.DedupThreshold), nil
+	if score >= float32(b.config.DedupThreshold) {
+		return id, nil
+	}
+	return 0, nil
+}
+
+// reinforceFact records that an existing fact was observed again.
+//
+// Without this, re-observation was invisible: the dedup path simply skipped the
+// cluster, so the existing row kept its original updated_at and confidence. Decay
+// targets rows whose updated_at is older than the window, which meant a fact
+// confirmed every single day aged out exactly like one never seen again —
+// the opposite of what DecayConfidence documents.
+func (b *Brain) reinforceFact(ctx context.Context, factID int64, episodes []models.Episode) error {
+	// confidence 를 관측마다 남은 여유의 일부만 올린다. 1.0 을 넘지 않으면서
+	// 반복 확인이 실제로 신뢰도에 반영되게 한다(감쇠 계수 0.95 를 상쇄하는 방향).
+	if _, err := b.pool.Exec(ctx,
+		`UPDATE facts
+		 SET confidence = LEAST(1.0, confidence + (1 - confidence) * 0.25),
+		     updated_at = now()
+		 WHERE id = $1 AND deleted_at IS NULL`,
+		factID,
+	); err != nil {
+		return fmt.Errorf("reinforce fact %d: %w", factID, err)
+	}
+
+	// 재관측 근거를 출처에 추가한다. 같은 사실을 뒷받침하는 episode 가 늘어난다.
+	for _, e := range episodes {
+		if _, err := b.pool.Exec(ctx,
+			`INSERT INTO fact_sources (fact_id, episode_id) VALUES ($1, $2)
+			 ON CONFLICT DO NOTHING`,
+			factID, e.ID,
+		); err != nil {
+			return fmt.Errorf("link reinforcing episode %d to fact %d: %w", e.ID, factID, err)
+		}
+	}
+	return nil
 }
 
 func calculateConfidence(observationCount int, hasStructuredFields bool) float32 {
@@ -510,7 +595,11 @@ func (b *Brain) relationshipExists(ctx context.Context, nsID int64, from, relTyp
 // --- Stage 3.5: Facts -> Causal Links ---
 
 func (b *Brain) consolidateFactsToCausalLinks(ctx context.Context, nsID int64, cp *models.ConsolidationProgress) (count, llmCalls int, errs []string) {
-	sql, args, err := b.queries.FetchFacts(nsID, cp.LastFactID, 30)
+	// 전용 커서를 쓴다. 예전에는 cp.LastFactID 를 관계 추출 단계와 공유했는데,
+	// 관계 단계가 먼저 실행되며 그 커서를 최신 fact 까지 밀어버려서
+	// 여기서는 `WHERE id > <최신>` 이 되어 언제나 0건이 왔다.
+	// 그 결과 아래 `len(facts) < 2` 에 항상 걸려 인과 추출이 사실상 죽어 있었다.
+	sql, args, err := b.queries.FetchFacts(nsID, cp.LastCausalFactID, 30)
 	if err != nil {
 		errs = append(errs, fmt.Sprintf("build fetch facts for causal: %v", err))
 		return
@@ -545,6 +634,19 @@ func (b *Brain) consolidateFactsToCausalLinks(ctx context.Context, nsID int64, c
 	found, detectErrs := b.DetectCausalLinks(ctx, nsID, facts)
 	count = found
 	errs = append(errs, detectErrs...)
+
+	// 오류가 없을 때만 커서를 전진시킨다(다른 단계와 동일 규칙 — 실패 시 fact 를 잃지 않는다).
+	if len(errs) == 0 {
+		var maxID int64
+		for _, f := range facts {
+			if f.ID > maxID {
+				maxID = f.ID
+			}
+		}
+		if maxID > cp.LastCausalFactID {
+			cp.LastCausalFactID = maxID
+		}
+	}
 	return
 }
 

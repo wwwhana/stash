@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/alash3al/stash/internal/models"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/pgvector/pgvector-go"
 )
 
@@ -47,62 +48,152 @@ func (b *Brain) Remember(ctx context.Context, namespaceSlug, content string, occ
 	return id, nil
 }
 
-// ForgetEpisode soft-deletes the episode that best matches the query across the given namespaces.
-// If namespaceSlugs is empty, searches all namespaces.
+// ForgetOptions tunes how ForgetEpisodeMatch selects and removes a match.
+//
+// The zero value reproduces the original behaviour exactly: delete the single
+// nearest episode, whatever its similarity. Options are opt-in so existing
+// callers are unaffected.
+type ForgetOptions struct {
+	// MinScore refuses to delete unless cosine similarity reaches this value (0..1).
+	// Zero disables the check.
+	//
+	// Without it, forget always deletes *something*: once the intended targets are
+	// gone, the next call silently removes whatever happens to be closest. A caller
+	// looping over a set of deletions has no way to notice it has overshot.
+	MinScore float32
+
+	// DryRun reports the match that would be deleted without deleting it.
+	DryRun bool
+}
+
+// ForgetResult describes what a forget call matched and whether it removed it.
+//
+// The original API returned only an error, so a caller could not tell which
+// episode it had just destroyed. Returning the match makes overshoot auditable.
+type ForgetResult struct {
+	ID      int64   `json:"id"`
+	Content string  `json:"content"`
+	Score   float32 `json:"score"`
+	Deleted bool    `json:"deleted"`
+	// Skipped is set when a match existed but fell below MinScore.
+	Skipped bool `json:"skipped,omitempty"`
+}
+
+// ForgetEpisode soft-deletes the episode that best matches the query across the
+// given namespaces. Retained for backward compatibility — see ForgetEpisodeMatch
+// for threshold and dry-run control.
 func (b *Brain) ForgetEpisode(ctx context.Context, namespaceSlugs []string, query string) error {
+	_, err := b.ForgetEpisodeMatch(ctx, namespaceSlugs, query, ForgetOptions{})
+	return err
+}
+
+// ForgetEpisodeMatch finds the nearest episode to the query and, unless DryRun is
+// set or the match falls below MinScore, soft-deletes it. The matched episode is
+// always returned so the caller can verify what was affected.
+func (b *Brain) ForgetEpisodeMatch(
+	ctx context.Context,
+	namespaceSlugs []string,
+	query string,
+	opts ForgetOptions,
+) (ForgetResult, error) {
+	var res ForgetResult
+
 	if err := validateContent(query); err != nil {
-		return err
+		return res, err
 	}
 	for _, slug := range namespaceSlugs {
 		if err := validatePath(slug); err != nil {
-			return err
+			return res, err
 		}
 	}
 
 	nsIDs, err := b.resolveNamespaceIDs(ctx, namespaceSlugs)
 	if err != nil {
-		return err
+		return res, err
 	}
 
-	vec, err := b.embedder.Embed(ctx, query)
+	vec, err := b.embedder.EmbedQuery(ctx, query)
 	if err != nil {
-		return fmt.Errorf("embed: %w", err)
+		return res, fmt.Errorf("embed: %w", err)
 	}
+	pgVec := pgvector.NewVector(vec)
 
-	var id int64
+	const selectOne = `SELECT id, content, 1 - (embedding <=> $2) AS score
+	                   FROM episodes
+	                   WHERE %s AND deleted_at IS NULL AND embedding IS NOT NULL
+	                   ORDER BY embedding <=> $2 LIMIT 1`
+
 	if len(nsIDs) == 1 {
 		err = b.pool.QueryRow(ctx,
-			`SELECT id FROM episodes
-			 WHERE namespace_id = $1 AND deleted_at IS NULL AND embedding IS NOT NULL
-			 ORDER BY embedding <=> $2 LIMIT 1`,
-			nsIDs[0], pgvector.NewVector(vec),
-		).Scan(&id)
+			fmt.Sprintf(selectOne, "namespace_id = $1"), nsIDs[0], pgVec,
+		).Scan(&res.ID, &res.Content, &res.Score)
 	} else {
 		err = b.pool.QueryRow(ctx,
-			`SELECT id FROM episodes
-			 WHERE namespace_id = ANY($1) AND deleted_at IS NULL AND embedding IS NOT NULL
-			 ORDER BY embedding <=> $2 LIMIT 1`,
-			nsIDs, pgvector.NewVector(vec),
-		).Scan(&id)
+			fmt.Sprintf(selectOne, "namespace_id = ANY($1)"), nsIDs, pgVec,
+		).Scan(&res.ID, &res.Content, &res.Score)
 	}
 	if err != nil {
-		return ErrEpisodeNotFound
+		return res, ErrEpisodeNotFound
 	}
 
-	_, err = b.pool.Exec(ctx,
-		"UPDATE episodes SET deleted_at = now() WHERE id = $1", id,
+	if opts.MinScore > 0 && res.Score < opts.MinScore {
+		res.Skipped = true
+		return res, nil
+	}
+
+	if opts.DryRun {
+		return res, nil
+	}
+
+	if _, err := b.pool.Exec(ctx,
+		"UPDATE episodes SET deleted_at = now() WHERE id = $1", res.ID,
+	); err != nil {
+		return res, fmt.Errorf("soft delete episode: %w", err)
+	}
+
+	res.Deleted = true
+	return res, nil
+}
+
+// PurgeEpisode removes an episode by ID.
+//
+// Soft by default: the row is marked with deleted_at and stops appearing in
+// recall, but the content survives and can be restored. Pass hard=true to issue
+// a real DELETE, which is irreversible.
+//
+// Defaulting to soft matters because this store holds memory that exists nowhere
+// else — a mistaken id, or a cleanup loop that runs one iteration too long,
+// should be recoverable rather than final.
+func (b *Brain) PurgeEpisode(ctx context.Context, episodeID int64, hard bool) error {
+	var (
+		tag pgconn.CommandTag
+		err error
 	)
+	if hard {
+		tag, err = b.pool.Exec(ctx, "DELETE FROM episodes WHERE id = $1", episodeID)
+	} else {
+		tag, err = b.pool.Exec(ctx,
+			"UPDATE episodes SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL",
+			episodeID,
+		)
+	}
 	if err != nil {
-		return fmt.Errorf("soft delete episode: %w", err)
+		return fmt.Errorf("purge episode: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrEpisodeNotFound
 	}
 	return nil
 }
 
-// PurgeEpisode hard-deletes an episode by ID.
-func (b *Brain) PurgeEpisode(ctx context.Context, episodeID int64) error {
-	tag, err := b.pool.Exec(ctx, "DELETE FROM episodes WHERE id = $1", episodeID)
+// RestoreEpisode clears deleted_at, undoing a soft delete.
+func (b *Brain) RestoreEpisode(ctx context.Context, episodeID int64) error {
+	tag, err := b.pool.Exec(ctx,
+		"UPDATE episodes SET deleted_at = NULL WHERE id = $1 AND deleted_at IS NOT NULL",
+		episodeID,
+	)
 	if err != nil {
-		return fmt.Errorf("purge episode: %w", err)
+		return fmt.Errorf("restore episode: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrEpisodeNotFound

@@ -56,7 +56,9 @@ func recallCmd(ctx context.Context, cmd *cli.Command) error {
 	limit := cmd.Int("limit")
 
 	bc := getBootstrap(cmd)
-	results, err := bc.Brain.Recall(ctx, namespaces, query, limit)
+	results, err := bc.Brain.RecallWithOptions(ctx, namespaces, query, limit, brain.RecallOptions{
+		MinScore: float32(cmd.Float("min-score")),
+	})
 	if err != nil {
 		return err
 	}
@@ -76,11 +78,25 @@ func forgetCmd(ctx context.Context, cmd *cli.Command) error {
 
 	namespaces := cmd.StringSlice("namespaces")
 	bc := getBootstrap(cmd)
-	if err := bc.Brain.ForgetEpisode(ctx, namespaces, query); err != nil {
+	res, err := bc.Brain.ForgetEpisodeMatch(ctx, namespaces, query, brain.ForgetOptions{
+		MinScore: float32(cmd.Float("min-score")),
+		DryRun:   cmd.Bool("dry-run"),
+	})
+	if err != nil {
 		return err
 	}
-
-	return printJSON(map[string]string{"message": "Memory forgotten successfully"})
+	preview := res.Content
+	if len(preview) > 160 {
+		preview = preview[:160] + "…"
+	}
+	return printJSON(map[string]any{
+		"id":      res.ID,
+		"score":   res.Score,
+		"deleted": res.Deleted,
+		"skipped": res.Skipped,
+		"dry_run": cmd.Bool("dry-run"),
+		"preview": preview,
+	})
 }
 
 func purgeEpisodeCmd(ctx context.Context, cmd *cli.Command) error {
@@ -94,10 +110,10 @@ func purgeEpisodeCmd(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	bc := getBootstrap(cmd)
-	if err := bc.Brain.PurgeEpisode(ctx, id); err != nil {
+	if err := bc.Brain.PurgeEpisode(ctx, id, cmd.Bool("hard")); err != nil {
 		return err
 	}
-	return printJSON(map[string]string{"message": "Episode purged successfully"})
+	return printJSON(map[string]string{"message": "Episode purged (soft delete unless --hard)"})
 }
 
 func purgeFactCmd(ctx context.Context, cmd *cli.Command) error {
@@ -111,10 +127,10 @@ func purgeFactCmd(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	bc := getBootstrap(cmd)
-	if err := bc.Brain.PurgeFact(ctx, id); err != nil {
+	if err := bc.Brain.PurgeFact(ctx, id, cmd.Bool("hard")); err != nil {
 		return err
 	}
-	return printJSON(map[string]string{"message": "Fact purged successfully"})
+	return printJSON(map[string]string{"message": "Fact purged (soft delete unless --hard)"})
 }
 
 func factsListCmd(ctx context.Context, cmd *cli.Command) error {

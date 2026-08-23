@@ -33,10 +33,28 @@ func NewCached(e Embedder, pool *pgxpool.Pool) *Cached {
 	}
 }
 
-// Embed returns a cached embedding or calls the underlying embedder.
-// Deduplicates concurrent requests for the same text.
+// Embed returns a cached embedding for a stored passage.
 func (c *Cached) Embed(ctx context.Context, text string) ([]float32, error) {
-	hash := cacheKey(text)
+	return c.embedCached(ctx, "passage", text, c.embedder.Embed)
+}
+
+// EmbedQuery returns a cached embedding for a search query.
+func (c *Cached) EmbedQuery(ctx context.Context, text string) ([]float32, error) {
+	return c.embedCached(ctx, "query", text, c.embedder.EmbedQuery)
+}
+
+// embedCached is the shared cache/dedup path.
+//
+// `role` ("passage" or "query") is part of the cache key on purpose: with an
+// asymmetric model the same text embeds to a different vector depending on which
+// prefix the underlying embedder applies, so the two must not share a cache entry.
+func (c *Cached) embedCached(
+	ctx context.Context,
+	role string,
+	text string,
+	embed func(context.Context, string) ([]float32, error),
+) ([]float32, error) {
+	hash := cacheKey(role + "\x00" + text)
 
 	// Try cache
 	cached, err := c.getCached(ctx, hash, c.embedder.Model())
@@ -59,7 +77,7 @@ func (c *Cached) Embed(ctx context.Context, text string) ([]float32, error) {
 		c.inflight.Delete(hash)
 	}()
 
-	vec, err := c.embedder.Embed(ctx, text)
+	vec, err := embed(ctx, text)
 	if err != nil {
 		callInfo.err = err
 		return nil, err

@@ -38,8 +38,8 @@ func main() {
 				Flags: []cli.Flag{
 					&cli.StringFlag{Name: "http-host", Value: "0.0.0.0", Usage: "HTTP server host"},
 					&cli.StringFlag{Name: "http-port", Value: "9090", Usage: "HTTP server port (metrics, health)"},
-					&cli.StringFlag{Name: "mcp-host", Value: "0.0.0.0", Usage: "MCP SSE server host"},
-					&cli.StringFlag{Name: "mcp-port", Value: "8080", Usage: "MCP SSE server port"},
+					&cli.StringFlag{Name: "mcp-host", Value: "0.0.0.0", Usage: "MCP HTTP server host"},
+					&cli.StringFlag{Name: "mcp-port", Value: "8080", Usage: "MCP HTTP server port (streamable http on /mcp, sse on /sse)"},
 					&cli.DurationFlag{Name: "consolidate-interval", Value: 5 * time.Minute, Usage: "Consolidation interval"},
 					&cli.StringSliceFlag{Name: "consolidate-namespaces", Usage: "Namespaces to consolidate (default: all)"},
 				},
@@ -108,6 +108,7 @@ func main() {
 				Flags: []cli.Flag{
 					&cli.StringSliceFlag{Name: "namespaces", Aliases: []string{"n"}, Usage: "Namespace paths to search (each includes descendants)"},
 					&cli.IntFlag{Name: "limit", Value: 10, Usage: "Max results"},
+				&cli.FloatFlag{Name: "min-score", Usage: "Drop vector candidates below this cosine similarity (0..1). 0 disables"},
 				},
 			},
 			{
@@ -128,19 +129,24 @@ func main() {
 			},
 			{
 				Name:  "purge",
-				Usage: "Hard-delete by ID",
+				Usage: "Delete by ID (soft by default; --hard is irreversible)",
 				Commands: []*cli.Command{
 					{
 						Name:   "episode",
-						Usage:  "Hard-delete an episode by ID",
+						Usage:  "Delete an episode by ID (soft by default)",
 						Action: purgeEpisodeCmd,
+						Flags: []cli.Flag{
+							&cli.BoolFlag{Name: "hard", Usage: "Irreversibly DELETE the row instead of setting deleted_at"},
+						},
 					},
 		{
 			Name:   "forget",
-			Usage:  "Soft-delete a matching episode",
+			Usage:  "Soft-delete the episode nearest to a query (see --min-score before looping)",
 			Action: forgetCmd,
 			Flags: []cli.Flag{
 				&cli.StringSliceFlag{Name: "namespaces", Aliases: []string{"n"}, Usage: "Namespace paths to search (each includes descendants)"},
+				&cli.FloatFlag{Name: "min-score", Usage: "Refuse to delete unless similarity reaches this (0..1). Without it, forget always deletes the nearest episode — even after the intended targets are gone"},
+				&cli.BoolFlag{Name: "dry-run", Aliases: []string{"d"}, Usage: "Show what would be deleted without deleting"},
 			},
 		},
 				},
@@ -438,12 +444,20 @@ func main() {
 			},
 		},
 		{
+			Name:   "reindex",
+			Usage:  "Re-embed all episodes and facts (content untouched; run after changing embedding input, e.g. e5 prefixes)",
+			Action: reindexCmd,
+			Flags: []cli.Flag{
+				&cli.BoolFlag{Name: "dry-run", Aliases: []string{"d"}, Usage: "Show how many rows would be re-embedded"},
+			},
+		},
+		{
 			Name:  "mcp",
 				Usage: "MCP server for agent integration",
 				Commands: []*cli.Command{
 				{
 					Name:   "serve",
-					Usage:  "Start MCP server over SSE",
+					Usage:  "Start MCP server over HTTP (streamable http on /mcp, sse on /sse)",
 					Action: mcpServeCmd,
 					Flags: []cli.Flag{
 						&cli.StringFlag{Name: "host", Value: "0.0.0.0"},

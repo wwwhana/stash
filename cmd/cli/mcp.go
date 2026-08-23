@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -99,6 +100,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		mcp.WithString("query", mcp.Description(render("recall_query")), mcp.Required()),
 		mcp.WithString("namespaces", mcp.Description(render("recall_namespaces"))),
 		mcp.WithNumber("limit", mcp.Description(render("limit_param")), mcp.DefaultNumber(10)),
+		mcp.WithNumber("min_score", mcp.Description(render("recall_min_score")), mcp.DefaultNumber(0)),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		query := request.GetString("query", "")
 		nsRaw := request.GetString("namespaces", "/")
@@ -111,7 +113,9 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 			}
 		}
 
-		results, err := bc.Brain.Recall(ctx, namespaces, query, limit)
+		results, err := bc.Brain.RecallWithOptions(ctx, namespaces, query, limit, brain.RecallOptions{
+			MinScore: float32(request.GetFloat("min_score", 0)),
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -123,6 +127,8 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		mcp.WithDescription(render("forget_description")),
 		mcp.WithString("about", mcp.Description(render("forget_about")), mcp.Required()),
 		mcp.WithString("namespaces", mcp.Description(render("namespaces_param"))),
+		mcp.WithNumber("min_score", mcp.Description(render("forget_min_score")), mcp.DefaultNumber(0)),
+		mcp.WithBoolean("dry_run", mcp.Description(render("forget_dry_run")), mcp.DefaultBool(false)),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		about := request.GetString("about", "")
 		nsRaw := request.GetString("namespaces", "/")
@@ -134,10 +140,38 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 			}
 		}
 
-		if err := bc.Brain.ForgetEpisode(ctx, namespaces, about); err != nil {
+		opts := brain.ForgetOptions{
+			MinScore: float32(request.GetFloat("min_score", 0)),
+			DryRun:   request.GetBool("dry_run", false),
+		}
+
+		res, err := bc.Brain.ForgetEpisodeMatch(ctx, namespaces, about, opts)
+		if err != nil {
 			return nil, err
 		}
-		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: `{"ok": true}`}}}, nil
+
+		// 무엇이 지워졌는지(또는 왜 안 지워졌는지) 항상 돌려준다.
+		// 예전에는 {"ok":true} 만 반환해, 반복 호출이 의도한 대상을 지나쳐도 알 수 없었다.
+		preview := res.Content
+		if len(preview) > 200 {
+			preview = preview[:200] + "…"
+		}
+		out := map[string]any{
+			"ok":      true,
+			"id":      res.ID,
+			"score":   res.Score,
+			"deleted": res.Deleted,
+			"preview": preview,
+		}
+		if res.Skipped {
+			out["skipped"] = true
+			out["reason"] = fmt.Sprintf("nearest match scored %.3f, below min_score %.3f — nothing deleted", res.Score, opts.MinScore)
+		}
+		if opts.DryRun {
+			out["dry_run"] = true
+		}
+		b, _ := json.Marshal(out)
+		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(b)}}}, nil
 	})
 
 	mcpServer.AddTool(mcp.NewTool("consolidate",
@@ -341,6 +375,35 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 			return nil, err
 		}
 		b, _ := json.Marshal(rels)
+		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(b)}}}, nil
+	})
+
+	// patterns 는 consolidation 6단계가 채우는데 조회 도구가 없어 에이전트가 꺼내 볼 수 없었다.
+	// query_relationships 와 대칭으로 노출한다.
+	mcpServer.AddTool(mcp.NewTool("query_patterns",
+		mcp.WithDescription(render("query_patterns_description")),
+		mcp.WithString("namespaces", mcp.Description(render("namespaces_param"))),
+		mcp.WithNumber("limit", mcp.Description(render("pagination_limit")), mcp.DefaultNumber(100)),
+		mcp.WithNumber("offset", mcp.Description(render("pagination_offset")), mcp.DefaultNumber(0)),
+	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		nsRaw := request.GetString("namespaces", "/")
+		var namespaces []string
+		for _, ns := range strings.Split(nsRaw, ",") {
+			if ns = strings.TrimSpace(ns); ns != "" {
+				namespaces = append(namespaces, ns)
+			}
+		}
+
+		page := brain.Pagination{
+			Limit:  request.GetInt("limit", 100),
+			Offset: request.GetInt("offset", 0),
+		}
+
+		pats, err := bc.Brain.QueryPatterns(ctx, namespaces, page)
+		if err != nil {
+			return nil, err
+		}
+		b, _ := json.Marshal(pats)
 		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(b)}}}, nil
 	})
 
@@ -735,11 +798,34 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 func mcpServeCmd(ctx context.Context, cmd *cli.Command) error {
 	bc := getBootstrap(cmd)
 	mcpServer := newMCPServer(bc)
-	sseServer := server.NewSSEServer(mcpServer)
 
 	host := cmd.String("host")
-	port := cmd.String("port")
-	addr := host + ":" + port
+	addr := host + ":" + cmd.String("port")
+
+	// 전송 방식 두 가지를 같은 포트에서 각자의 경로로 제공한다.
+	//
+	// 이전 구현은 Streamable HTTP 서버를 "/sse" 경로에 걸어 두었다. 경로 이름만 SSE 였고
+	// 실제 전송은 Streamable HTTP 라서, SSE 로 접속한 클라이언트는 200 응답만 받고
+	// 초기 `event: endpoint` 를 영원히 기다리다 타임아웃됐다(Claude Code 30s).
+	// 이름과 동작을 1:1 로 맞춘다.
+	//
+	//   POST/GET/DELETE /mcp       → Streamable HTTP (권장 기본값)
+	//   GET             /sse       → SSE 스트림
+	//   POST            /message   → SSE 세션의 클라이언트 → 서버 메시지 채널
+	streamableServer := server.NewStreamableHTTPServer(mcpServer)
+	sseServer := server.NewSSEServer(mcpServer)
+
+	mux := http.NewServeMux()
+	mux.Handle("/mcp", streamableServer)
+	mux.Handle("/sse", sseServer.SSEHandler())
+	mux.Handle("/message", sseServer.MessageHandler())
+
+	httpServer := &http.Server{
+		Addr:    addr,
+		Handler: mux,
+		// SSE 는 응답이 끝나지 않는 스트림이므로 쓰기 타임아웃을 걸지 않는다.
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -754,16 +840,23 @@ func mcpServeCmd(ctx context.Context, cmd *cli.Command) error {
 		}()
 	}
 
-	fmt.Printf("Starting MCP SSE server on %s\n", addr)
+	fmt.Printf("Starting MCP server on %s (streamable http: /mcp, sse: /sse + /message)\n", addr)
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- sseServer.Start(addr)
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errCh <- err
+			return
+		}
+		errCh <- nil
 	}()
 
 	select {
 	case <-ctx.Done():
-		fmt.Println("\nMCP SSE server shutting down")
+		fmt.Println("\nMCP server shutting down")
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		_ = httpServer.Shutdown(shutdownCtx)
 		wg.Wait()
 		return nil
 	case err := <-errCh:

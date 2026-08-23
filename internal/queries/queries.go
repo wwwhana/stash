@@ -35,10 +35,14 @@ func New() (*Queries, error) {
 
 // RecallEpisodes returns SQL + args for episode vector search.
 // If namespaceIDs is nil, searches all namespaces.
-func (q *Queries) RecallEpisodes(namespaceIDs []int64, vector pgvector.Vector, limit int) (string, []any, error) {
+func (q *Queries) RecallEpisodes(namespaceIDs []int64, vector pgvector.Vector, limit int, minScore float32) (string, []any, error) {
 	args := map[string]any{
 		"vector": vector,
 		"limit":  limit,
+	}
+	// 0 이면 키를 넣지 않아 템플릿의 {{if}} 가 거짓이 되고 하한 조건이 빠진다.
+	if minScore > 0 {
+		args["min_score"] = minScore
 	}
 	if len(namespaceIDs) > 0 {
 		args["namespace_ids"] = namespaceIDs
@@ -48,15 +52,45 @@ func (q *Queries) RecallEpisodes(namespaceIDs []int64, vector pgvector.Vector, l
 
 // RecallFacts returns SQL + args for fact vector search.
 // If namespaceIDs is nil, searches all namespaces.
-func (q *Queries) RecallFacts(namespaceIDs []int64, vector pgvector.Vector, limit int) (string, []any, error) {
+func (q *Queries) RecallFacts(namespaceIDs []int64, vector pgvector.Vector, limit int, minScore float32) (string, []any, error) {
 	args := map[string]any{
 		"vector": vector,
 		"limit":  limit,
+	}
+	// 0 이면 키를 넣지 않아 템플릿의 {{if}} 가 거짓이 되고 하한 조건이 빠진다.
+	if minScore > 0 {
+		args["min_score"] = minScore
 	}
 	if len(namespaceIDs) > 0 {
 		args["namespace_ids"] = namespaceIDs
 	}
 	return q.tpl.Execute("recall_facts", args)
+}
+
+// KeywordEpisodes returns SQL + args for trigram keyword search over episodes.
+// Complements vector search: embeddings capture meaning, trigrams catch literal
+// identifiers (ticket keys, function names) that vectors routinely miss.
+func (q *Queries) KeywordEpisodes(namespaceIDs []int64, query string, limit int) (string, []any, error) {
+	args := map[string]any{
+		"query": query,
+		"limit": limit,
+	}
+	if len(namespaceIDs) > 0 {
+		args["namespace_ids"] = namespaceIDs
+	}
+	return q.tpl.Execute("keyword_episodes", args)
+}
+
+// KeywordFacts returns SQL + args for trigram keyword search over facts.
+func (q *Queries) KeywordFacts(namespaceIDs []int64, query string, limit int) (string, []any, error) {
+	args := map[string]any{
+		"query": query,
+		"limit": limit,
+	}
+	if len(namespaceIDs) > 0 {
+		args["namespace_ids"] = namespaceIDs
+	}
+	return q.tpl.Execute("keyword_facts", args)
 }
 
 // FetchEpisodes returns SQL + args for batch episode read after a checkpoint.

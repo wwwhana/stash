@@ -3,10 +3,20 @@ package embedder
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
 )
+
+// e5 계열 모델은 비대칭 검색용으로 학습돼 있어, 저장 문서에는 "passage: ",
+// 검색 질의에는 "query: " 프리픽스를 붙여야 학습 분포와 맞는다.
+// 프리픽스를 생략하면 짧은 질의와 긴 문서가 서로 다른 영역에 놓여 정확도가 떨어진다.
+// 다른 모델(text-embedding-3 등)은 대칭이라 프리픽스를 붙이면 오히려 해가 되므로
+// 모델 이름으로 판별해 e5 일 때만 적용한다.
+func needsE5Prefix(model string) bool {
+	return strings.Contains(strings.ToLower(model), "e5")
+}
 
 // OpenAI uses the OpenAI-compatible SDK to generate embeddings.
 // Works with any OpenAI-compatible endpoint: api.openai.com,
@@ -62,8 +72,23 @@ func (o *OpenAI) Dims() int {
 	return o.dims
 }
 
-// Embed generates a vector embedding for the given text using the OpenAI API.
+// Embed generates a vector embedding for a stored passage.
 func (o *OpenAI) Embed(ctx context.Context, text string) ([]float32, error) {
+	if needsE5Prefix(o.model) {
+		text = "passage: " + text
+	}
+	return o.embed(ctx, text)
+}
+
+// EmbedQuery generates a vector embedding for a search query.
+func (o *OpenAI) EmbedQuery(ctx context.Context, text string) ([]float32, error) {
+	if needsE5Prefix(o.model) {
+		text = "query: " + text
+	}
+	return o.embed(ctx, text)
+}
+
+func (o *OpenAI) embed(ctx context.Context, text string) ([]float32, error) {
 	resp, err := o.client.Embeddings.New(ctx, openai.EmbeddingNewParams{
 		Input: openai.EmbeddingNewParamsInputUnion{
 			OfArrayOfStrings: []string{text},

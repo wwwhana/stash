@@ -47,7 +47,7 @@ func serveAllCmd(ctx context.Context, cmd *cli.Command) error {
 			&cli.StringFlag{Name: "host", Value: mcpHost},
 			&cli.StringFlag{Name: "port", Value: mcpPort},
 		)
-		log.Println("starting MCP SSE server")
+		log.Println("starting MCP HTTP server (streamable http on /mcp, sse on /sse)")
 		if err := mcpServeCmd(ctx, c); err != nil {
 			log.Printf("MCP server stopped: %v", err)
 		}

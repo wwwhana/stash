@@ -9,10 +9,49 @@ SELECT
 FROM episodes
 WHERE deleted_at IS NULL
     AND embedding IS NOT NULL
+{{if .Args.min_score}}
+    AND 1 - (embedding <=> {{.Bind .Args.vector}}) >= {{.Bind .Args.min_score}}
+{{end}}
 {{if .Args.namespace_ids}}
     AND namespace_id IN ({{range $i, $id := .Args.namespace_ids}}{{if $i}}, {{end}}{{$.Bind $id}}{{end}})
 {{end}}
 ORDER BY embedding <=> {{.Bind .Args.vector}}
+LIMIT {{.Bind .Args.limit}}
+{{end}}
+
+{{define "keyword_episodes"}}
+SELECT
+    id,
+    namespace_id,
+    content,
+    occurred_at,
+    created_at,
+    word_similarity({{.Bind .Args.query}}, content) AS score
+FROM episodes
+WHERE deleted_at IS NULL
+    AND {{.Bind .Args.query}} <% content
+{{if .Args.namespace_ids}}
+    AND namespace_id IN ({{range $i, $id := .Args.namespace_ids}}{{if $i}}, {{end}}{{$.Bind $id}}{{end}})
+{{end}}
+ORDER BY word_similarity({{.Bind .Args.query}}, content) DESC
+LIMIT {{.Bind .Args.limit}}
+{{end}}
+
+{{define "keyword_facts"}}
+SELECT
+    id,
+    namespace_id,
+    content,
+    confidence,
+    created_at,
+    word_similarity({{.Bind .Args.query}}, content) AS score
+FROM facts
+WHERE deleted_at IS NULL
+    AND {{.Bind .Args.query}} <% content
+{{if .Args.namespace_ids}}
+    AND namespace_id IN ({{range $i, $id := .Args.namespace_ids}}{{if $i}}, {{end}}{{$.Bind $id}}{{end}})
+{{end}}
+ORDER BY word_similarity({{.Bind .Args.query}}, content) DESC
 LIMIT {{.Bind .Args.limit}}
 {{end}}
 
@@ -27,6 +66,9 @@ SELECT
 FROM facts
 WHERE deleted_at IS NULL
     AND embedding IS NOT NULL
+{{if .Args.min_score}}
+    AND 1 - (embedding <=> {{.Bind .Args.vector}}) >= {{.Bind .Args.min_score}}
+{{end}}
 {{if .Args.namespace_ids}}
     AND namespace_id IN ({{range $i, $id := .Args.namespace_ids}}{{if $i}}, {{end}}{{$.Bind $id}}{{end}})
 {{end}}
