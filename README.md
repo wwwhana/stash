@@ -76,7 +76,7 @@ claude mcp add stash http://localhost:8080/mcp
 
 ### 2. Codex
 
-Uses the `stdio` transport. Point it to the stash CLI binary:
+For a local process, use the `stdio` transport and point it to the stash CLI binary:
 
 ```json
 "stash": {
@@ -84,6 +84,16 @@ Uses the `stdio` transport. Point it to the stash CLI binary:
   "args": ["mcp", "execute", "--with-consolidation"]
 }
 ```
+
+For a remote, OIDC-protected MCP server, use Streamable HTTP and OAuth:
+
+```bash
+codex mcp add stash --url https://stash.example.com/mcp --oauth-client-id stash-codex
+codex mcp login stash
+```
+
+Set `STASH_AUTH_MODE=oidc`, the issuer/client settings, and
+`STASH_AUTH_MCP_CLIENT_ID` for the OAuth client used by Codex.
 
 ### 3. agy (Antigravity)
 

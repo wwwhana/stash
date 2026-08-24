@@ -18,60 +18,15 @@ import (
 
 	"github.com/alash3al/stash/internal/bootstrap"
 	"github.com/alash3al/stash/internal/brain"
+	"github.com/alash3al/stash/internal/models"
 	"github.com/alash3al/stash/internal/web"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/urfave/cli/v3"
 )
 
-type contextKey string
-
-const (
-	keyMode    contextKey = "mode"
-	keySSOUser contextKey = "sso_user"
-)
-
-func httpContextFunc(ctx context.Context, r *http.Request) context.Context {
-	ctx = context.WithValue(ctx, keyMode, "remote")
-	if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
-		token := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
-		ctx = context.WithValue(ctx, keySSOUser, token)
-	} else if user := r.Header.Get("X-Forwarded-User"); user != "" {
-		ctx = context.WithValue(ctx, keySSOUser, user)
-	}
-	return ctx
-}
-
 func stdioContextFunc(ctx context.Context) context.Context {
 	return context.WithValue(ctx, keyMode, "local")
-}
-
-func resolveNamespaces(ctx context.Context, nsRaw string) ([]string, error) {
-	var rawList []string
-	for _, ns := range strings.Split(nsRaw, ",") {
-		if ns = strings.TrimSpace(ns); ns != "" {
-			rawList = append(rawList, ns)
-		}
-	}
-	if len(rawList) == 0 {
-		rawList = []string{"/"}
-	}
-
-	mode, _ := ctx.Value(keyMode).(string)
-	if mode == "remote" {
-		user, ok := ctx.Value(keySSOUser).(string)
-		if !ok || user == "" {
-			return nil, fmt.Errorf("unauthorized: authentication token required for remote access")
-		}
-
-		var isolated []string
-		for _, ns := range rawList {
-			clean := strings.TrimPrefix(ns, "/")
-			isolated = append(isolated, "/sso/"+user+"/"+clean)
-		}
-		return isolated, nil
-	}
-	return rawList, nil
 }
 
 //go:embed mcp_prompts.tmpl
@@ -162,14 +117,11 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		mcp.WithNumber("min_score", mcp.Description(render("recall_min_score")), mcp.DefaultNumber(0)),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		query := request.GetString("query", "")
-		nsRaw := request.GetString("namespaces", "/")
 		limit := request.GetInt("limit", 10)
 
-		var namespaces []string
-		for _, ns := range strings.Split(nsRaw, ",") {
-			if ns = strings.TrimSpace(ns); ns != "" {
-				namespaces = append(namespaces, ns)
-			}
+		namespaces, err := resolveNamespaces(ctx, request.GetString("namespaces", "/"))
+		if err != nil {
+			return nil, err
 		}
 
 		results, err := bc.Brain.RecallWithOptions(ctx, namespaces, query, limit, brain.RecallOptions{
@@ -347,11 +299,11 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		nsRaw := request.GetString("namespaces", "")
 		var patterns []string
-		if nsRaw != "" {
-			for _, ns := range strings.Split(nsRaw, ",") {
-				if ns = strings.TrimSpace(ns); ns != "" {
-					patterns = append(patterns, ns)
-				}
+		if strings.TrimSpace(nsRaw) != "" || ctx.Value(keyMode) == "remote" {
+			var err error
+			patterns, err = resolveNamespaces(ctx, nsRaw)
+			if err != nil {
+				return nil, err
 			}
 		}
 
@@ -377,6 +329,10 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		slug := request.GetString("slug", "")
 		name := request.GetString("name", slug)
 		description := request.GetString("description", "")
+		slug, err := resolveSingleNamespace(ctx, slug)
+		if err != nil {
+			return nil, err
+		}
 
 		id, err := bc.Brain.CreateNamespace(ctx, slug, name, description)
 		if err != nil {
@@ -493,6 +449,13 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		id := request.GetInt("id", 0)
 		resolution := request.GetString("resolution", "resolved")
+		contradiction, err := bc.Brain.GetContradiction(ctx, int64(id))
+		if err != nil {
+			return nil, err
+		}
+		if err := authorizeNamespaceID(ctx, bc, contradiction.NamespaceID); err != nil {
+			return nil, err
+		}
 
 		if err := bc.Brain.ResolveContradiction(ctx, int64(id), resolution); err != nil {
 			return nil, err
@@ -534,18 +497,29 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		causeID := request.GetInt("cause_id", 0)
 		effectID := request.GetInt("effect_id", 0)
 		confidence := float32(request.GetFloat("confidence", 0.8))
-		nss, err := resolveNamespaces(ctx, request.GetString("namespace", "/"))
+		_, namespaceID, err := exactNamespaceID(ctx, bc, request.GetString("namespace", "/"))
 		if err != nil {
 			return nil, err
 		}
-		namespace := nss[0]
-
-		nsIDs, err := bc.Brain.ResolveNamespaceIDs(ctx, []string{namespace})
+		cause, err := bc.Brain.GetFact(ctx, int64(causeID))
 		if err != nil {
 			return nil, err
 		}
+		effect, err := bc.Brain.GetFact(ctx, int64(effectID))
+		if err != nil {
+			return nil, err
+		}
+		if err := authorizeRelatedNamespace(ctx, bc, namespaceID, cause.NamespaceID); err != nil {
+			return nil, err
+		}
+		if err := authorizeRelatedNamespace(ctx, bc, namespaceID, effect.NamespaceID); err != nil {
+			return nil, err
+		}
+		if cause.NamespaceID != effect.NamespaceID {
+			return nil, fmt.Errorf("cause and effect facts must share a namespace")
+		}
 
-		link, err := bc.Brain.CreateCausalLink(ctx, nsIDs[0], int64(causeID), int64(effectID), confidence)
+		link, err := bc.Brain.CreateCausalLink(ctx, namespaceID, int64(causeID), int64(effectID), confidence)
 		if err != nil {
 			return nil, err
 		}
@@ -562,8 +536,25 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		factID := request.GetInt("fact_id", 0)
 		direction := request.GetString("direction", "forward")
 		maxDepth := request.GetInt("max_depth", 10)
+		fact, err := bc.Brain.GetFact(ctx, int64(factID))
+		if err != nil {
+			return nil, err
+		}
+		if err := authorizeNamespaceID(ctx, bc, fact.NamespaceID); err != nil {
+			return nil, err
+		}
 
-		chain, err := bc.Brain.TraceCausalChain(ctx, int64(factID), direction, maxDepth)
+		var chain []models.CausalLink
+		if mode, _ := ctx.Value(keyMode).(string); mode == "remote" {
+			var namespaceIDs []int64
+			namespaceIDs, err = authenticatedNamespaceIDs(ctx, bc)
+			if err != nil {
+				return nil, err
+			}
+			chain, err = bc.Brain.TraceCausalChainInNamespaces(ctx, int64(factID), direction, maxDepth, namespaceIDs)
+		} else {
+			chain, err = bc.Brain.TraceCausalChain(ctx, int64(factID), direction, maxDepth)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -608,27 +599,33 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		content := request.GetString("content", "")
 		verificationPlan := request.GetString("verification_plan", "")
 		confidence := float32(request.GetFloat("confidence", 0.5))
-		nss, err := resolveNamespaces(ctx, request.GetString("namespace", "/"))
+		_, namespaceID, err := exactNamespaceID(ctx, bc, request.GetString("namespace", "/"))
 		if err != nil {
 			return nil, err
 		}
-		namespace := nss[0]
 
 		var sourceFactIDs []int64
 		if raw := request.GetString("source_fact_ids", ""); raw != "" {
 			for _, s := range strings.Split(raw, ",") {
-				if id, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64); err == nil {
-					sourceFactIDs = append(sourceFactIDs, id)
+				id, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+				if err != nil {
+					return nil, fmt.Errorf("invalid source fact ID %q: %w", s, err)
 				}
+				fact, err := bc.Brain.GetFact(ctx, id)
+				if err != nil {
+					return nil, err
+				}
+				if err := authorizeRelatedNamespace(ctx, bc, namespaceID, fact.NamespaceID); err != nil {
+					return nil, err
+				}
+				if fact.NamespaceID != namespaceID {
+					return nil, fmt.Errorf("source fact %d must share the target namespace", id)
+				}
+				sourceFactIDs = append(sourceFactIDs, id)
 			}
 		}
 
-		nsIDs, err := bc.Brain.ResolveNamespaceIDs(ctx, []string{namespace})
-		if err != nil {
-			return nil, err
-		}
-
-		h, err := bc.Brain.CreateHypothesis(ctx, nsIDs[0], content, verificationPlan, confidence, sourceFactIDs)
+		h, err := bc.Brain.CreateHypothesis(ctx, namespaceID, content, verificationPlan, confidence, sourceFactIDs)
 		if err != nil {
 			return nil, err
 		}
@@ -641,6 +638,13 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		mcp.WithNumber("id", mcp.Description(render("confirm_hypothesis_id")), mcp.Required()),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		id := request.GetInt("id", 0)
+		hypothesis, err := bc.Brain.GetHypothesis(ctx, int64(id))
+		if err != nil {
+			return nil, err
+		}
+		if err := authorizeNamespaceID(ctx, bc, hypothesis.NamespaceID); err != nil {
+			return nil, err
+		}
 
 		h, f, err := bc.Brain.ConfirmHypothesis(ctx, int64(id))
 		if err != nil {
@@ -661,6 +665,13 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		id := request.GetInt("id", 0)
 		reason := request.GetString("reason", "")
+		hypothesis, err := bc.Brain.GetHypothesis(ctx, int64(id))
+		if err != nil {
+			return nil, err
+		}
+		if err := authorizeNamespaceID(ctx, bc, hypothesis.NamespaceID); err != nil {
+			return nil, err
+		}
 
 		h, err := bc.Brain.RejectHypothesis(ctx, int64(id), reason)
 		if err != nil {
@@ -692,6 +703,13 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		var parentID *int64
 		if pid := request.GetInt("parent_id", 0); pid != 0 {
 			pid64 := int64(pid)
+			parent, err := bc.Brain.GetGoal(ctx, pid64)
+			if err != nil {
+				return nil, err
+			}
+			if err := authorizeNamespaceID(ctx, bc, parent.NamespaceID); err != nil {
+				return nil, err
+			}
 			parentID = &pid64
 		}
 
@@ -712,24 +730,28 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		content := request.GetString("content", "")
 		priority := request.GetInt("priority", 0)
-		nss, err := resolveNamespaces(ctx, request.GetString("namespace", "/"))
+		_, namespaceID, err := exactNamespaceID(ctx, bc, request.GetString("namespace", "/"))
 		if err != nil {
 			return nil, err
 		}
-		namespace := nss[0]
 
 		var parentID *int64
 		if pid := request.GetInt("parent_id", 0); pid != 0 {
 			pid64 := int64(pid)
+			parent, err := bc.Brain.GetGoal(ctx, pid64)
+			if err != nil {
+				return nil, err
+			}
+			if err := authorizeRelatedNamespace(ctx, bc, namespaceID, parent.NamespaceID); err != nil {
+				return nil, err
+			}
+			if parent.NamespaceID != namespaceID {
+				return nil, fmt.Errorf("parent goal must share the target namespace")
+			}
 			parentID = &pid64
 		}
 
-		nsIDs, err := bc.Brain.ResolveNamespaceIDs(ctx, []string{namespace})
-		if err != nil {
-			return nil, err
-		}
-
-		g, err := bc.Brain.CreateGoal(ctx, nsIDs[0], content, parentID, priority)
+		g, err := bc.Brain.CreateGoal(ctx, namespaceID, content, parentID, priority)
 		if err != nil {
 			return nil, err
 		}
@@ -744,6 +766,13 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		id := request.GetInt("id", 0)
 		notes := request.GetString("notes", "")
+		goal, err := bc.Brain.GetGoal(ctx, int64(id))
+		if err != nil {
+			return nil, err
+		}
+		if err := authorizeNamespaceID(ctx, bc, goal.NamespaceID); err != nil {
+			return nil, err
+		}
 
 		g, err := bc.Brain.CompleteGoal(ctx, int64(id), notes)
 		if err != nil {
@@ -760,6 +789,13 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		id := request.GetInt("id", 0)
 		notes := request.GetString("notes", "")
+		goal, err := bc.Brain.GetGoal(ctx, int64(id))
+		if err != nil {
+			return nil, err
+		}
+		if err := authorizeNamespaceID(ctx, bc, goal.NamespaceID); err != nil {
+			return nil, err
+		}
 
 		g, err := bc.Brain.AbandonGoal(ctx, int64(id), notes)
 		if err != nil {
@@ -789,6 +825,13 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		var goalID *int64
 		if gid := request.GetInt("goal_id", 0); gid != 0 {
 			gid64 := int64(gid)
+			goal, err := bc.Brain.GetGoal(ctx, gid64)
+			if err != nil {
+				return nil, err
+			}
+			if err := authorizeNamespaceID(ctx, bc, goal.NamespaceID); err != nil {
+				return nil, err
+			}
 			goalID = &gid64
 		}
 
@@ -811,24 +854,28 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		content := request.GetString("content", "")
 		reason := request.GetString("reason", "")
 		lesson := request.GetString("lesson", "")
-		nss, err := resolveNamespaces(ctx, request.GetString("namespace", "/"))
+		_, namespaceID, err := exactNamespaceID(ctx, bc, request.GetString("namespace", "/"))
 		if err != nil {
 			return nil, err
 		}
-		namespace := nss[0]
 
 		var goalID *int64
 		if gid := request.GetInt("goal_id", 0); gid != 0 {
 			gid64 := int64(gid)
+			goal, err := bc.Brain.GetGoal(ctx, gid64)
+			if err != nil {
+				return nil, err
+			}
+			if err := authorizeRelatedNamespace(ctx, bc, namespaceID, goal.NamespaceID); err != nil {
+				return nil, err
+			}
+			if goal.NamespaceID != namespaceID {
+				return nil, fmt.Errorf("goal must share the target namespace")
+			}
 			goalID = &gid64
 		}
 
-		nsIDs, err := bc.Brain.ResolveNamespaceIDs(ctx, []string{namespace})
-		if err != nil {
-			return nil, err
-		}
-
-		f, err := bc.Brain.CreateFailure(ctx, nsIDs[0], content, reason, lesson, goalID)
+		f, err := bc.Brain.CreateFailure(ctx, namespaceID, content, reason, lesson, goalID)
 		if err != nil {
 			return nil, err
 		}
@@ -841,6 +888,13 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		mcp.WithNumber("id", mcp.Description(render("delete_failure_id")), mcp.Required()),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		id := request.GetInt("id", 0)
+		failure, err := bc.Brain.GetFailure(ctx, int64(id))
+		if err != nil {
+			return nil, err
+		}
+		if err := authorizeNamespaceID(ctx, bc, failure.NamespaceID); err != nil {
+			return nil, err
+		}
 
 		if err := bc.Brain.DeleteFailure(ctx, int64(id)); err != nil {
 			return nil, err
@@ -872,9 +926,18 @@ func mcpServeCmd(ctx context.Context, cmd *cli.Command) error {
 	sseServer := server.NewSSEServer(mcpServer, server.WithSSEContextFunc(httpContextFunc))
 
 	mux := http.NewServeMux()
-	mux.Handle("/mcp", streamableServer)
-	mux.Handle("/sse", sseServer.SSEHandler())
-	mux.Handle("/message", sseServer.MessageHandler())
+	mux.Handle("/mcp", authenticatedHTTP(bc.Auth, streamableServer))
+	mux.Handle("/sse", authenticatedHTTP(bc.Auth, sseServer.SSEHandler()))
+	mux.Handle("/message", authenticatedHTTP(bc.Auth, sseServer.MessageHandler()))
+	mux.HandleFunc("/.well-known/oauth-protected-resource", bc.Auth.HandleProtectedResourceMetadata)
+	mux.HandleFunc("/.well-known/oauth-protected-resource/mcp", bc.Auth.HandleProtectedResourceMetadata)
+	mux.HandleFunc("/.well-known/oauth-protected-resource/sse", bc.Auth.HandleProtectedResourceMetadata)
+	mux.HandleFunc("/.well-known/oauth-protected-resource/message", bc.Auth.HandleProtectedResourceMetadata)
+	mux.HandleFunc("/auth/login", bc.Auth.HandleLogin)
+	mux.HandleFunc("/auth/callback", bc.Auth.HandleCallback)
+	mux.HandleFunc("/auth/logout", bc.Auth.HandleLogout)
+	mux.HandleFunc("/auth/status", bc.Auth.HandleStatus)
+	mux.HandleFunc("/auth/token", bc.Auth.HandleGenerateToken)
 	mux.Handle("/", web.GetUIHandler())
 
 	httpServer := &http.Server{
@@ -960,19 +1023,26 @@ func runConsolidationTicker(ctx context.Context, bc *bootstrap.Context, cmd *cli
 	for {
 		select {
 		case <-ticker.C:
-			ids, err := bc.Brain.ResolveNamespaceIDs(ctx, namespaces)
-			if err != nil {
-				log.Printf("Consolidation: failed to resolve namespaces: %v", err)
-				continue
-			}
-			for _, id := range ids {
-				result, err := bc.Brain.ConsolidateByID(ctx, id)
+			seen := make(map[int64]struct{})
+			for _, namespace := range namespaces {
+				ids, err := bc.Brain.ResolveNamespaceIDs(ctx, []string{namespace})
 				if err != nil {
-					log.Printf("Consolidation failed for namespace ID %d: %v", id, err)
+					log.Printf("Consolidation: skipping namespace %s: %v", namespace, err)
 					continue
 				}
-				log.Printf("Consolidation completed for %s: facts=%d relationships=%d goals_annotated=%d failure_repeats=%d hypotheses_updated=%d",
-					result.Namespace, result.FactsCreated, result.RelationshipsFound, result.GoalsAnnotated, result.FailureRepeatsDetected, result.HypothesesUpdated)
+				for _, id := range ids {
+					if _, ok := seen[id]; ok {
+						continue
+					}
+					seen[id] = struct{}{}
+					result, err := bc.Brain.ConsolidateByID(ctx, id)
+					if err != nil {
+						log.Printf("Consolidation failed for namespace ID %d: %v", id, err)
+						continue
+					}
+					log.Printf("Consolidation completed for %s: facts=%d relationships=%d goals_annotated=%d failure_repeats=%d hypotheses_updated=%d",
+						result.Namespace, result.FactsCreated, result.RelationshipsFound, result.GoalsAnnotated, result.FailureRepeatsDetected, result.HypothesesUpdated)
+				}
 			}
 		case <-ctx.Done():
 			log.Printf("Background consolidation shutting down")

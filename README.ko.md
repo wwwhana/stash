@@ -73,13 +73,22 @@ claude mcp add stash http://localhost:8080/mcp
 ```
 
 ### 2. Codex
-`stdio` 전송 방식을 사용합니다. stash CLI 바이너리를 직접 가리켜야 합니다:
+로컬 프로세스는 `stdio` 전송 방식으로 stash CLI 바이너리를 직접 가리킵니다:
 ```json
 "stash": {
   "command": "stash",
   "args": ["mcp", "execute", "--with-consolidation"]
 }
 ```
+
+원격 MCP 서버를 OIDC로 보호할 때는 Streamable HTTP와 OAuth를 사용합니다:
+```bash
+codex mcp add stash --url https://stash.example.com/mcp --oauth-client-id stash-codex
+codex mcp login stash
+```
+
+`STASH_AUTH_MODE=oidc`와 발급자·클라이언트 설정을 지정하고,
+Codex에서 사용할 OAuth 클라이언트를 `STASH_AUTH_MCP_CLIENT_ID`에 넣습니다.
 
 ### 3. agy (Antigravity)
 `~/.gemini/config/mcp_config.json`을 통해 설정합니다:

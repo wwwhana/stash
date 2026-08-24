@@ -32,6 +32,7 @@ services:
       - "--consolidate-namespaces=/users"
       - "--consolidate-namespaces=/tooling"
       - "--consolidate-namespaces=/self"
+      - "--consolidate-namespaces=/sso"
     ports:
       - "8080:8080"
     environment:
@@ -47,6 +48,16 @@ services:
       STASH_HTTP_ADDR: :9090
       STASH_LOG_LEVEL: info
       STASH_LOG_FORMAT: text
+      STASH_AUTH_MODE: ${STASH_AUTH_MODE:-none}
+      STASH_AUTH_ISSUER: ${STASH_AUTH_ISSUER:-}
+      STASH_AUTH_CLIENT_ID: ${STASH_AUTH_CLIENT_ID:-}
+      STASH_AUTH_MCP_CLIENT_ID: ${STASH_AUTH_MCP_CLIENT_ID:-}
+      STASH_AUTH_CLIENT_SECRET: ${STASH_AUTH_CLIENT_SECRET:-}
+      STASH_AUTH_REDIRECT_URL: ${STASH_AUTH_REDIRECT_URL:-}
+      STASH_AUTH_API_SECRET: ${STASH_AUTH_API_SECRET:-}
+      STASH_AUTH_MCP_RESOURCE_URL: ${STASH_AUTH_MCP_RESOURCE_URL:-}
+      STASH_AUTH_COOKIE_SECURE: ${STASH_AUTH_COOKIE_SECURE:-true}
+      STASH_AUTH_TOKEN_TTL: ${STASH_AUTH_TOKEN_TTL:-720h}
       # Optional consolidation configs
       STASH_CONSOLIDATION_BATCH_SIZE: 100
       STASH_CONSOLIDATION_SIMILARITY_THRESHOLD: 0.85

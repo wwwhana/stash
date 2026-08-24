@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/alash3al/stash/internal/auth"
 	"github.com/alash3al/stash/internal/brain"
 	"github.com/alash3al/stash/internal/config"
 	"github.com/alash3al/stash/internal/db"
@@ -20,6 +21,7 @@ import (
 // Context holds all initialized services.
 type Context struct {
 	Config *config.Config
+	Auth   *auth.Provider
 	Brain  *brain.Brain
 	Pool   *pgxpool.Pool
 	Logger *slog.Logger
@@ -42,6 +44,22 @@ func New(ctx context.Context) (*Context, error) {
 	}
 
 	logger := buildLogger(cfg)
+
+	authProvider, err := auth.Init(ctx, auth.Config{
+		Mode:           cfg.AuthMode,
+		Issuer:         cfg.AuthIssuer,
+		ClientID:       cfg.AuthClientID,
+		MCPClientID:    cfg.AuthMCPClientID,
+		ClientSecret:   cfg.AuthClientSecret,
+		RedirectURL:    cfg.AuthRedirectURL,
+		APISecret:      cfg.AuthAPISecret,
+		MCPResourceURL: cfg.AuthMCPResourceURL,
+		CookieSecure:   cfg.AuthCookieSecure,
+		APITokenTTL:    cfg.AuthTokenTTL,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("initialize authentication: %w", err)
+	}
 
 	pool, err := db.Open(ctx, cfg.StoreDSN, cfg.EmbeddingModel, cfg.VectorDim)
 	if err != nil {
@@ -92,6 +110,7 @@ func New(ctx context.Context) (*Context, error) {
 
 	return &Context{
 		Config: cfg,
+		Auth:   authProvider,
 		Brain:  br,
 		Pool:   pool,
 		Logger: logger,

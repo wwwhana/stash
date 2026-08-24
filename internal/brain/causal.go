@@ -114,6 +114,19 @@ func (b *Brain) DeleteCausalLink(ctx context.Context, id int64) error {
 // TraceCausalChain returns the causal chain starting from a fact, using a bounded recursive CTE.
 // direction: "forward" (what did this fact cause?) or "backward" (what caused this fact?).
 func (b *Brain) TraceCausalChain(ctx context.Context, factID int64, direction string, maxDepth int) ([]models.CausalLink, error) {
+	return b.traceCausalChain(ctx, factID, direction, maxDepth, nil)
+}
+
+// TraceCausalChainInNamespaces traces links only inside the supplied namespaces.
+// Remote callers use this form so a link cannot cross a user's data boundary.
+func (b *Brain) TraceCausalChainInNamespaces(ctx context.Context, factID int64, direction string, maxDepth int, namespaceIDs []int64) ([]models.CausalLink, error) {
+	if len(namespaceIDs) == 0 {
+		return nil, ErrNamespacesRequired
+	}
+	return b.traceCausalChain(ctx, factID, direction, maxDepth, namespaceIDs)
+}
+
+func (b *Brain) traceCausalChain(ctx context.Context, factID int64, direction string, maxDepth int, namespaceIDs []int64) ([]models.CausalLink, error) {
 	if maxDepth <= 0 {
 		maxDepth = 10
 	}
@@ -128,22 +141,31 @@ func (b *Brain) TraceCausalChain(ctx context.Context, factID int64, direction st
 		joinCol = "effect_fact_id"
 	}
 
+	namespaceFilter := ""
+	recursiveNamespaceFilter := ""
+	args := []any{factID, maxDepth}
+	if len(namespaceIDs) > 0 {
+		namespaceFilter = " AND namespace_id = ANY($3)"
+		recursiveNamespaceFilter = " AND cl.namespace_id = ANY($3)"
+		args = append(args, namespaceIDs)
+	}
+
 	query := fmt.Sprintf(`
 		WITH RECURSIVE chain AS (
 			SELECT id, namespace_id, cause_fact_id, effect_fact_id, confidence, method, created_at, 1 AS depth
 			FROM causal_links
-			WHERE %s = $1 AND deleted_at IS NULL
+			WHERE %s = $1 AND deleted_at IS NULL%s
 			UNION ALL
 			SELECT cl.id, cl.namespace_id, cl.cause_fact_id, cl.effect_fact_id, cl.confidence, cl.method, cl.created_at, c.depth + 1
 			FROM causal_links cl JOIN chain c ON cl.%s = c.%s
-			WHERE cl.deleted_at IS NULL AND c.depth < $2
+			WHERE cl.deleted_at IS NULL AND c.depth < $2%s
 		)
 		SELECT id, namespace_id, cause_fact_id, effect_fact_id, confidence, method, created_at
 		FROM chain ORDER BY depth`,
-		anchorCol, anchorCol, joinCol,
+		anchorCol, namespaceFilter, anchorCol, joinCol, recursiveNamespaceFilter,
 	)
 
-	rows, err := b.pool.Query(ctx, query, factID, maxDepth)
+	rows, err := b.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("trace causal chain: %w", err)
 	}
