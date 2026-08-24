@@ -73,7 +73,7 @@ If tools fail, check `.env`:
 
 | Variable | Purpose |
 |----------|---------|
-| `STASH_OPENAI_API_KEY` | Embeddings + reasoner (OpenAI, OpenRouter, or compatible) |
+| `STASH_OPENAI_API_KEY` | Embeddings + reasoner; optional for endpoints without authentication |
 | `STASH_OPENAI_BASE_URL` | API base URL |
 | `STASH_EMBEDDING_MODEL` | Must match `STASH_VECTOR_DIM` (1536 for `text-embedding-3-small`) |
 | `STASH_REASONER_MODEL` | Model used during consolidation |
@@ -102,7 +102,7 @@ Atlas Cloud docs: [https://www.atlascloud.ai/docs](https://www.atlascloud.ai/doc
 **Empty recall results**
 
 - Run `init` first, then `remember`, then `recall`.
-- Embeddings require a valid API key in `.env`.
+- Cloud endpoints require a valid API key; local endpoints without authentication may leave it empty.
 
 **Consolidation does nothing**
 

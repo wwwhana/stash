@@ -51,10 +51,12 @@ STASH_VECTOR_DIM=1536
 ### Local/Custom LLMs (Ollama, LM Studio)
 
 To point Stash to a local or custom OpenAI-compatible server, specify the base URL.
+The API key may be left empty when that endpoint does not require authentication.
 **Important Tuning Note:** If you are using `multilingual-e5-small` or similar models, make sure you match the `STASH_VECTOR_DIM` to the model's output dimensions (e.g., `384`).
 
 ```bash
 STASH_OPENAI_BASE_URL=http://host.docker.internal:11434/v1
+STASH_OPENAI_API_KEY=
 STASH_EMBEDDING_MODEL=multilingual-e5-small
 STASH_REASONER_MODEL=llama3
 STASH_VECTOR_DIM=384

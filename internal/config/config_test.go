@@ -10,7 +10,6 @@ func TestAuthenticationSettingsAreOptionalWhenDisabled(t *testing.T) {
 		"STASH_POSTGRES_DSN":       "postgres://localhost/stash",
 		"STASH_VECTOR_DIM":         "1536",
 		"STASH_MAX_RESULT_SIZE":    "10000",
-		"STASH_OPENAI_API_KEY":     "test-key",
 		"STASH_OPENAI_BASE_URL":    "https://example.invalid/v1",
 		"STASH_EMBEDDING_MODEL":    "embed",
 		"STASH_REASONER_MODEL":     "reason",
@@ -37,5 +36,8 @@ func TestAuthenticationSettingsAreOptionalWhenDisabled(t *testing.T) {
 	}
 	if cfg.AuthTokenTTL.Hours() != 720 {
 		t.Fatalf("AuthTokenTTL = %s, want 720h", cfg.AuthTokenTTL)
+	}
+	if cfg.OpenAIAPIKey != "" {
+		t.Fatalf("OpenAIAPIKey = %q, want empty", cfg.OpenAIAPIKey)
 	}
 }

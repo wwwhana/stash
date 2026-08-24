@@ -15,7 +15,7 @@ type Config struct {
 	MaxResultSize int    `env:"STASH_MAX_RESULT_SIZE,required"`
 
 	// OpenAI (embeddings + reasoning)
-	OpenAIAPIKey   string `env:"STASH_OPENAI_API_KEY,required"`
+	OpenAIAPIKey   string `env:"STASH_OPENAI_API_KEY" envDefault:""`
 	OpenAIBaseURL  string `env:"STASH_OPENAI_BASE_URL,required"`
 	EmbeddingModel string `env:"STASH_EMBEDDING_MODEL,required"`
 	ReasonerModel  string `env:"STASH_REASONER_MODEL,required"`

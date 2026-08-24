@@ -33,17 +33,15 @@ type OpenAI struct {
 }
 
 func NewOpenAI(baseURL, apiKey, model string) (*OpenAI, error) {
-	if apiKey == "" {
-		return nil, errors.New("reasoner: apiKey is required")
-	}
 	if model == "" {
 		return nil, errors.New("reasoner: model is required")
 	}
 
-	client := openai.NewClient(
-		option.WithBaseURL(baseURL),
-		option.WithAPIKey(apiKey),
-	)
+	options := []option.RequestOption{option.WithBaseURL(baseURL)}
+	if strings.TrimSpace(apiKey) != "" {
+		options = append(options, option.WithAPIKey(apiKey))
+	}
+	client := openai.NewClient(options...)
 
 	return &OpenAI{
 		client: client,
@@ -394,10 +392,10 @@ Rules:
 			}
 
 			validated = append(validated, &StructuredPattern{
-				Content:       jp.Pattern,
+				Content:        jp.Pattern,
 				CoherenceScore: coherence,
-				SourceFactIDs: validFacts,
-				SourceRelIDs:  validRels,
+				SourceFactIDs:  validFacts,
+				SourceRelIDs:   validRels,
 			})
 		}
 

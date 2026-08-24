@@ -37,7 +37,7 @@ Stash runs in Docker; Ollama runs on the host. From inside the container, reach 
 
 ```bash
 # --- Ollama (fully local) ---
-STASH_OPENAI_API_KEY=ollama          # required field; Ollama ignores the value
+STASH_OPENAI_API_KEY=                # leave empty; Ollama does not require a key
 STASH_OPENAI_BASE_URL=http://host.docker.internal:11434/v1
 STASH_EMBEDDING_MODEL=nomic-embed-text
 STASH_REASONER_MODEL=qwen2.5:3b

@@ -35,14 +35,11 @@ type OpenAI struct {
 
 // NewOpenAI creates an OpenAI embedder.
 // baseURL: the API endpoint (e.g. "https://openrouter.ai/api/v1")
-// apiKey:  the API key for the endpoint
+// apiKey:  the API key for the endpoint; empty for endpoints without authentication
 // model:   required — the model string for this endpoint (no default)
 // dims:    required — the vector dimension for this model (no default)
-// Returns error if model or apiKey is empty, or dims <= 0.
+// Returns error if model is empty or dims <= 0.
 func NewOpenAI(baseURL, apiKey, model string, dims int) (*OpenAI, error) {
-	if apiKey == "" {
-		return nil, errors.New("embedder: apiKey is required")
-	}
 	if model == "" {
 		return nil, errors.New("embedder: model is required")
 	}
@@ -50,10 +47,11 @@ func NewOpenAI(baseURL, apiKey, model string, dims int) (*OpenAI, error) {
 		return nil, errors.New("embedder: dims must be greater than zero")
 	}
 
-	client := openai.NewClient(
-		option.WithBaseURL(baseURL),
-		option.WithAPIKey(apiKey),
-	)
+	options := []option.RequestOption{option.WithBaseURL(baseURL)}
+	if strings.TrimSpace(apiKey) != "" {
+		options = append(options, option.WithAPIKey(apiKey))
+	}
+	client := openai.NewClient(options...)
 
 	return &OpenAI{
 		client: client,

@@ -51,10 +51,12 @@ STASH_VECTOR_DIM=1536
 ### 로컬/커스텀 LLM (Ollama, LM Studio)
 
 로컬 서버나 커스텀 OpenAI 호환 서버를 사용하려면 Base URL을 변경하세요.
+해당 서버가 인증을 요구하지 않으면 API 키를 비워도 됩니다.
 **튜닝 팁:** `multilingual-e5-small`과 같은 비대칭 모델을 사용할 경우, 모델의 출력 차원에 맞게 `STASH_VECTOR_DIM`을 반드시 일치시켜야 합니다 (예: `384`).
 
 ```bash
 STASH_OPENAI_BASE_URL=http://host.docker.internal:11434/v1
+STASH_OPENAI_API_KEY=
 STASH_EMBEDDING_MODEL=multilingual-e5-small
 STASH_REASONER_MODEL=llama3
 STASH_VECTOR_DIM=384
