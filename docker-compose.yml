@@ -44,7 +44,7 @@ services:
       STASH_EMBEDDING_MODEL: ${STASH_EMBEDDING_MODEL:-text-embedding-3-small}
       STASH_REASONER_MODEL: ${STASH_REASONER_MODEL:-gpt-4o-mini}
       STASH_CONTEXT_TTL: 1h
-      STASH_HTTP_ADDR: :9090
+      STASH_HTTP_ADDR: :8080
       STASH_LOG_LEVEL: info
       STASH_LOG_FORMAT: text
       STASH_AUTH_MODE: ${STASH_AUTH_MODE:-none}
