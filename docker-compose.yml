@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # Database
   postgres:
@@ -37,13 +35,14 @@ services:
       - "8080:8080"
     environment:
       # Required
-      STASH_POSTGRES_DSN: postgresql://stash:stash_dev_password@postgres:5432/stash?sslmode=disable
-      STASH_VECTOR_DIM: 1536
-      STASH_MAX_RESULT_SIZE: 10000
-      STASH_OPENAI_API_KEY: ${STASH_OPENAI_API_KEY}
-      STASH_OPENAI_BASE_URL: ${STASH_OPENAI_BASE_URL}
-      STASH_EMBEDDING_MODEL: ${STASH_EMBEDDING_MODEL}
-      STASH_REASONER_MODEL: ${STASH_REASONER_MODEL}
+      STASH_POSTGRES_DSN: ${STASH_POSTGRES_DSN:-postgresql://stash:stash_dev_password@postgres:5432/stash?sslmode=disable}
+      STASH_VECTOR_DIM: ${STASH_VECTOR_DIM:-1536}
+      STASH_MAX_RESULT_SIZE: ${STASH_MAX_RESULT_SIZE:-10000}
+      # Leave the key empty for local or internal endpoints without authentication.
+      STASH_OPENAI_API_KEY: ${STASH_OPENAI_API_KEY:-}
+      STASH_OPENAI_BASE_URL: ${STASH_OPENAI_BASE_URL:-https://api.openai.com/v1}
+      STASH_EMBEDDING_MODEL: ${STASH_EMBEDDING_MODEL:-text-embedding-3-small}
+      STASH_REASONER_MODEL: ${STASH_REASONER_MODEL:-gpt-4o-mini}
       STASH_CONTEXT_TTL: 1h
       STASH_HTTP_ADDR: :9090
       STASH_LOG_LEVEL: info
