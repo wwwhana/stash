@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -50,6 +51,14 @@ func render(name string) string {
 	return buf.String()
 }
 
+func jsonToolResult(value any) (*mcp.CallToolResult, error) {
+	b, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("marshal MCP result: %w", err)
+	}
+	return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(b)}}}, nil
+}
+
 func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 	mcpServer := server.NewMCPServer("stash", "0.2.8",
 		server.WithToolCapabilities(true),
@@ -84,8 +93,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		}
 
 		result := map[string]any{"ok": true, "namespaces_created": created}
-		b, _ := json.Marshal(result)
-		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(b)}}}, nil
+		return jsonToolResult(result)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("remember",
@@ -105,8 +113,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 			return nil, err
 		}
 		result := map[string]any{"id": id, "message": "Memory remembered successfully"}
-		b, _ := json.Marshal(result)
-		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(b)}}}, nil
+		return jsonToolResult(result)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("recall",
@@ -130,8 +137,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if err != nil {
 			return nil, err
 		}
-		b, _ := json.Marshal(results)
-		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(b)}}}, nil
+		return jsonToolResult(results)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("forget",
@@ -177,8 +183,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if opts.DryRun {
 			out["dry_run"] = true
 		}
-		b, _ := json.Marshal(out)
-		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(b)}}}, nil
+		return jsonToolResult(out)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("consolidate",
@@ -226,8 +231,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 				"errors":                       result.Errors,
 			})
 		}
-		b, _ := json.Marshal(summaries)
-		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(b)}}}, nil
+		return jsonToolResult(summaries)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("set_context",
@@ -244,7 +248,11 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if namespace == "" {
 			return nil, fmt.Errorf("namespace is required for context tools")
 		}
-		if err := bc.Brain.SetContext(ctx, namespace, focus, time.Now().UTC().Add(1*time.Hour)); err != nil {
+		ttl := time.Hour
+		if bc.Config != nil && bc.Config.ContextTTL > 0 {
+			ttl = bc.Config.ContextTTL
+		}
+		if err := bc.Brain.SetContext(ctx, namespace, focus, time.Now().UTC().Add(ttl)); err != nil {
 			return nil, err
 		}
 		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: `{"ok": true}`}}}, nil
@@ -269,8 +277,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if c == nil {
 			return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: `{"focus": ""}`}}}, nil
 		}
-		b, _ := json.Marshal(c)
-		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(b)}}}, nil
+		return jsonToolResult(c)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("clear_context",
@@ -316,8 +323,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if err != nil {
 			return nil, err
 		}
-		b, _ := json.Marshal(namespaces)
-		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(b)}}}, nil
+		return jsonToolResult(namespaces)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("create_namespace",
@@ -364,8 +370,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if err != nil {
 			return nil, err
 		}
-		b, _ := json.Marshal(facts)
-		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(b)}}}, nil
+		return jsonToolResult(facts)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("query_relationships",
@@ -388,8 +393,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if err != nil {
 			return nil, err
 		}
-		b, _ := json.Marshal(rels)
-		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(b)}}}, nil
+		return jsonToolResult(rels)
 	})
 
 	// patterns 는 consolidation 6단계가 채우는데 조회 도구가 없어 에이전트가 꺼내 볼 수 없었다.
@@ -414,8 +418,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if err != nil {
 			return nil, err
 		}
-		b, _ := json.Marshal(pats)
-		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(b)}}}, nil
+		return jsonToolResult(pats)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("list_contradictions",
@@ -438,8 +441,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if err != nil {
 			return nil, err
 		}
-		b, _ := json.Marshal(contradictions)
-		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(b)}}}, nil
+		return jsonToolResult(contradictions)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("resolve_contradiction",
@@ -483,8 +485,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if err != nil {
 			return nil, err
 		}
-		b, _ := json.Marshal(links)
-		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(b)}}}, nil
+		return jsonToolResult(links)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("create_causal_link",
@@ -523,8 +524,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if err != nil {
 			return nil, err
 		}
-		b, _ := json.Marshal(link)
-		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(b)}}}, nil
+		return jsonToolResult(link)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("trace_causal_chain",
@@ -558,8 +558,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if err != nil {
 			return nil, err
 		}
-		b, _ := json.Marshal(chain)
-		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(b)}}}, nil
+		return jsonToolResult(chain)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("list_hypotheses",
@@ -584,8 +583,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if err != nil {
 			return nil, err
 		}
-		b, _ := json.Marshal(hypotheses)
-		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(b)}}}, nil
+		return jsonToolResult(hypotheses)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("create_hypothesis",
@@ -629,8 +627,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if err != nil {
 			return nil, err
 		}
-		b, _ := json.Marshal(h)
-		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(b)}}}, nil
+		return jsonToolResult(h)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("confirm_hypothesis",
@@ -654,8 +651,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 			"hypothesis": h,
 			"fact":       f,
 		}
-		b, _ := json.Marshal(result)
-		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(b)}}}, nil
+		return jsonToolResult(result)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("reject_hypothesis",
@@ -677,8 +673,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if err != nil {
 			return nil, err
 		}
-		b, _ := json.Marshal(h)
-		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(b)}}}, nil
+		return jsonToolResult(h)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("list_goals",
@@ -717,8 +712,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if err != nil {
 			return nil, err
 		}
-		b, _ := json.Marshal(goals)
-		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(b)}}}, nil
+		return jsonToolResult(goals)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("create_goal",
@@ -755,8 +749,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if err != nil {
 			return nil, err
 		}
-		b, _ := json.Marshal(g)
-		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(b)}}}, nil
+		return jsonToolResult(g)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("complete_goal",
@@ -778,8 +771,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if err != nil {
 			return nil, err
 		}
-		b, _ := json.Marshal(g)
-		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(b)}}}, nil
+		return jsonToolResult(g)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("abandon_goal",
@@ -801,8 +793,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if err != nil {
 			return nil, err
 		}
-		b, _ := json.Marshal(g)
-		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(b)}}}, nil
+		return jsonToolResult(g)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("list_failures",
@@ -839,8 +830,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if err != nil {
 			return nil, err
 		}
-		b, _ := json.Marshal(failures)
-		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(b)}}}, nil
+		return jsonToolResult(failures)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("create_failure",
@@ -879,8 +869,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if err != nil {
 			return nil, err
 		}
-		b, _ := json.Marshal(f)
-		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(b)}}}, nil
+		return jsonToolResult(f)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("delete_failure",
@@ -910,7 +899,7 @@ func mcpServeCmd(ctx context.Context, cmd *cli.Command) error {
 	mcpServer := newMCPServer(bc)
 
 	host := cmd.String("host")
-	addr := host + ":" + cmd.String("port")
+	addr := net.JoinHostPort(host, cmd.String("port"))
 
 	// 전송 방식 두 가지를 같은 포트에서 각자의 경로로 제공한다.
 	//

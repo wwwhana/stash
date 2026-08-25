@@ -30,6 +30,10 @@ func (b *Brain) consolidateHypothesisEvidence(ctx context.Context, nsID int64, c
 	if len(hypotheses) == 0 {
 		return
 	}
+	hypothesesByID := make(map[int64]models.Hypothesis, len(hypotheses))
+	for _, hypothesis := range hypotheses {
+		hypothesesByID[hypothesis.ID] = hypothesis
+	}
 
 	factSQL, factArgs, err := b.queries.FetchFacts(nsID, cp.LastHypothesisFactID, 30)
 	if err != nil {
@@ -70,8 +74,18 @@ func (b *Brain) consolidateHypothesisEvidence(ctx context.Context, nsID int64, c
 	}
 
 	for _, r := range results {
+		if err := validateConfidence(r.Confidence); err != nil {
+			errs = append(errs, fmt.Sprintf("hypothesis %d assessment confidence: %v", r.HypothesisID, err))
+			continue
+		}
+		hypothesis, ok := hypothesesByID[r.HypothesisID]
+		if !ok || hypothesis.NamespaceID != nsID {
+			errs = append(errs, fmt.Sprintf("hypothesis %d is outside namespace %d", r.HypothesisID, nsID))
+			continue
+		}
 		hyp, getErr := b.GetHypothesis(ctx, r.HypothesisID)
 		if getErr != nil {
+			errs = append(errs, fmt.Sprintf("get hypothesis %d: %v", r.HypothesisID, getErr))
 			continue
 		}
 
@@ -107,12 +121,20 @@ func (b *Brain) consolidateHypothesisEvidence(ctx context.Context, nsID int64, c
 			autoRejected++
 
 		case r.Verdict == "supports" || r.Verdict == "weakens":
-			_, err := b.pool.Exec(ctx,
-				`UPDATE hypotheses SET confidence = $2, updated_at = now() WHERE id = $1`,
+			if err := validateConfidence(r.NewConfidence); err != nil {
+				errs = append(errs, fmt.Sprintf("update hypothesis %d confidence: %v", r.HypothesisID, err))
+				continue
+			}
+			tag, err := b.pool.Exec(ctx,
+				`UPDATE hypotheses SET confidence = $2, updated_at = now() WHERE id = $1 AND deleted_at IS NULL`,
 				r.HypothesisID, r.NewConfidence,
 			)
 			if err != nil {
 				errs = append(errs, fmt.Sprintf("update hypothesis %d confidence: %v", r.HypothesisID, err))
+				continue
+			}
+			if tag.RowsAffected() == 0 {
+				errs = append(errs, fmt.Sprintf("update hypothesis %d: hypothesis is no longer active", r.HypothesisID))
 				continue
 			}
 			updated++
@@ -125,7 +147,7 @@ func (b *Brain) consolidateHypothesisEvidence(ctx context.Context, nsID int64, c
 			maxFactID = f.ID
 		}
 	}
-	if maxFactID > cp.LastHypothesisFactID {
+	if len(errs) == 0 && maxFactID > cp.LastHypothesisFactID {
 		cp.LastHypothesisFactID = maxFactID
 	}
 

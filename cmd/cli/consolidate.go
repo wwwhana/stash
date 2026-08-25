@@ -82,7 +82,11 @@ func consolidateServeCmd(ctx context.Context, cmd *cli.Command) error {
 					log.Printf("Consolidation failed for namespace ID %d: %v", id, err)
 					continue
 				}
-				b, _ := json.Marshal(result)
+				b, err := json.Marshal(result)
+				if err != nil {
+					log.Printf("failed to encode consolidation result for %s: %v", result.Namespace, err)
+					continue
+				}
 				log.Printf("Consolidation completed for %s: %s", result.Namespace, string(b))
 			}
 		case <-ctx.Done():

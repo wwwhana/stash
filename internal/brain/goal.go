@@ -10,7 +10,7 @@ import (
 )
 
 var (
-	ErrGoalNotFound = fmt.Errorf("brain: goal not found")
+	ErrGoalNotFound  = fmt.Errorf("brain: goal not found")
 	ErrGoalNotActive = fmt.Errorf("brain: goal is not active")
 )
 
@@ -41,8 +41,8 @@ func scanGoalRows(rows pgx.Rows) ([]models.Goal, error) {
 
 // CreateGoal creates a new goal in active status.
 func (b *Brain) CreateGoal(ctx context.Context, nsID int64, content string, parentID *int64, priority int) (*models.Goal, error) {
-	if content == "" {
-		return nil, ErrEmptyContent
+	if err := validateContent(content); err != nil {
+		return nil, err
 	}
 
 	if parentID != nil {
@@ -52,6 +52,9 @@ func (b *Brain) CreateGoal(ctx context.Context, nsID int64, content string, pare
 		}
 		if parent.Status != "active" {
 			return nil, fmt.Errorf("%w: parent goal %d is %s, must be active", ErrGoalNotActive, *parentID, parent.Status)
+		}
+		if parent.NamespaceID != nsID {
+			return nil, fmt.Errorf("brain: parent goal must share the target namespace")
 		}
 	}
 
@@ -78,7 +81,7 @@ func (b *Brain) ListGoals(ctx context.Context, namespaceSlugs []string, status s
 		return nil, err
 	}
 
-	page = page.Sanitize()
+	page = b.sanitizePage(page)
 
 	query := `SELECT ` + goalColumns + ` FROM goals WHERE namespace_id = ANY($1) AND deleted_at IS NULL`
 	args := []any{nsIDs}
@@ -118,7 +121,7 @@ func (b *Brain) ListGoals(ctx context.Context, namespaceSlugs []string, status s
 func (b *Brain) GetGoal(ctx context.Context, id int64) (*models.Goal, error) {
 	var g models.Goal
 	err := b.pool.QueryRow(ctx,
-		`SELECT `+goalColumns+` FROM goals WHERE id = $1`, id,
+		`SELECT `+goalColumns+` FROM goals WHERE id = $1 AND deleted_at IS NULL`, id,
 	).Scan(
 		&g.ID, &g.NamespaceID, &g.ParentID, &g.Content, &g.Status, &g.Priority, &g.Notes,
 		&g.CompletedAt, &g.AbandonedAt, &g.CreatedAt, &g.UpdatedAt, &g.DeletedAt,
@@ -162,7 +165,7 @@ func (b *Brain) CompleteGoal(ctx context.Context, id int64, notes string) (*mode
 	var g models.Goal
 	err = b.pool.QueryRow(ctx,
 		`UPDATE goals SET status = 'completed', completed_at = $2, notes = CASE WHEN $3 = '' THEN notes ELSE $3 END, updated_at = $2
-		 WHERE id = $1
+		 WHERE id = $1 AND status = 'active' AND deleted_at IS NULL
 		 RETURNING `+goalColumns,
 		id, now, notes,
 	).Scan(
@@ -197,7 +200,7 @@ func (b *Brain) autoCompleteParent(ctx context.Context, parentID int64) error {
 	if total > 0 && total == completed {
 		now := time.Now().UTC()
 		_, err := b.pool.Exec(ctx,
-			`UPDATE goals SET status = 'completed', completed_at = $2, updated_at = $2 WHERE id = $1 AND status = 'active'`,
+			`UPDATE goals SET status = 'completed', completed_at = $2, updated_at = $2 WHERE id = $1 AND status = 'active' AND deleted_at IS NULL`,
 			parentID, now,
 		)
 		if err != nil {
@@ -206,7 +209,7 @@ func (b *Brain) autoCompleteParent(ctx context.Context, parentID int64) error {
 
 		var grandparentID *int64
 		err = b.pool.QueryRow(ctx,
-			"SELECT parent_id FROM goals WHERE id = $1", parentID,
+			"SELECT parent_id FROM goals WHERE id = $1 AND deleted_at IS NULL", parentID,
 		).Scan(&grandparentID)
 		if err != nil {
 			return err
@@ -235,7 +238,7 @@ func (b *Brain) AbandonGoal(ctx context.Context, id int64, notes string) (*model
 	var g models.Goal
 	err = b.pool.QueryRow(ctx,
 		`UPDATE goals SET status = 'abandoned', abandoned_at = $2, notes = CASE WHEN $3 = '' THEN notes ELSE $3 END, updated_at = $2
-		 WHERE id = $1
+		 WHERE id = $1 AND status = 'active' AND deleted_at IS NULL
 		 RETURNING `+goalColumns,
 		id, now, notes,
 	).Scan(
@@ -268,13 +271,16 @@ func (b *Brain) UpdateGoal(ctx context.Context, id int64, content string, priori
 	if notes == "" {
 		notes = current.Notes
 	}
+	if err := validateContent(content); err != nil {
+		return nil, err
+	}
 
 	now := time.Now().UTC()
 
 	var g models.Goal
 	err = b.pool.QueryRow(ctx,
 		`UPDATE goals SET content = $2, priority = $3, notes = $4, updated_at = $5
-		 WHERE id = $1
+		 WHERE id = $1 AND status = 'active' AND deleted_at IS NULL
 		 RETURNING `+goalColumns,
 		id, content, priority, notes, now,
 	).Scan(
@@ -289,8 +295,19 @@ func (b *Brain) UpdateGoal(ctx context.Context, id int64, content string, priori
 
 // DeleteGoal soft-deletes a goal by ID. Children cascade via FK.
 func (b *Brain) DeleteGoal(ctx context.Context, id int64) error {
-	tag, err := b.pool.Exec(ctx,
-		"UPDATE goals SET deleted_at = now(), updated_at = now() WHERE id = $1 AND deleted_at IS NULL",
+	tx, err := b.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin delete goal: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx,
+		`WITH RECURSIVE goal_tree AS (
+			SELECT id FROM goals WHERE id = $1 AND deleted_at IS NULL
+			UNION ALL
+			SELECT child.id FROM goals child JOIN goal_tree parent ON child.parent_id = parent.id
+		)
+		UPDATE goals SET deleted_at = now(), updated_at = now()
+		WHERE id IN (SELECT id FROM goal_tree) AND deleted_at IS NULL`,
 		id,
 	)
 	if err != nil {
@@ -298,6 +315,9 @@ func (b *Brain) DeleteGoal(ctx context.Context, id int64) error {
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrGoalNotFound
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit delete goal: %w", err)
 	}
 	return nil
 }

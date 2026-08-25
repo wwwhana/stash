@@ -65,11 +65,17 @@ func (b *Brain) RecallWithOptions(ctx context.Context, namespaces []string, quer
 	if err := validateContent(query); err != nil {
 		return nil, err
 	}
+	if err := validateScore(opts.MinScore); err != nil {
+		return nil, err
+	}
 	if limit <= 0 {
 		limit = 10
 	}
 	if limit > 100 {
 		limit = 100
+	}
+	if b.config.MaxResultSize > 0 && limit > b.config.MaxResultSize {
+		limit = b.config.MaxResultSize
 	}
 
 	vec, err := b.embedder.EmbedQuery(ctx, query)

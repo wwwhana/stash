@@ -29,6 +29,10 @@ func (b *Brain) consolidateGoalProgress(ctx context.Context, nsID int64, cp *mod
 	if len(goals) == 0 {
 		return
 	}
+	goalsByID := make(map[int64]models.Goal, len(goals))
+	for _, goal := range goals {
+		goalsByID[goal.ID] = goal
+	}
 
 	factSQL, factArgs, err := b.queries.FetchFacts(nsID, cp.LastGoalProgressFactID, 30)
 	if err != nil {
@@ -69,28 +73,45 @@ func (b *Brain) consolidateGoalProgress(ctx context.Context, nsID int64, cp *mod
 	}
 
 	for _, a := range assessments {
+		goal, ok := goalsByID[a.GoalID]
+		if !ok || goal.NamespaceID != nsID {
+			errs = append(errs, fmt.Sprintf("goal assessment %d is outside namespace %d", a.GoalID, nsID))
+			continue
+		}
+		if a.Note == "" {
+			continue
+		}
+		if err := validateConfidence(a.Confidence); err != nil {
+			errs = append(errs, fmt.Sprintf("goal assessment %d confidence: %v", a.GoalID, err))
+			continue
+		}
 		var note string
 		switch a.Assessment {
 		case "progress":
 			note = fmt.Sprintf("\n[PROGRESS] %s (confidence: %.2f)", a.Note, a.Confidence)
-			annotated++
 		case "suggested_complete":
 			note = fmt.Sprintf("\n[SUGGESTED COMPLETE] %s (confidence: %.2f)", a.Note, a.Confidence)
-			annotated++
-			suggestedComplete++
 		case "contradicted":
 			note = fmt.Sprintf("\n[CONTRADICTED] %s (confidence: %.2f)", a.Note, a.Confidence)
-			annotated++
 		default:
 			continue
 		}
 
-		_, err := b.pool.Exec(ctx,
-			`UPDATE goals SET notes = notes || $2, updated_at = now() WHERE id = $1`,
+		tag, err := b.pool.Exec(ctx,
+			`UPDATE goals SET notes = notes || $2, updated_at = now() WHERE id = $1 AND status = 'active' AND deleted_at IS NULL`,
 			a.GoalID, note,
 		)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("annotate goal %d: %v", a.GoalID, err))
+			continue
+		}
+		if tag.RowsAffected() == 0 {
+			errs = append(errs, fmt.Sprintf("annotate goal %d: goal is no longer active", a.GoalID))
+			continue
+		}
+		annotated++
+		if a.Assessment == "suggested_complete" {
+			suggestedComplete++
 		}
 	}
 
@@ -100,7 +121,7 @@ func (b *Brain) consolidateGoalProgress(ctx context.Context, nsID int64, cp *mod
 			maxFactID = f.ID
 		}
 	}
-	if maxFactID > cp.LastGoalProgressFactID {
+	if len(errs) == 0 && maxFactID > cp.LastGoalProgressFactID {
 		cp.LastGoalProgressFactID = maxFactID
 	}
 

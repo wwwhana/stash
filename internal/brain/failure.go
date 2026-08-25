@@ -14,14 +14,23 @@ const failureColumns = `id, namespace_id, goal_id, content, reason, lesson, crea
 
 // CreateFailure records what didn't work, why, and what to do instead.
 func (b *Brain) CreateFailure(ctx context.Context, nsID int64, content, reason, lesson string, goalID *int64) (*models.Failure, error) {
-	if content == "" {
-		return nil, ErrEmptyContent
+	if err := validateContent(content); err != nil {
+		return nil, err
 	}
-	if reason == "" {
-		return nil, fmt.Errorf("brain: failure reason is required")
+	if err := validateContent(reason); err != nil {
+		return nil, fmt.Errorf("brain: failure reason: %w", err)
 	}
-	if lesson == "" {
-		return nil, fmt.Errorf("brain: failure lesson is required")
+	if err := validateContent(lesson); err != nil {
+		return nil, fmt.Errorf("brain: failure lesson: %w", err)
+	}
+	if goalID != nil {
+		goal, err := b.GetGoal(ctx, *goalID)
+		if err != nil {
+			return nil, fmt.Errorf("check failure goal: %w", err)
+		}
+		if goal.NamespaceID != nsID {
+			return nil, fmt.Errorf("brain: failure goal must share the target namespace")
+		}
 	}
 
 	var f models.Failure
@@ -44,7 +53,7 @@ func (b *Brain) ListFailures(ctx context.Context, namespaceSlugs []string, goalI
 		return nil, err
 	}
 
-	page = page.Sanitize()
+	page = b.sanitizePage(page)
 
 	query := `SELECT ` + failureColumns + ` FROM failures WHERE namespace_id = ANY($1) AND deleted_at IS NULL`
 	args := []any{nsIDs}
@@ -85,7 +94,7 @@ func (b *Brain) ListFailures(ctx context.Context, namespaceSlugs []string, goalI
 func (b *Brain) GetFailure(ctx context.Context, id int64) (*models.Failure, error) {
 	var f models.Failure
 	err := b.pool.QueryRow(ctx,
-		`SELECT `+failureColumns+` FROM failures WHERE id = $1`, id,
+		`SELECT `+failureColumns+` FROM failures WHERE id = $1 AND deleted_at IS NULL`, id,
 	).Scan(&f.ID, &f.NamespaceID, &f.GoalID, &f.Content, &f.Reason, &f.Lesson, &f.CreatedAt, &f.DeletedAt)
 	if err != nil {
 		if err == pgx.ErrNoRows {

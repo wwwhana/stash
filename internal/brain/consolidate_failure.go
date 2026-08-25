@@ -126,11 +126,13 @@ func (b *Brain) consolidateFailurePatterns(ctx context.Context, nsID int64, cp *
 		}
 	}
 
-	if maxFailureID > cp.LastFailureID {
-		cp.LastFailureID = maxFailureID
-	}
-	if maxEpisodeID > cp.LastFailureEpisodeID {
-		cp.LastFailureEpisodeID = maxEpisodeID
+	if len(errs) == 0 {
+		if maxFailureID > cp.LastFailureID {
+			cp.LastFailureID = maxFailureID
+		}
+		if maxEpisodeID > cp.LastFailureEpisodeID {
+			cp.LastFailureEpisodeID = maxEpisodeID
+		}
 	}
 
 	return

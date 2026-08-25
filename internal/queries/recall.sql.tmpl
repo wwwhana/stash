@@ -47,6 +47,7 @@ SELECT
     word_similarity({{.Bind .Args.query}}, content) AS score
 FROM facts
 WHERE deleted_at IS NULL
+    AND valid_until IS NULL
     AND {{.Bind .Args.query}} <% content
 {{if .Args.namespace_ids}}
     AND namespace_id IN ({{range $i, $id := .Args.namespace_ids}}{{if $i}}, {{end}}{{$.Bind $id}}{{end}})
@@ -65,6 +66,7 @@ SELECT
     1 - (embedding <=> {{.Bind .Args.vector}}) AS score
 FROM facts
 WHERE deleted_at IS NULL
+    AND valid_until IS NULL
     AND embedding IS NOT NULL
 {{if .Args.min_score}}
     AND 1 - (embedding <=> {{.Bind .Args.vector}}) >= {{.Bind .Args.min_score}}

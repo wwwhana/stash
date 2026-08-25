@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"time"
 
@@ -67,5 +68,47 @@ func NewFromFile(filename string) (*Config, error) {
 	if err := env.ParseWithOptions(cfg, opts); err != nil {
 		return nil, err
 	}
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
 	return cfg, nil
+}
+
+// Validate rejects configurations that would otherwise fail much later during
+// database startup or the first MCP call.
+func (c *Config) Validate() error {
+	if c.VectorDim <= 0 {
+		return fmt.Errorf("STASH_VECTOR_DIM must be greater than zero")
+	}
+	if c.MaxResultSize <= 0 {
+		return fmt.Errorf("STASH_MAX_RESULT_SIZE must be greater than zero")
+	}
+	if c.ContextTTL <= 0 {
+		return fmt.Errorf("STASH_CONTEXT_TTL must be greater than zero")
+	}
+	if c.HTTPAddr == "" {
+		return fmt.Errorf("STASH_HTTP_ADDR must not be empty")
+	}
+	if c.ConsolidationBatchSize <= 0 {
+		return fmt.Errorf("STASH_CONSOLIDATION_BATCH_SIZE must be greater than zero")
+	}
+	if c.ConsolidationSimilarityThreshold < 0 || c.ConsolidationSimilarityThreshold > 1 {
+		return fmt.Errorf("STASH_CONSOLIDATION_SIMILARITY_THRESHOLD must be between 0 and 1")
+	}
+	if c.ConsolidationDedupThreshold < 0 || c.ConsolidationDedupThreshold > 1 {
+		return fmt.Errorf("STASH_CONSOLIDATION_DEDUP_THRESHOLD must be between 0 and 1")
+	}
+	if c.DecayFactor < 0 || c.DecayFactor > 1 {
+		return fmt.Errorf("STASH_DECAY_FACTOR must be between 0 and 1")
+	}
+	if c.ExpiryThreshold < 0 || c.ExpiryThreshold > 1 {
+		return fmt.Errorf("STASH_EXPIRY_THRESHOLD must be between 0 and 1")
+	}
+	if c.HypothesisAutoConfirmThreshold < 0 || c.HypothesisAutoConfirmThreshold > 1 {
+		return fmt.Errorf("STASH_HYPOTHESIS_AUTO_CONFIRM_THRESHOLD must be between 0 and 1")
+	}
+	if c.HypothesisAutoRejectThreshold < 0 || c.HypothesisAutoRejectThreshold > 1 {
+		return fmt.Errorf("STASH_HYPOTHESIS_AUTO_REJECT_THRESHOLD must be between 0 and 1")
+	}
+	return nil
 }

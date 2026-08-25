@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -35,6 +37,15 @@ func serveHTTP(ctx context.Context, cmd *cli.Command) error {
 
 	host := cmd.String("host")
 	port := cmd.String("port")
+	if bc != nil && bc.Config != nil {
+		configuredHost, configuredPort := configuredHTTPAddress(bc.Config.HTTPAddr, host, port)
+		if !cmd.IsSet("host") {
+			host = configuredHost
+		}
+		if !cmd.IsSet("port") {
+			port = configuredPort
+		}
+	}
 	addr := net.JoinHostPort(host, port)
 
 	mux := http.NewServeMux()
@@ -61,15 +72,49 @@ func serveHTTP(ctx context.Context, cmd *cli.Command) error {
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
+	errCh := make(chan error, 1)
 	go func() {
 		log.Printf("metrics server listening on %s", addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Printf("metrics server error: %v", err)
+			errCh <- err
+			return
 		}
+		errCh <- nil
 	}()
 
-	<-ctx.Done()
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer shutdownCancel()
-	return srv.Shutdown(shutdownCtx)
+	select {
+	case err := <-errCh:
+		if err != nil {
+			cancel()
+			return fmt.Errorf("metrics server: %w", err)
+		}
+		return nil
+	case <-ctx.Done():
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		return srv.Shutdown(shutdownCtx)
+	}
+}
+
+// configuredHTTPAddress turns STASH_HTTP_ADDR into host/port flags while
+// preserving an explicitly supplied command-line value. It accepts the usual
+// :9090, 127.0.0.1:9090, and 9090 forms.
+func configuredHTTPAddress(raw, fallbackHost, fallbackPort string) (string, string) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return fallbackHost, fallbackPort
+	}
+	if strings.HasPrefix(raw, ":") && len(raw) > 1 {
+		return fallbackHost, raw[1:]
+	}
+	if host, port, err := net.SplitHostPort(raw); err == nil && port != "" {
+		if host == "" {
+			host = fallbackHost
+		}
+		return host, port
+	}
+	if !strings.Contains(raw, ":") {
+		return fallbackHost, raw
+	}
+	return fallbackHost, fallbackPort
 }

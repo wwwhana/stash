@@ -18,11 +18,11 @@ func (b *Brain) QueryFacts(ctx context.Context, namespaceSlugs []string, since, 
 		return nil, err
 	}
 
-	page = page.Sanitize()
+	page = b.sanitizePage(page)
 
 	query := `SELECT id, namespace_id, content, embedding, embedding_model, confidence,
 	          entity, property, value, valid_from, valid_until, created_at, updated_at, deleted_at
-	          FROM facts WHERE namespace_id = ANY($1) AND deleted_at IS NULL`
+	          FROM facts WHERE namespace_id = ANY($1) AND deleted_at IS NULL AND valid_until IS NULL`
 	args := []any{nsIDs}
 	argN := 1
 
@@ -69,12 +69,18 @@ func (b *Brain) QueryFacts(ctx context.Context, namespaceSlugs []string, since, 
 
 // UpdateFactConfidence updates the confidence score of a fact.
 func (b *Brain) UpdateFactConfidence(ctx context.Context, factID int64, confidence float32) error {
-	_, err := b.pool.Exec(ctx,
-		"UPDATE facts SET confidence = $2, updated_at = now() WHERE id = $1",
+	if err := validateConfidence(confidence); err != nil {
+		return err
+	}
+	tag, err := b.pool.Exec(ctx,
+		"UPDATE facts SET confidence = $2, updated_at = now() WHERE id = $1 AND deleted_at IS NULL AND valid_until IS NULL",
 		factID, confidence,
 	)
 	if err != nil {
 		return fmt.Errorf("update fact confidence: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrFactNotFound
 	}
 	return nil
 }
@@ -127,8 +133,8 @@ func (b *Brain) GetFact(ctx context.Context, factID int64) (*models.Fact, error)
 	var f models.Fact
 	err := b.pool.QueryRow(ctx,
 		`SELECT id, namespace_id, content, embedding, embedding_model, confidence,
-		 entity, property, value, valid_from, valid_until, created_at, updated_at, deleted_at
-		 FROM facts WHERE id = $1`,
+			 entity, property, value, valid_from, valid_until, created_at, updated_at, deleted_at
+			 FROM facts WHERE id = $1 AND deleted_at IS NULL AND valid_until IS NULL`,
 		factID,
 	).Scan(
 		&f.ID, &f.NamespaceID, &f.Content, &f.Embedding, &f.EmbeddingModel,
@@ -153,11 +159,13 @@ func (b *Brain) QueryRelationships(ctx context.Context, namespaceSlugs []string,
 		return nil, err
 	}
 
-	page = page.Sanitize()
+	page = b.sanitizePage(page)
 
 	rows, err := b.pool.Query(ctx,
-		`SELECT id, namespace_id, from_entity, relation_type, to_entity, confidence, source_fact_id, created_at, deleted_at
-		 FROM relationships WHERE namespace_id = ANY($1) AND deleted_at IS NULL ORDER BY id LIMIT $2 OFFSET $3`,
+		`SELECT r.id, r.namespace_id, r.from_entity, r.relation_type, r.to_entity, r.confidence, r.source_fact_id, r.created_at, r.deleted_at
+		 FROM relationships r
+		 JOIN facts f ON f.id = r.source_fact_id AND f.namespace_id = r.namespace_id AND f.deleted_at IS NULL AND f.valid_until IS NULL
+		 WHERE r.namespace_id = ANY($1) AND r.deleted_at IS NULL ORDER BY r.id LIMIT $2 OFFSET $3`,
 		nsIDs, page.Limit, page.Offset,
 	)
 	if err != nil {
@@ -184,7 +192,7 @@ func (b *Brain) QueryPatterns(ctx context.Context, namespaceSlugs []string, page
 		return nil, err
 	}
 
-	page = page.Sanitize()
+	page = b.sanitizePage(page)
 
 	rows, err := b.pool.Query(ctx,
 		`SELECT id, namespace_id, content, confidence, source_fact_ids, source_rel_ids, coherence_score, created_at, updated_at, deleted_at

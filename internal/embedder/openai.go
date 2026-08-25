@@ -97,8 +97,14 @@ func (o *OpenAI) embed(ctx context.Context, text string) ([]float32, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(resp.Data) == 0 {
+		return nil, errors.New("embedder: endpoint returned no embedding")
+	}
 
 	embedding := resp.Data[0].Embedding
+	if len(embedding) != o.dims {
+		return nil, errors.New("embedder: endpoint returned an embedding with unexpected dimensions")
+	}
 	vec := make([]float32, len(embedding))
 	for i := range embedding {
 		vec[i] = float32(embedding[i])

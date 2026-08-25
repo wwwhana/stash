@@ -69,26 +69,30 @@ func (b *Brain) DetectContradictions(ctx context.Context, nsID int64, fact *mode
 		if llmErr != nil {
 			continue
 		}
-
-		detected++
+		if err := validateConfidence(cr.Confidence); err != nil {
+			continue
+		}
 
 		switch cr.Classification {
 		case reasoner.ClassificationReplacement:
 			if cr.Confidence >= 0.9 {
-				autoResolved++
 				if err := b.autoSupersede(ctx, nsID, ef.ID, fact.ID, *fact.Entity, *fact.Property, oldValue, newValue, cr.Confidence); err != nil {
 					continue
 				}
+				detected++
+				autoResolved++
 			} else {
 				if err := b.recordContradiction(ctx, nsID, ef.ID, fact.ID, *fact.Entity, *fact.Property, oldValue, newValue, cr.Confidence, "structured"); err != nil {
 					continue
 				}
+				detected++
 			}
 
 		case reasoner.ClassificationContradiction:
 			if err := b.recordContradiction(ctx, nsID, ef.ID, fact.ID, *fact.Entity, *fact.Property, oldValue, newValue, cr.Confidence, "structured"); err != nil {
 				continue
 			}
+			detected++
 
 		case reasoner.ClassificationCompatible:
 		}
@@ -100,22 +104,34 @@ func (b *Brain) DetectContradictions(ctx context.Context, nsID int64, fact *mode
 func (b *Brain) autoSupersede(ctx context.Context, nsID, oldFactID, newFactID int64, entity, property, oldValue, newValue string, confidence float32) error {
 	now := time.Now().UTC()
 
-	_, err := b.pool.Exec(ctx,
-		"UPDATE facts SET valid_until = $2, updated_at = $3 WHERE id = $1",
+	tx, err := b.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin supersede transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	tag, err := tx.Exec(ctx,
+		"UPDATE facts SET valid_until = $2, updated_at = $3 WHERE id = $1 AND deleted_at IS NULL AND valid_until IS NULL",
 		oldFactID, now, now,
 	)
 	if err != nil {
 		return fmt.Errorf("supersede old fact: %w", err)
 	}
+	if tag.RowsAffected() == 0 {
+		return ErrFactNotFound
+	}
 
 	resolution := "superseded"
-	_, err = b.pool.Exec(ctx,
+	_, err = tx.Exec(ctx,
 		`INSERT INTO contradictions (namespace_id, old_fact_id, new_fact_id, entity, property, old_value, new_value, confidence, method, resolved, resolution, resolved_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'auto', TRUE, $9, $10)`,
 		nsID, oldFactID, newFactID, entity, property, oldValue, newValue, confidence, resolution, now,
 	)
 	if err != nil {
 		return fmt.Errorf("insert auto-supersede contradiction: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit auto-supersede: %w", err)
 	}
 
 	return nil
@@ -140,7 +156,7 @@ func (b *Brain) ListContradictions(ctx context.Context, namespaceSlugs []string,
 		return nil, err
 	}
 
-	page = page.Sanitize()
+	page = b.sanitizePage(page)
 
 	rows, err := b.pool.Query(ctx,
 		`SELECT id, namespace_id, old_fact_id, new_fact_id, entity, property, old_value, new_value,
@@ -175,7 +191,7 @@ func (b *Brain) ResolveContradiction(ctx context.Context, id int64, resolution s
 	now := time.Now().UTC()
 
 	tag, err := b.pool.Exec(ctx,
-		`UPDATE contradictions SET resolved = TRUE, resolution = $2, resolved_at = $3 WHERE id = $1`,
+		`UPDATE contradictions SET resolved = TRUE, resolution = $2, resolved_at = $3 WHERE id = $1 AND resolved = FALSE`,
 		id, resolution, now,
 	)
 	if err != nil {

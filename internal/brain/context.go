@@ -51,7 +51,7 @@ func (b *Brain) GetContext(ctx context.Context, namespaceSlug string) (*models.C
 	var c models.Context
 	err = b.pool.QueryRow(ctx,
 		`SELECT namespace_id, focus, expires_at, created_at, updated_at
-		 FROM contexts WHERE namespace_id = $1 AND deleted_at IS NULL`,
+		 FROM contexts WHERE namespace_id = $1 AND deleted_at IS NULL AND expires_at > now()`,
 		nsID,
 	).Scan(&c.NamespaceID, &c.Focus, &c.ExpiresAt, &c.CreatedAt, &c.UpdatedAt)
 	if err != nil {

@@ -20,14 +20,30 @@ func (b *Brain) DetectCausalLinks(ctx context.Context, nsID int64, facts []model
 	if err != nil {
 		return 0, []string{fmt.Sprintf("reason causal links: %v", err)}
 	}
+	factIDs := make(map[int64]struct{}, len(facts))
+	for _, fact := range facts {
+		if fact.NamespaceID != nsID {
+			continue
+		}
+		factIDs[fact.ID] = struct{}{}
+	}
 
 	var count int
 	for _, link := range links {
 		if link.CauseFactID == link.EffectFactID {
 			continue
 		}
+		if _, ok := factIDs[link.CauseFactID]; !ok {
+			continue
+		}
+		if _, ok := factIDs[link.EffectFactID]; !ok {
+			continue
+		}
+		if err := validateConfidence(link.Confidence); err != nil {
+			continue
+		}
 
-		_, err := b.pool.Exec(ctx,
+		tag, err := b.pool.Exec(ctx,
 			`INSERT INTO causal_links (namespace_id, cause_fact_id, effect_fact_id, confidence, method)
 			 VALUES ($1, $2, $3, $4, 'extracted')
 			 ON CONFLICT (cause_fact_id, effect_fact_id) WHERE deleted_at IS NULL DO NOTHING`,
@@ -36,7 +52,7 @@ func (b *Brain) DetectCausalLinks(ctx context.Context, nsID int64, facts []model
 		if err != nil {
 			return count, []string{fmt.Sprintf("insert causal link: %v", err)}
 		}
-		count++
+		count += int(tag.RowsAffected())
 	}
 
 	return count, nil
@@ -49,12 +65,15 @@ func (b *Brain) ListCausalLinks(ctx context.Context, namespaceSlugs []string, pa
 		return nil, err
 	}
 
-	page = page.Sanitize()
+	page = b.sanitizePage(page)
 
 	rows, err := b.pool.Query(ctx,
-		`SELECT id, namespace_id, cause_fact_id, effect_fact_id, confidence, method, created_at, deleted_at
-		 FROM causal_links WHERE namespace_id = ANY($1) AND deleted_at IS NULL
-		 ORDER BY id LIMIT $2 OFFSET $3`,
+		`SELECT cl.id, cl.namespace_id, cl.cause_fact_id, cl.effect_fact_id, cl.confidence, cl.method, cl.created_at, cl.deleted_at
+		 FROM causal_links cl
+		 JOIN facts cause_fact ON cause_fact.id = cl.cause_fact_id AND cause_fact.namespace_id = cl.namespace_id AND cause_fact.deleted_at IS NULL AND cause_fact.valid_until IS NULL
+		 JOIN facts effect_fact ON effect_fact.id = cl.effect_fact_id AND effect_fact.namespace_id = cl.namespace_id AND effect_fact.deleted_at IS NULL AND effect_fact.valid_until IS NULL
+		 WHERE cl.namespace_id = ANY($1) AND cl.deleted_at IS NULL
+		 ORDER BY cl.id LIMIT $2 OFFSET $3`,
 		nsIDs, page.Limit, page.Offset,
 	)
 	if err != nil {
@@ -77,6 +96,29 @@ func (b *Brain) ListCausalLinks(ctx context.Context, namespaceSlugs []string, pa
 func (b *Brain) CreateCausalLink(ctx context.Context, nsID, causeFactID, effectFactID int64, confidence float32) (*models.CausalLink, error) {
 	if causeFactID == effectFactID {
 		return nil, fmt.Errorf("brain: cause and effect fact IDs must differ")
+	}
+	if err := validateConfidence(confidence); err != nil {
+		return nil, err
+	}
+	var causeNS, effectNS int64
+	if err := b.pool.QueryRow(ctx,
+		"SELECT namespace_id FROM facts WHERE id = $1 AND deleted_at IS NULL AND valid_until IS NULL", causeFactID,
+	).Scan(&causeNS); err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, ErrFactNotFound
+		}
+		return nil, fmt.Errorf("check cause fact: %w", err)
+	}
+	if err := b.pool.QueryRow(ctx,
+		"SELECT namespace_id FROM facts WHERE id = $1 AND deleted_at IS NULL AND valid_until IS NULL", effectFactID,
+	).Scan(&effectNS); err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, ErrFactNotFound
+		}
+		return nil, fmt.Errorf("check effect fact: %w", err)
+	}
+	if causeNS != nsID || effectNS != nsID || causeNS != effectNS {
+		return nil, fmt.Errorf("brain: causal facts must be active and share the target namespace")
 	}
 
 	var cl models.CausalLink
@@ -127,6 +169,12 @@ func (b *Brain) TraceCausalChainInNamespaces(ctx context.Context, factID int64, 
 }
 
 func (b *Brain) traceCausalChain(ctx context.Context, factID int64, direction string, maxDepth int, namespaceIDs []int64) ([]models.CausalLink, error) {
+	if direction != "forward" && direction != "backward" {
+		return nil, fmt.Errorf("brain: causal direction must be forward or backward")
+	}
+	if _, err := b.GetFact(ctx, factID); err != nil {
+		return nil, err
+	}
 	if maxDepth <= 0 {
 		maxDepth = 10
 	}
@@ -145,19 +193,24 @@ func (b *Brain) traceCausalChain(ctx context.Context, factID int64, direction st
 	recursiveNamespaceFilter := ""
 	args := []any{factID, maxDepth}
 	if len(namespaceIDs) > 0 {
-		namespaceFilter = " AND namespace_id = ANY($3)"
+		namespaceFilter = " AND cl.namespace_id = ANY($3)"
 		recursiveNamespaceFilter = " AND cl.namespace_id = ANY($3)"
 		args = append(args, namespaceIDs)
 	}
 
 	query := fmt.Sprintf(`
 		WITH RECURSIVE chain AS (
-			SELECT id, namespace_id, cause_fact_id, effect_fact_id, confidence, method, created_at, 1 AS depth
-			FROM causal_links
-			WHERE %s = $1 AND deleted_at IS NULL%s
+			SELECT cl.id, cl.namespace_id, cl.cause_fact_id, cl.effect_fact_id, cl.confidence, cl.method, cl.created_at, 1 AS depth
+			FROM causal_links cl
+			JOIN facts cause_fact ON cause_fact.id = cl.cause_fact_id AND cause_fact.namespace_id = cl.namespace_id AND cause_fact.deleted_at IS NULL AND cause_fact.valid_until IS NULL
+			JOIN facts effect_fact ON effect_fact.id = cl.effect_fact_id AND effect_fact.namespace_id = cl.namespace_id AND effect_fact.deleted_at IS NULL AND effect_fact.valid_until IS NULL
+			WHERE cl.%s = $1 AND cl.deleted_at IS NULL%s
 			UNION ALL
 			SELECT cl.id, cl.namespace_id, cl.cause_fact_id, cl.effect_fact_id, cl.confidence, cl.method, cl.created_at, c.depth + 1
-			FROM causal_links cl JOIN chain c ON cl.%s = c.%s
+			FROM causal_links cl
+			JOIN chain c ON cl.%s = c.%s
+			JOIN facts cause_fact ON cause_fact.id = cl.cause_fact_id AND cause_fact.namespace_id = cl.namespace_id AND cause_fact.deleted_at IS NULL AND cause_fact.valid_until IS NULL
+			JOIN facts effect_fact ON effect_fact.id = cl.effect_fact_id AND effect_fact.namespace_id = cl.namespace_id AND effect_fact.deleted_at IS NULL AND effect_fact.valid_until IS NULL
 			WHERE cl.deleted_at IS NULL AND c.depth < $2%s
 		)
 		SELECT id, namespace_id, cause_fact_id, effect_fact_id, confidence, method, created_at

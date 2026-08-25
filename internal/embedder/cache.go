@@ -20,9 +20,9 @@ type Cached struct {
 }
 
 type call struct {
-	wg  sync.WaitGroup
-	vec []float32
-	err error
+	done chan struct{}
+	vec  []float32
+	err  error
 }
 
 // NewCached creates a cached embedder that stores embeddings in the embedding_cache table.
@@ -63,17 +63,20 @@ func (c *Cached) embedCached(
 	}
 
 	// Check inflight dedup
-	callVal, loaded := c.inflight.LoadOrStore(hash, &call{})
+	callVal, loaded := c.inflight.LoadOrStore(hash, &call{done: make(chan struct{})})
 	callInfo := callVal.(*call)
 
 	if loaded {
-		callInfo.wg.Wait()
-		return callInfo.vec, callInfo.err
+		select {
+		case <-callInfo.done:
+			return callInfo.vec, callInfo.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 
-	callInfo.wg.Add(1)
 	defer func() {
-		callInfo.wg.Done()
+		close(callInfo.done)
 		c.inflight.Delete(hash)
 	}()
 

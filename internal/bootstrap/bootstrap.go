@@ -94,6 +94,7 @@ func New(ctx context.Context) (*Context, error) {
 	}
 
 	br, err := brain.New(pool, cachedEmb, reas, q, brain.Config{
+		MaxResultSize:                  cfg.MaxResultSize,
 		BatchSize:                      cfg.ConsolidationBatchSize,
 		SimilarityThreshold:            cfg.ConsolidationSimilarityThreshold,
 		DedupThreshold:                 cfg.ConsolidationDedupThreshold,

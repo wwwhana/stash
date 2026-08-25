@@ -2,14 +2,18 @@ package brain
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/alash3al/stash/internal/embedder"
 	"github.com/alash3al/stash/internal/queries"
 	"github.com/alash3al/stash/internal/reasoner"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -19,11 +23,13 @@ var (
 	ErrFactNotFound      = fmt.Errorf("brain: fact not found")
 	ErrEmptyContent      = fmt.Errorf("brain: content cannot be empty")
 	ErrContentTooLong    = fmt.Errorf("brain: content exceeds maximum length")
-	ErrInvalidPath = fmt.Errorf("brain: namespace path must start with / and contain valid segments (lowercase alphanumeric, hyphens, underscores)")
+	ErrInvalidConfidence = fmt.Errorf("brain: confidence must be between 0 and 1")
+	ErrInvalidScore      = fmt.Errorf("brain: score must be between 0 and 1")
+	ErrInvalidPath       = fmt.Errorf("brain: namespace path must start with / and contain valid segments (lowercase alphanumeric, hyphens, underscores)")
 
-	pathSegmentRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+	pathSegmentRe         = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 	ErrNamespacesRequired = fmt.Errorf("brain: at least one namespace is required")
-	maxContentLen = 10000
+	maxContentLen         = 10000
 )
 
 const (
@@ -51,11 +57,23 @@ func (p Pagination) Sanitize() Pagination {
 	return p
 }
 
+// SanitizeWithMax applies the hard safety bound and the configured result
+// limit. A smaller configured value is useful for deployments that must keep
+// MCP responses small; the hard bound still protects callers that omit config.
+func (p Pagination) SanitizeWithMax(max int) Pagination {
+	p = p.Sanitize()
+	if max > 0 && max < p.Limit {
+		p.Limit = max
+	}
+	return p
+}
+
 type Config struct {
-	BatchSize           int
-	SimilarityThreshold float64
-	DedupThreshold      float64
-	Window              time.Duration
+	MaxResultSize                  int
+	BatchSize                      int
+	SimilarityThreshold            float64
+	DedupThreshold                 float64
+	Window                         time.Duration
 	DecayFactor                    float64
 	ExpiryThreshold                float32
 	HypothesisAutoConfirmThreshold float32
@@ -64,6 +82,7 @@ type Config struct {
 
 func DefaultConfig() Config {
 	return Config{
+		MaxResultSize:                  10000,
 		BatchSize:                      100,
 		SimilarityThreshold:            0.85,
 		DedupThreshold:                 0.85,
@@ -81,6 +100,14 @@ type Brain struct {
 	reasoner reasoner.Reasoner
 	queries  *queries.Queries
 	config   Config
+	// Consolidation is also exposed as an MCP tool while the background worker
+	// is running. Keep the checkpoint and derived rows consistent when both
+	// paths target the same process.
+	consolidationMu sync.Mutex
+}
+
+func (b *Brain) sanitizePage(page Pagination) Pagination {
+	return page.SanitizeWithMax(b.config.MaxResultSize)
 }
 
 func New(pool *pgxpool.Pool, e embedder.Embedder, r reasoner.Reasoner, q *queries.Queries, cfg Config) (*Brain, error) {
@@ -110,11 +137,25 @@ func (b *Brain) Close() {
 }
 
 func validateContent(content string) error {
-	if content == "" {
+	if strings.TrimSpace(content) == "" {
 		return ErrEmptyContent
 	}
 	if len(content) > maxContentLen {
 		return ErrContentTooLong
+	}
+	return nil
+}
+
+func validateConfidence(confidence float32) error {
+	if math.IsNaN(float64(confidence)) || math.IsInf(float64(confidence), 0) || confidence < 0 || confidence > 1 {
+		return ErrInvalidConfidence
+	}
+	return nil
+}
+
+func validateScore(score float32) error {
+	if math.IsNaN(float64(score)) || math.IsInf(float64(score), 0) || score < 0 || score > 1 {
+		return ErrInvalidScore
 	}
 	return nil
 }
@@ -124,6 +165,9 @@ func validatePath(path string) error {
 		return nil
 	}
 	if !strings.HasPrefix(path, "/") {
+		return ErrInvalidPath
+	}
+	if strings.HasSuffix(path, "/") {
 		return ErrInvalidPath
 	}
 	segments := splitPath(path)
@@ -167,7 +211,10 @@ func (b *Brain) resolveNamespaceID(ctx context.Context, path string) (int64, err
 		"SELECT id FROM namespaces WHERE slug = $1", path,
 	).Scan(&id)
 	if err != nil {
-		return 0, ErrNamespaceNotFound
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, ErrNamespaceNotFound
+		}
+		return 0, fmt.Errorf("resolve namespace %q: %w", path, err)
 	}
 	return id, nil
 }
@@ -226,7 +273,10 @@ func (b *Brain) resolveNamespaceIDWithDescendants(ctx context.Context, path stri
 			}
 			ids = append(ids, id)
 		}
-		return ids, rows.Err()
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("read all namespaces: %w", err)
+		}
+		return ids, nil
 	}
 
 	// Slug segments allow `_` (see pathSegmentRe), which is a LIKE wildcard
@@ -250,11 +300,14 @@ func (b *Brain) resolveNamespaceIDWithDescendants(ctx context.Context, path stri
 		ids = append(ids, id)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read namespace descendants: %w", err)
+	}
 	if len(ids) == 0 {
 		return nil, ErrNamespaceNotFound
 	}
 
-	return ids, rows.Err()
+	return ids, nil
 }
 
 func (b *Brain) Health(ctx context.Context) error {

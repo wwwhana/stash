@@ -17,8 +17,8 @@ var (
 )
 
 var validTransitions = map[string][]string{
-	"proposed": {"testing", "rejected"},
-	"testing":  {"confirmed", "rejected", "proposed"},
+	"proposed":  {"testing", "rejected"},
+	"testing":   {"confirmed", "rejected", "proposed"},
 	"confirmed": {},
 	"rejected":  {},
 }
@@ -64,11 +64,39 @@ func scanHypothesisRows(rows pgx.Rows) ([]models.Hypothesis, error) {
 
 // CreateHypothesis creates a new hypothesis in proposed status.
 func (b *Brain) CreateHypothesis(ctx context.Context, nsID int64, content, verificationPlan string, confidence float32, sourceFactIDs []int64) (*models.Hypothesis, error) {
-	if content == "" {
-		return nil, ErrEmptyContent
+	if err := validateContent(content); err != nil {
+		return nil, err
+	}
+	if err := validateContent(verificationPlan); err != nil {
+		return nil, fmt.Errorf("brain: verification plan: %w", err)
+	}
+	if err := validateConfidence(confidence); err != nil {
+		return nil, err
 	}
 	if sourceFactIDs == nil {
 		sourceFactIDs = []int64{}
+	}
+	if len(sourceFactIDs) > 0 {
+		uniqueIDs := make([]int64, 0, len(sourceFactIDs))
+		seen := make(map[int64]struct{}, len(sourceFactIDs))
+		for _, id := range sourceFactIDs {
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			uniqueIDs = append(uniqueIDs, id)
+		}
+		sourceFactIDs = uniqueIDs
+		var available int
+		if err := b.pool.QueryRow(ctx,
+			"SELECT COUNT(*) FROM facts WHERE id = ANY($1) AND namespace_id = $2 AND deleted_at IS NULL AND valid_until IS NULL",
+			sourceFactIDs, nsID,
+		).Scan(&available); err != nil {
+			return nil, fmt.Errorf("check hypothesis source facts: %w", err)
+		}
+		if available != len(sourceFactIDs) {
+			return nil, fmt.Errorf("brain: all hypothesis source facts must be active and share the target namespace")
+		}
 	}
 
 	var h models.Hypothesis
@@ -98,7 +126,7 @@ func (b *Brain) ListHypotheses(ctx context.Context, namespaceSlugs []string, sta
 		return nil, err
 	}
 
-	page = page.Sanitize()
+	page = b.sanitizePage(page)
 
 	if status != "" {
 		rows, err := b.pool.Query(ctx,
@@ -138,7 +166,7 @@ func (b *Brain) GetHypothesis(ctx context.Context, id int64) (*models.Hypothesis
 		`SELECT id, namespace_id, content, confidence, status, verification_plan, method,
 		 confirmed_fact_id, rejection_reason, source_fact_ids, tested_at, confirmed_at, rejected_at,
 		 created_at, updated_at, deleted_at
-		 FROM hypotheses WHERE id = $1`,
+		 FROM hypotheses WHERE id = $1 AND deleted_at IS NULL`,
 		id,
 	).Scan(
 		&h.ID, &h.NamespaceID, &h.Content, &h.Confidence, &h.Status,
@@ -190,7 +218,7 @@ func (b *Brain) UpdateHypothesisStatus(ctx context.Context, id int64, status str
 	var h models.Hypothesis
 	err = b.pool.QueryRow(ctx,
 		`UPDATE hypotheses SET status = $2, tested_at = $3, confirmed_at = $4, rejected_at = $5, updated_at = $6
-		 WHERE id = $1
+		 WHERE id = $1 AND deleted_at IS NULL
 		 RETURNING id, namespace_id, content, confidence, status, verification_plan, method,
 		 confirmed_fact_id, rejection_reason, source_fact_ids, tested_at, confirmed_at, rejected_at,
 		 created_at, updated_at, deleted_at`,
@@ -248,7 +276,8 @@ func (b *Brain) ConfirmHypothesis(ctx context.Context, id int64) (*models.Hypoth
 	var h models.Hypothesis
 	err = tx.QueryRow(ctx,
 		`UPDATE hypotheses SET status = 'confirmed', confirmed_at = $2, confirmed_fact_id = $3, updated_at = $2
-		 WHERE id = $1
+			 WHERE id = $1
+			 AND deleted_at IS NULL
 		 RETURNING id, namespace_id, content, confidence, status, verification_plan, method,
 		 confirmed_fact_id, rejection_reason, source_fact_ids, tested_at, confirmed_at, rejected_at,
 		 created_at, updated_at, deleted_at`,
@@ -305,7 +334,7 @@ func (b *Brain) RejectHypothesis(ctx context.Context, id int64, reason string) (
 	var h models.Hypothesis
 	err = b.pool.QueryRow(ctx,
 		`UPDATE hypotheses SET status = 'rejected', rejected_at = $2, rejection_reason = $3, updated_at = $2
-		 WHERE id = $1
+		 WHERE id = $1 AND deleted_at IS NULL
 		 RETURNING id, namespace_id, content, confidence, status, verification_plan, method,
 		 confirmed_fact_id, rejection_reason, source_fact_ids, tested_at, confirmed_at, rejected_at,
 		 created_at, updated_at, deleted_at`,
@@ -340,16 +369,22 @@ func (b *Brain) RefineHypothesis(ctx context.Context, id int64, content, verific
 	if verificationPlan == "" {
 		verificationPlan = current.VerificationPlan
 	}
+	if err := validateContent(content); err != nil {
+		return nil, err
+	}
 	if confidence == 0 {
 		confidence = current.Confidence
 	}
+	if err := validateConfidence(confidence); err != nil {
+		return nil, err
+	}
 
-	now := time.Now().UTC
+	now := time.Now().UTC()
 	var h models.Hypothesis
 	err = b.pool.QueryRow(ctx,
 		`UPDATE hypotheses SET content = $2, verification_plan = $3, confidence = $4,
 		 status = 'proposed', tested_at = NULL, updated_at = $5
-		 WHERE id = $1
+		 WHERE id = $1 AND deleted_at IS NULL
 		 RETURNING id, namespace_id, content, confidence, status, verification_plan, method,
 		 confirmed_fact_id, rejection_reason, source_fact_ids, tested_at, confirmed_at, rejected_at,
 		 created_at, updated_at, deleted_at`,

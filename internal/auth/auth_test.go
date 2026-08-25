@@ -84,6 +84,34 @@ func TestBearerTokenAcceptsHTTPWhitespace(t *testing.T) {
 	}
 }
 
+func TestVerifyRequestDoesNotTreatAnIDTokenCookieAsAnMCPCredential(t *testing.T) {
+	p := &Provider{config: Config{APISecret: "test-secret"}}
+	req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "eyJ.fake.id-token"})
+	if _, err := p.VerifyRequest(req); err == nil || !strings.Contains(err.Error(), "unsupported session credential") {
+		t.Fatalf("ID-token-shaped cookie was accepted or returned the wrong error: %v", err)
+	}
+}
+
+func TestAccessTokenAudienceAllowsConfiguredClientOrResource(t *testing.T) {
+	p := &Provider{config: Config{
+		MCPClientID:    "stash-codex",
+		MCPResourceURL: "https://stash.example.com/mcp/",
+	}}
+	for _, audience := range [][]string{
+		{"stash-codex"},
+		{"https://stash.example.com/mcp"},
+		{"other", "stash-codex"},
+	} {
+		if !p.accessTokenAudienceAllowed(audience) {
+			t.Fatalf("audience %v was rejected", audience)
+		}
+	}
+	if p.accessTokenAudienceAllowed([]string{"other"}) {
+		t.Fatal("token for another application was accepted")
+	}
+}
+
 func TestProtectedResourceMetadataUsesEndpointPath(t *testing.T) {
 	p := &Provider{config: Config{Issuer: "https://auth.example.com/application/o/stash-codex/"}}
 	req := httptest.NewRequest(http.MethodGet, "http://stash.example.com/.well-known/oauth-protected-resource/mcp", nil)

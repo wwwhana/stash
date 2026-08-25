@@ -16,14 +16,23 @@ func (b *Brain) CreateNamespace(ctx context.Context, slug, name, description str
 		return 0, err
 	}
 
+	tx, err := b.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("begin create namespace: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
 	segments := splitPath(slug)
 	if len(segments) == 0 {
 		var id int64
-		err := b.pool.QueryRow(ctx,
+		err := tx.QueryRow(ctx,
 			"INSERT INTO namespaces (slug, name) VALUES ('/', '/') ON CONFLICT (slug) DO UPDATE SET updated_at = now() RETURNING id",
 		).Scan(&id)
 		if err != nil {
 			return 0, fmt.Errorf("create root namespace: %w", err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return 0, fmt.Errorf("commit root namespace: %w", err)
 		}
 		return id, nil
 	}
@@ -33,20 +42,25 @@ func (b *Brain) CreateNamespace(ctx context.Context, slug, name, description str
 		currentPath += "/" + seg
 		if i < len(segments)-1 {
 			var id int64
-			_ = b.pool.QueryRow(ctx,
+			if err := tx.QueryRow(ctx,
 				"INSERT INTO namespaces (slug, name) VALUES ($1, $1) ON CONFLICT (slug) DO UPDATE SET updated_at = now() RETURNING id",
 				currentPath,
-			).Scan(&id)
+			).Scan(&id); err != nil {
+				return 0, fmt.Errorf("create parent namespace %s: %w", currentPath, err)
+			}
 		}
 	}
 
 	var id int64
-	err := b.pool.QueryRow(ctx,
+	err = tx.QueryRow(ctx,
 		"INSERT INTO namespaces (slug, name, description) VALUES ($1, $2, $3) ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description, updated_at = now() RETURNING id",
 		slug, name, description,
 	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("create namespace: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("commit namespace: %w", err)
 	}
 	return id, nil
 }
@@ -71,7 +85,7 @@ func (b *Brain) GetNamespace(ctx context.Context, slug string) (*models.Namespac
 // If slugs is empty, returns all namespaces.
 // Each path matches itself and all descendants.
 func (b *Brain) ListNamespaces(ctx context.Context, slugs []string, page Pagination) ([]models.Namespace, error) {
-	page = page.Sanitize()
+	page = b.sanitizePage(page)
 
 	if len(slugs) == 0 {
 		rows, err := b.pool.Query(ctx,
@@ -137,7 +151,7 @@ func (b *Brain) GetOrCreateConsolidationProgress(ctx context.Context, namespaceI
 // SaveConsolidationProgress updates the checkpoint for a namespace.
 func (b *Brain) SaveConsolidationProgress(ctx context.Context, cp models.ConsolidationProgress) error {
 	now := time.Now().UTC()
-	_, err := b.pool.Exec(ctx,
+	tag, err := b.pool.Exec(ctx,
 		`UPDATE consolidation_progress SET
 			last_episode_id = $2, last_fact_id = $3, last_relationship_id = $4,
 			last_pattern_fact_id = $5, last_pattern_rel_id = $6,
@@ -152,6 +166,9 @@ func (b *Brain) SaveConsolidationProgress(ctx context.Context, cp models.Consoli
 	)
 	if err != nil {
 		return fmt.Errorf("save consolidation progress: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNamespaceNotFound
 	}
 	return nil
 }

@@ -3,10 +3,12 @@ package db
 import (
 	"context"
 	"embed"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
@@ -23,6 +25,16 @@ var embedMigrations embed.FS
 // Open creates a pgxpool, runs goose migrations, and validates the embedding model setting.
 // Returns the pool for application use. The caller is responsible for calling pool.Close().
 func Open(ctx context.Context, dsn string, expectedModel string, vectorDim int) (*pgxpool.Pool, error) {
+	if vectorDim <= 0 {
+		return nil, fmt.Errorf("vector dimension must be greater than zero")
+	}
+	// Stash stores the standard pgvector `vector` type and builds cosine HNSW
+	// indexes for it. pgvector limits that type/index combination to 2,000
+	// dimensions; fail before connecting instead of leaving a half-initialized
+	// database with a misleading migration error.
+	if vectorDim > 2000 {
+		return nil, fmt.Errorf("vector dimension %d is unsupported: standard pgvector indexes support at most 2000 dimensions", vectorDim)
+	}
 	config, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("pgxpool.ParseConfig: %w", err)
@@ -53,10 +65,12 @@ func Open(ctx context.Context, dsn string, expectedModel string, vectorDim int) 
 	goose.SetLogger(discardLogger{})
 
 	if err := goose.SetDialect("postgres"); err != nil {
+		pool.Close()
 		return nil, fmt.Errorf("goose.SetDialect: %w", err)
 	}
 
 	if err := goose.Up(sqlDB, "migrations"); err != nil {
+		pool.Close()
 		return nil, fmt.Errorf("goose.Up: %w", err)
 	}
 
@@ -84,6 +98,9 @@ func Open(ctx context.Context, dsn string, expectedModel string, vectorDim int) 
 				pool.Close()
 				return nil, fmt.Errorf("alter vector dim %s.%s: %w", vc.table, vc.column, err)
 			}
+		} else if currentDim != vectorDim {
+			pool.Close()
+			return nil, fmt.Errorf("vector dimension mismatch in %s.%s: database has %d, config expects %d", vc.table, vc.column, currentDim, vectorDim)
 		}
 	}
 
@@ -140,7 +157,10 @@ func validateDimensionLock(ctx context.Context, pool *pgxpool.Pool, expectedDim 
 		"SELECT value FROM settings WHERE key = 'vector_dimension'",
 	).Scan(&storedDimStr)
 
-	if err != nil {
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("read vector dimension lock: %w", err)
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
 		// No row yet — store the expected dimension as string.
 		_, err := pool.Exec(ctx,
 			"INSERT INTO settings (key, value) VALUES ('vector_dimension', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",

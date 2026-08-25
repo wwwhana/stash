@@ -62,9 +62,21 @@ func (b *Brain) Consolidate(ctx context.Context, namespaceSlug string) (Consolid
 // 8. Confidence Decay                     (pure-SQL, no LLM)
 func (b *Brain) ConsolidateByID(ctx context.Context, nsID int64) (ConsolidationResult, error) {
 	start := time.Now()
+	b.consolidationMu.Lock()
+	defer b.consolidationMu.Unlock()
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 15*time.Minute)
+		defer cancel()
+	}
 
 	var namespaceSlug string
-	_ = b.pool.QueryRow(ctx, "SELECT slug FROM namespaces WHERE id = $1", nsID).Scan(&namespaceSlug)
+	if err := b.pool.QueryRow(ctx, "SELECT slug FROM namespaces WHERE id = $1", nsID).Scan(&namespaceSlug); err != nil {
+		if err == pgx.ErrNoRows {
+			return ConsolidationResult{}, ErrNamespaceNotFound
+		}
+		return ConsolidationResult{}, fmt.Errorf("resolve consolidation namespace: %w", err)
+	}
 
 	result := ConsolidationResult{Namespace: namespaceSlug}
 
@@ -153,7 +165,9 @@ func (b *Brain) ConsolidateByID(ctx context.Context, nsID int64) (ConsolidationR
 	cp.LastRun = &now
 	saveCtx := ctx
 	if ctx.Err() != nil {
-		saveCtx = context.Background()
+		var cancel context.CancelFunc
+		saveCtx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 	}
 	if err := b.SaveConsolidationProgress(saveCtx, *cp); err != nil {
 		result.Errors = append(result.Errors, fmt.Sprintf("save progress: %v", err))
@@ -291,10 +305,12 @@ func (b *Brain) consolidateEpisodesToFacts(ctx context.Context, nsID int64, cp *
 
 		// Insert fact_sources
 		for _, eid := range episodeIDs {
-			_, _ = b.pool.Exec(ctx,
+			if _, err := b.pool.Exec(ctx,
 				"INSERT INTO fact_sources (fact_id, episode_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
 				factID, eid,
-			)
+			); err != nil {
+				errs = append(errs, fmt.Sprintf("insert fact source: %v", err))
+			}
 		}
 
 		// Stage 4: Contradiction detection
@@ -307,9 +323,12 @@ func (b *Brain) consolidateEpisodesToFacts(ctx context.Context, nsID int64, cp *
 			Property:    strPtrOrNull(sf.Property),
 			Value:       strPtrOrNull(sf.Value),
 		}
-		cd, ca, _ := b.DetectContradictions(ctx, nsID, newFact)
+		cd, ca, contradictionErr := b.DetectContradictions(ctx, nsID, newFact)
 		contradictionsFound += cd
 		contradictionsAutoResolved += ca
+		if contradictionErr != nil {
+			errs = append(errs, fmt.Sprintf("detect contradictions: %v", contradictionErr))
+		}
 
 		for _, e := range cluster {
 			processed[e.ID] = true
@@ -408,7 +427,7 @@ func (b *Brain) findDuplicateFact(ctx context.Context, nsID int64, vec []float32
 	var score float32
 	err := b.pool.QueryRow(ctx,
 		`SELECT id, 1 - (embedding <=> $2) AS score FROM facts
-		 WHERE namespace_id = $1 AND deleted_at IS NULL AND embedding IS NOT NULL
+		 WHERE namespace_id = $1 AND deleted_at IS NULL AND valid_until IS NULL AND embedding IS NOT NULL
 		 ORDER BY embedding <=> $2 LIMIT 1`,
 		nsID, pgvector.NewVector(vec),
 	).Scan(&id, &score)
@@ -551,14 +570,22 @@ func (b *Brain) consolidateFactsToRelationships(ctx context.Context, nsID int64,
 			if rel.FromEntity == "" || rel.RelationType == "" || rel.ToEntity == "" {
 				continue
 			}
+			if err := validateConfidence(rel.Confidence); err != nil {
+				errs = append(errs, fmt.Sprintf("relationship confidence for fact %d: %v", fact.ID, err))
+				continue
+			}
 
 			// Check for existing relationship from this fact
-			exists, _ := b.relationshipExists(ctx, nsID, rel.FromEntity, rel.RelationType, rel.ToEntity, fact.ID)
+			exists, err := b.relationshipExists(ctx, nsID, rel.FromEntity, rel.RelationType, rel.ToEntity, fact.ID)
+			if err != nil {
+				errs = append(errs, fmt.Sprintf("check relationship: %v", err))
+				continue
+			}
 			if exists {
 				continue
 			}
 
-			_, err := b.pool.Exec(ctx,
+			_, err = b.pool.Exec(ctx,
 				`INSERT INTO relationships (namespace_id, from_entity, relation_type, to_entity, confidence, source_fact_id)
 				 VALUES ($1, $2, $3, $4, $5, $6)`,
 				nsID, rel.FromEntity, rel.RelationType, rel.ToEntity, rel.Confidence, fact.ID,
@@ -587,7 +614,10 @@ func (b *Brain) relationshipExists(ctx context.Context, nsID int64, from, relTyp
 		nsID, from, relType, to, sourceFactID,
 	).Scan(&id)
 	if err != nil {
-		return false, nil
+		if err == pgx.ErrNoRows {
+			return false, nil
+		}
+		return false, fmt.Errorf("relationship lookup: %w", err)
 	}
 	return true, nil
 }
@@ -717,6 +747,14 @@ func (b *Brain) consolidateToPatterns(ctx context.Context, nsID int64, cp *model
 		b.updatePatternCheckpoint(ctx, cp, facts, rels, len(errs) == 0)
 		return
 	}
+	factIDs := make(map[int64]struct{}, len(facts))
+	for _, fact := range facts {
+		factIDs[fact.ID] = struct{}{}
+	}
+	relIDs := make(map[int64]struct{}, len(rels))
+	for _, rel := range rels {
+		relIDs[rel.ID] = struct{}{}
+	}
 
 	// Call reasoner for pattern extraction
 	patterns, err := b.reasoner.ReasonPatterns(ctx, facts, rels)
@@ -728,7 +766,31 @@ func (b *Brain) consolidateToPatterns(ctx context.Context, nsID int64, cp *model
 	}
 
 	for _, p := range patterns {
-		if p.Content == "" {
+		if err := validateContent(p.Content); err != nil {
+			errs = append(errs, fmt.Sprintf("pattern content: %v", err))
+			continue
+		}
+		if err := validateConfidence(p.CoherenceScore); err != nil {
+			errs = append(errs, fmt.Sprintf("pattern coherence: %v", err))
+			continue
+		}
+		validSourceIDs := true
+		for _, fid := range p.SourceFactIDs {
+			if _, ok := factIDs[fid]; !ok {
+				validSourceIDs = false
+				break
+			}
+		}
+		if validSourceIDs {
+			for _, rid := range p.SourceRelIDs {
+				if _, ok := relIDs[rid]; !ok {
+					validSourceIDs = false
+					break
+				}
+			}
+		}
+		if !validSourceIDs {
+			errs = append(errs, "pattern references a fact or relationship outside the consolidation batch")
 			continue
 		}
 

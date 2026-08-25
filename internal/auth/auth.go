@@ -63,8 +63,19 @@ func Init(ctx context.Context, cfg Config) (*Provider, error) {
 	if mode != "oidc" {
 		return nil, fmt.Errorf("unsupported auth mode: %q", cfg.Mode)
 	}
-	if cfg.Issuer == "" || cfg.ClientID == "" || cfg.ClientSecret == "" || cfg.RedirectURL == "" {
-		return nil, errors.New("OIDC mode requires issuer, client ID, client secret, and redirect URL")
+	if cfg.Issuer == "" {
+		return nil, errors.New("OIDC mode requires an issuer")
+	}
+	if cfg.MCPClientID == "" && strings.TrimSpace(cfg.MCPResourceURL) == "" {
+		return nil, errors.New("OIDC mode requires STASH_AUTH_MCP_CLIENT_ID or STASH_AUTH_MCP_RESOURCE_URL")
+	}
+	// The browser login is optional: an MCP resource server can operate without
+	// keeping a second confidential OAuth client. If any browser setting is
+	// supplied, require the complete set so a half-configured /auth/login path
+	// cannot fail later with a cryptic redirect or callback error.
+	webLoginConfigured := cfg.ClientID != "" || cfg.ClientSecret != "" || cfg.RedirectURL != ""
+	if webLoginConfigured && (cfg.ClientID == "" || cfg.ClientSecret == "" || cfg.RedirectURL == "") {
+		return nil, errors.New("browser OIDC login requires client ID, client secret, and redirect URL together")
 	}
 	if cfg.APISecret == "" {
 		return nil, errors.New("OIDC mode requires STASH_AUTH_API_SECRET")
@@ -72,27 +83,28 @@ func Init(ctx context.Context, cfg Config) (*Provider, error) {
 	if cfg.APITokenTTL <= 0 {
 		cfg.APITokenTTL = defaultTokenTTL
 	}
-	if cfg.MCPClientID == "" {
-		cfg.MCPClientID = cfg.ClientID
-	}
-
 	provider, err := oidc.NewProvider(ctx, cfg.Issuer)
 	if err != nil {
 		return nil, fmt.Errorf("initialize OIDC provider: %w", err)
 	}
 
-	oauth2Config := oauth2.Config{
-		ClientID:     cfg.ClientID,
-		ClientSecret: cfg.ClientSecret,
-		RedirectURL:  cfg.RedirectURL,
-		Endpoint:     provider.Endpoint(),
-		Scopes:       []string{oidc.ScopeOpenID, "profile", "email"},
+	var oauth2Config oauth2.Config
+	var verifier *oidc.IDTokenVerifier
+	if webLoginConfigured {
+		oauth2Config = oauth2.Config{
+			ClientID:     cfg.ClientID,
+			ClientSecret: cfg.ClientSecret,
+			RedirectURL:  cfg.RedirectURL,
+			Endpoint:     provider.Endpoint(),
+			Scopes:       []string{oidc.ScopeOpenID, "profile", "email"},
+		}
+		verifier = provider.Verifier(&oidc.Config{ClientID: cfg.ClientID})
 	}
-
-	verifier := provider.Verifier(&oidc.Config{ClientID: cfg.ClientID})
 	// Codex sends an OAuth access token to the MCP resource. Its audience may
 	// be a separate public OAuth client, so verify the issuer, signature, and
-	// expiry here and apply the configured audience check below.
+	// expiry here and apply the configured audience check below. The audience is
+	// mandatory; accepting any valid token from the issuer would let a token
+	// issued for another application call this MCP server.
 	accessVerifier := provider.Verifier(&oidc.Config{SkipClientIDCheck: true})
 	log.Printf("Auth mode: oidc (issuer: %s)", cfg.Issuer)
 	return &Provider{
@@ -113,6 +125,10 @@ func (p *Provider) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "authentication is disabled", http.StatusNotFound)
 		return
 	}
+	if p.verifier == nil || p.oauth2Config.ClientID == "" {
+		http.Error(w, "browser login is not configured", http.StatusServiceUnavailable)
+		return
+	}
 
 	state, nonce, err := setOAuthCookies(w, p.config.CookieSecure)
 	if err != nil {
@@ -131,6 +147,10 @@ func (p *Provider) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	if p == nil {
 		http.Error(w, "authentication is disabled", http.StatusNotFound)
+		return
+	}
+	if p.verifier == nil || p.oauth2Config.ClientID == "" {
+		http.Error(w, "browser login is not configured", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -288,7 +308,9 @@ func (p *Provider) MCPUnauthorized(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "authentication required", http.StatusUnauthorized)
 }
 
-// VerifyRequest validates an OIDC identity token or a signed Stash API token.
+// VerifyRequest validates a signed Stash session/API token or an OIDC access
+// token sent as a bearer credential. OIDC ID tokens are deliberately not
+// accepted here: they are meant for the OAuth client, not this resource server.
 // It returns the stable OIDC subject, never a mutable email claim.
 func (p *Provider) VerifyRequest(r *http.Request) (string, error) {
 	if p == nil {
@@ -296,7 +318,8 @@ func (p *Provider) VerifyRequest(r *http.Request) (string, error) {
 	}
 
 	rawToken := bearerToken(r)
-	if rawToken == "" {
+	bearer := rawToken != ""
+	if !bearer {
 		if cookie, err := r.Cookie(sessionCookieName); err == nil {
 			rawToken = strings.TrimSpace(cookie.Value)
 		}
@@ -311,16 +334,8 @@ func (p *Provider) VerifyRequest(r *http.Request) (string, error) {
 	if strings.HasPrefix(rawToken, apiTokenPrefix) {
 		return parseStashToken(rawToken, p.config.APISecret)
 	}
-	if p.verifier == nil {
-		return "", errors.New("OIDC verifier is unavailable")
-	}
-
-	if p.verifier != nil {
-		if idToken, err := p.verifier.Verify(r.Context(), rawToken); err == nil {
-			if user, claimsErr := subjectFromToken(idToken); claimsErr == nil {
-				return user, nil
-			}
-		}
+	if !bearer {
+		return "", errors.New("unsupported session credential")
 	}
 	return p.verifyOIDCAccessToken(r, rawToken)
 }
@@ -333,10 +348,28 @@ func (p *Provider) verifyOIDCAccessToken(r *http.Request, rawToken string) (stri
 	if err != nil {
 		return "", fmt.Errorf("invalid OIDC access token: %w", err)
 	}
-	if p.config.MCPClientID != "" && !containsString(accessToken.Audience, p.config.MCPClientID) {
+	if !p.accessTokenAudienceAllowed(accessToken.Audience) {
 		return "", fmt.Errorf("OIDC access token has unexpected audience %q", accessToken.Audience)
 	}
 	return subjectFromToken(accessToken)
+}
+
+func (p *Provider) accessTokenAudienceAllowed(audience []string) bool {
+	expected := make([]string, 0, 2)
+	if clientID := strings.TrimSpace(p.config.MCPClientID); clientID != "" {
+		expected = append(expected, clientID)
+	}
+	if resourceURL := strings.TrimRight(strings.TrimSpace(p.config.MCPResourceURL), "/"); resourceURL != "" {
+		expected = append(expected, resourceURL)
+	}
+	for _, actual := range audience {
+		for _, wanted := range expected {
+			if actual == wanted || strings.TrimRight(actual, "/") == wanted {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func subjectFromToken(token *oidc.IDToken) (string, error) {
@@ -350,15 +383,6 @@ func subjectFromToken(token *oidc.IDToken) (string, error) {
 		return "", errors.New("identity token has no subject")
 	}
 	return claims.Sub, nil
-}
-
-func containsString(values []string, wanted string) bool {
-	for _, value := range values {
-		if value == wanted {
-			return true
-		}
-	}
-	return false
 }
 
 func (p *Provider) resourceURLForMetadata(r *http.Request) string {

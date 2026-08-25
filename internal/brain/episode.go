@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/alash3al/stash/internal/models"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/pgvector/pgvector-go"
 )
@@ -101,6 +102,9 @@ func (b *Brain) ForgetEpisodeMatch(
 	if err := validateContent(query); err != nil {
 		return res, err
 	}
+	if err := validateScore(opts.MinScore); err != nil {
+		return res, err
+	}
 	for _, slug := range namespaceSlugs {
 		if err := validatePath(slug); err != nil {
 			return res, err
@@ -133,7 +137,10 @@ func (b *Brain) ForgetEpisodeMatch(
 		).Scan(&res.ID, &res.Content, &res.Score)
 	}
 	if err != nil {
-		return res, ErrEpisodeNotFound
+		if err == pgx.ErrNoRows {
+			return res, ErrEpisodeNotFound
+		}
+		return res, fmt.Errorf("find episode to forget: %w", err)
 	}
 
 	if opts.MinScore > 0 && res.Score < opts.MinScore {
@@ -145,10 +152,14 @@ func (b *Brain) ForgetEpisodeMatch(
 		return res, nil
 	}
 
-	if _, err := b.pool.Exec(ctx,
-		"UPDATE episodes SET deleted_at = now() WHERE id = $1", res.ID,
-	); err != nil {
+	tag, err := b.pool.Exec(ctx,
+		"UPDATE episodes SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL", res.ID,
+	)
+	if err != nil {
 		return res, fmt.Errorf("soft delete episode: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return res, ErrEpisodeNotFound
 	}
 
 	res.Deleted = true
@@ -206,11 +217,14 @@ func (b *Brain) GetEpisode(ctx context.Context, episodeID int64) (*models.Episod
 	var e models.Episode
 	err := b.pool.QueryRow(ctx,
 		`SELECT id, namespace_id, content, embedding, embedding_model, occurred_at, created_at, deleted_at
-		 FROM episodes WHERE id = $1`,
+		 FROM episodes WHERE id = $1 AND deleted_at IS NULL`,
 		episodeID,
 	).Scan(&e.ID, &e.NamespaceID, &e.Content, &e.Embedding, &e.EmbeddingModel, &e.OccurredAt, &e.CreatedAt, &e.DeletedAt)
 	if err != nil {
-		return nil, ErrEpisodeNotFound
+		if err == pgx.ErrNoRows {
+			return nil, ErrEpisodeNotFound
+		}
+		return nil, fmt.Errorf("get episode: %w", err)
 	}
 	return &e, nil
 }
