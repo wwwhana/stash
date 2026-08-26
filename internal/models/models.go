@@ -3,6 +3,7 @@
 package models
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/pgvector/pgvector-go"
@@ -154,6 +155,103 @@ type Goal struct {
 	CreatedAt   time.Time  `db:"created_at" json:"created_at"`
 	UpdatedAt   time.Time  `db:"updated_at" json:"updated_at"`
 	DeletedAt   *time.Time `db:"deleted_at" json:"deleted_at,omitempty"`
+}
+
+// WorkItem is a mutable piece of work. It is separate from Goal so operational
+// status changes do not overwrite the durable intent recorded in memory.
+type WorkItem struct {
+	ID          int64      `db:"id" json:"id"`
+	NamespaceID int64      `db:"namespace_id" json:"namespace_id"`
+	GoalID      *int64     `db:"goal_id" json:"goal_id,omitempty"`
+	ParentID    *int64     `db:"parent_id" json:"parent_id,omitempty"`
+	IssueKey    string     `db:"issue_key" json:"issue_key"`
+	IssueType   string     `db:"issue_type" json:"issue_type"`
+	Labels      []string   `db:"labels" json:"labels,omitempty"`
+	Reporter    string     `db:"reporter" json:"reporter,omitempty"`
+	Title       string     `db:"title" json:"title"`
+	Description string     `db:"description" json:"description"`
+	Status      string     `db:"status" json:"status"`
+	Priority    int        `db:"priority" json:"priority"`
+	Position    float64    `db:"position" json:"position"`
+	Owner       string     `db:"owner" json:"owner"`
+	DueAt       *time.Time `db:"due_at" json:"due_at,omitempty"`
+	StartedAt   *time.Time `db:"started_at" json:"started_at,omitempty"`
+	CompletedAt *time.Time `db:"completed_at" json:"completed_at,omitempty"`
+	CreatedAt   time.Time  `db:"created_at" json:"created_at"`
+	UpdatedAt   time.Time  `db:"updated_at" json:"updated_at"`
+	DeletedAt   *time.Time `db:"deleted_at" json:"deleted_at,omitempty"`
+	WorktreeIDs []int64    `db:"-" json:"worktree_ids,omitempty"`
+}
+
+// WorkItemComment is a human or agent note attached to an issue.
+type WorkItemComment struct {
+	ID         int64      `db:"id" json:"id"`
+	WorkItemID int64      `db:"work_item_id" json:"work_item_id"`
+	Author     string     `db:"author" json:"author"`
+	Body       string     `db:"body" json:"body"`
+	CreatedAt  time.Time  `db:"created_at" json:"created_at"`
+	UpdatedAt  time.Time  `db:"updated_at" json:"updated_at"`
+	DeletedAt  *time.Time `db:"deleted_at" json:"deleted_at,omitempty"`
+}
+
+// WorkItemEdge is a directed relationship in the execution graph. For a
+// blocks edge, from_item_id blocks to_item_id.
+type WorkItemEdge struct {
+	ID          int64      `db:"id" json:"id"`
+	NamespaceID int64      `db:"namespace_id" json:"namespace_id"`
+	FromItemID  int64      `db:"from_item_id" json:"from_item_id"`
+	ToItemID    int64      `db:"to_item_id" json:"to_item_id"`
+	EdgeType    string     `db:"edge_type" json:"edge_type"`
+	CreatedAt   time.Time  `db:"created_at" json:"created_at"`
+	DeletedAt   *time.Time `db:"deleted_at" json:"deleted_at,omitempty"`
+}
+
+// Worktree is a local Git worktree registered by an agent-side bridge.
+// Paths and repository names are metadata; Git remains the source of code.
+type Worktree struct {
+	ID           int64           `db:"id" json:"id"`
+	NamespaceID  int64           `db:"namespace_id" json:"namespace_id"`
+	Repository   string          `db:"repository" json:"repository"`
+	WorktreePath string          `db:"worktree_path" json:"worktree_path"`
+	Branch       string          `db:"branch" json:"branch"`
+	HeadSHA      string          `db:"head_sha" json:"head_sha"`
+	Status       string          `db:"status" json:"status"`
+	AgentID      string          `db:"agent_id" json:"agent_id"`
+	LastSeenAt   *time.Time      `db:"last_seen_at" json:"last_seen_at,omitempty"`
+	Metadata     json.RawMessage `db:"metadata" json:"metadata"`
+	CreatedAt    time.Time       `db:"created_at" json:"created_at"`
+	UpdatedAt    time.Time       `db:"updated_at" json:"updated_at"`
+	DeletedAt    *time.Time      `db:"deleted_at" json:"deleted_at,omitempty"`
+}
+
+// WorkEvent is an append-only structured observation from a local agent or
+// worktree bridge.
+type WorkEvent struct {
+	ID          int64           `db:"id" json:"id"`
+	NamespaceID int64           `db:"namespace_id" json:"namespace_id"`
+	WorktreeID  *int64          `db:"worktree_id" json:"worktree_id,omitempty"`
+	WorkItemID  *int64          `db:"work_item_id" json:"work_item_id,omitempty"`
+	EventType   string          `db:"event_type" json:"event_type"`
+	EventKey    *string         `db:"event_key" json:"event_key,omitempty"`
+	Payload     json.RawMessage `db:"payload" json:"payload"`
+	OccurredAt  time.Time       `db:"occurred_at" json:"occurred_at"`
+	CreatedAt   time.Time       `db:"created_at" json:"created_at"`
+}
+
+// WorkItemMemoryLink connects operational work to durable memory entities.
+type WorkItemMemoryLink struct {
+	WorkItemID int64     `db:"work_item_id" json:"work_item_id"`
+	MemoryType string    `db:"memory_type" json:"memory_type"`
+	MemoryID   int64     `db:"memory_id" json:"memory_id"`
+	Relation   string    `db:"relation" json:"relation"`
+	CreatedAt  time.Time `db:"created_at" json:"created_at"`
+}
+
+// WorkGraph is the graph view consumed by the board and graph UI.
+type WorkGraph struct {
+	Nodes     []WorkItem     `json:"nodes"`
+	Edges     []WorkItemEdge `json:"edges"`
+	Worktrees []Worktree     `json:"worktrees"`
 }
 
 // Failure records what didn't work, why, and what to do instead.

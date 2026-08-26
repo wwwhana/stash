@@ -15,19 +15,22 @@ services:
       retries: 5
     restart: unless-stopped
 
-  # Stash MCP server + background consolidation
+  # Stash HTTP/MCP servers + background consolidation
   stash:
     build: .
     command:
-      - "mcp"
       - "serve"
-      - "--host"
+      - "--http-host"
       - "0.0.0.0"
-      - "--port"
+      - "--http-port"
+      - "9090"
+      - "--mcp-host"
+      - "0.0.0.0"
+      - "--mcp-port"
       - "8080"
-      - "--with-consolidation"
     ports:
       - "8080:8080"
+      - "9090:9090"
     environment:
       # Required
       STASH_POSTGRES_DSN: ${STASH_POSTGRES_DSN:-postgresql://stash:stash_dev_password@postgres:5432/stash?sslmode=disable}

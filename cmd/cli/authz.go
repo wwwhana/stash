@@ -10,6 +10,7 @@ import (
 
 	"github.com/alash3al/stash/internal/auth"
 	"github.com/alash3al/stash/internal/bootstrap"
+	"github.com/alash3al/stash/internal/observability"
 )
 
 type contextKey string
@@ -31,6 +32,7 @@ func httpContextFunc(ctx context.Context, _ *http.Request) context.Context {
 func authenticatedHTTP(provider *auth.Provider, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if provider == nil {
+			observability.RecordAuthCheck(r.URL.Path, "disabled")
 			ctx := context.WithValue(r.Context(), keyMode, "local")
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
@@ -38,10 +40,12 @@ func authenticatedHTTP(provider *auth.Provider, next http.Handler) http.Handler 
 
 		user, err := provider.VerifyRequest(r)
 		if err != nil || user == "" {
+			observability.RecordAuthCheck(r.URL.Path, "rejected")
 			provider.MCPUnauthorized(w, r)
 			return
 		}
 
+		observability.RecordAuthCheck(r.URL.Path, "accepted")
 		ctx := context.WithValue(r.Context(), keyMode, "remote")
 		ctx = context.WithValue(ctx, keySSOUser, user)
 		next.ServeHTTP(w, r.WithContext(ctx))
@@ -61,14 +65,17 @@ func resolveNamespaces(ctx context.Context, nsRaw string) ([]string, error) {
 
 	mode, _ := ctx.Value(keyMode).(string)
 	if mode != "remote" {
+		observability.RecordNamespaceScope(mode, "unscoped")
 		return rawList, nil
 	}
 
 	user, ok := ctx.Value(keySSOUser).(string)
 	if !ok || user == "" {
+		observability.RecordNamespaceScope("remote", "denied")
 		return nil, fmt.Errorf("unauthorized: verified identity is required")
 	}
 	owner := namespaceOwnerKey(user)
+	observability.RecordNamespaceScope("remote", "user")
 
 	isolated := make([]string, 0, len(rawList))
 	for _, ns := range rawList {
@@ -116,17 +123,21 @@ func exactNamespaceID(ctx context.Context, bc *bootstrap.Context, raw string) (s
 func authorizeNamespaceID(ctx context.Context, bc *bootstrap.Context, namespaceID int64) error {
 	mode, _ := ctx.Value(keyMode).(string)
 	if mode != "remote" {
+		observability.RecordNamespaceAuthorization("local")
 		return nil
 	}
 	ids, err := authenticatedNamespaceIDs(ctx, bc)
 	if err != nil {
+		observability.RecordNamespaceAuthorization("error")
 		return err
 	}
 	for _, id := range ids {
 		if id == namespaceID {
+			observability.RecordNamespaceAuthorization("allowed")
 			return nil
 		}
 	}
+	observability.RecordNamespaceAuthorization("denied")
 	return fmt.Errorf("forbidden: object is outside the authenticated namespace")
 }
 

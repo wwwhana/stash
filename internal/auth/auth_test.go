@@ -76,6 +76,37 @@ func TestTokenEndpointRequiresPost(t *testing.T) {
 	}
 }
 
+func TestHandleStatusReportsConfiguredAuthMode(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		p    *Provider
+		mode string
+	}{
+		{name: "disabled", p: nil, mode: "none"},
+		{name: "oidc", p: &Provider{config: Config{Mode: "oidc"}}, mode: "oidc"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/auth/status", nil)
+			rec := httptest.NewRecorder()
+			test.p.HandleStatus(rec, req)
+
+			var body struct {
+				AuthMode      string `json:"auth_mode"`
+				Authenticated bool   `json:"authenticated"`
+			}
+			if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+				t.Fatalf("decode status: %v", err)
+			}
+			if body.AuthMode != test.mode {
+				t.Fatalf("auth_mode = %q, want %q", body.AuthMode, test.mode)
+			}
+			if body.Authenticated {
+				t.Fatal("unauthenticated status reported an authenticated user")
+			}
+		})
+	}
+}
+
 func TestBearerTokenAcceptsHTTPWhitespace(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("Authorization", "\tBearer   token-value  ")

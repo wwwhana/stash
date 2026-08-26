@@ -3,64 +3,407 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Stash 콘솔</title>
+    <title>Stash 작업 공간</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <style>
         [x-cloak] { display: none !important; }
+        /* Layout and component styles. Keep the board scrollable inside its panel. */
+        :root {
+            --stash-ink: #172033;
+            --stash-muted: #667085;
+            --stash-subtle: #98a2b3;
+            --stash-line: #e6e9ef;
+            --stash-surface: #ffffff;
+            --stash-canvas: #f6f8fb;
+            --stash-navy: #16233f;
+            --stash-indigo: #4f46e5;
+            --stash-indigo-soft: #eef2ff;
+            --stash-green: #14804a;
+            --stash-red: #c43232;
+            --stash-shadow-sm: 0 1px 2px rgba(16, 24, 40, .04), 0 1px 4px rgba(16, 24, 40, .04);
+            --stash-shadow-md: 0 12px 32px rgba(16, 24, 40, .10);
+        }
+        * { box-sizing: border-box; }
+        html, body { min-width: 0; }
+        body.stash-body { margin: 0; color: var(--stash-ink); background: var(--stash-canvas); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+        .stash-app { min-height: 100vh; display: flex; flex-direction: column; }
+        .stash-root { min-height: 100vh; }
+        .stash-auth-screen { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: radial-gradient(circle at 50% 0%, #e8edff 0, var(--stash-canvas) 48%, #eef1f7 100%); }
+        .stash-auth-card { width: min(410px, 100%); padding: 32px; border: 1px solid var(--stash-line); border-radius: 18px; background: #fff; box-shadow: var(--stash-shadow-md); text-align: center; }
+        .stash-auth-mark { width: 48px; height: 48px; display: grid; place-items: center; margin: 0 auto 17px; border-radius: 14px; color: #fff; background: linear-gradient(135deg, #818cf8, #4f46e5); box-shadow: 0 8px 20px rgba(79,70,229,.25); }
+        .stash-auth-mark svg { width: 26px; height: 26px; }
+        .stash-auth-card h1 { margin: 0; color: var(--stash-ink); font-size: 23px; letter-spacing: -.04em; }
+        .stash-auth-card p { margin: 9px 0 0; color: var(--stash-muted); font-size: 13px; line-height: 1.55; }
+        .stash-auth-button { min-height: 42px; display: inline-flex; align-items: center; justify-content: center; width: 100%; margin-top: 22px; border: 1px solid var(--stash-indigo); border-radius: 9px; color: #fff; background: var(--stash-indigo); font-size: 13px; font-weight: 800; text-decoration: none; }
+        .stash-auth-button:hover { background: #4338ca; }
+        .stash-auth-retry { min-height: 38px; width: 100%; margin-top: 10px; border: 1px solid var(--stash-line); border-radius: 8px; color: var(--stash-muted); background: #fff; font-size: 12px; font-weight: 700; }
+        .stash-auth-error { margin-top: 16px !important; padding: 9px 10px; border-radius: 8px; color: #b42318 !important; background: #fff0f0; font-size: 11px !important; }
+        .stash-auth-loading { display: inline-flex; align-items: center; gap: 8px; margin-top: 19px; color: var(--stash-muted); font-size: 12px; }
+        .stash-auth-loading .spinner { width: 13px; height: 13px; border: 2px solid #c7d2fe; border-top-color: var(--stash-indigo); border-radius: 50%; animation: stash-spin .75s linear infinite; }
+        @keyframes stash-spin { to { transform: rotate(360deg); } }
+        .stash-topbar { position: sticky; top: 0; z-index: 30; color: #fff; background: var(--stash-navy) !important; box-shadow: 0 1px 0 rgba(255,255,255,.08), 0 5px 18px rgba(15, 23, 42, .13); }
+        .stash-topbar__inner { width: min(1440px, 100%) !important; min-height: 68px; margin: 0 auto; padding: 12px 28px !important; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+        .stash-brand { display: inline-flex; align-items: center; gap: 11px; min-width: 0; }
+        .stash-brand-mark { width: 36px; height: 36px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 11px; background: linear-gradient(135deg, #818cf8, #4f46e5); box-shadow: inset 0 1px 1px rgba(255,255,255,.3), 0 5px 16px rgba(79,70,229,.25); }
+        .stash-brand-mark svg { width: 21px; height: 21px; }
+        .stash-brand-copy { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+        .stash-brand-copy strong { font-size: 17px; line-height: 1.1; letter-spacing: -.02em; }
+        .stash-brand-copy small { color: #b9c4dd; font-size: 11px; line-height: 1.2; }
+        .stash-topbar-actions { position: relative; display: flex; align-items: center; gap: 10px; min-width: 0; }
+        .stash-token-input { width: 190px !important; min-height: 34px; padding: 7px 10px !important; border: 1px solid rgba(255,255,255,.16) !important; border-radius: 8px !important; color: #fff !important; background: rgba(255,255,255,.08) !important; font-size: 12px; }
+        .stash-token-input::placeholder { color: #c5cee0; }
+        .stash-topbar a, .stash-topbar button { font-size: 12px; }
+        .stash-topbar button:not(.stash-token-input) { min-height: 34px; padding: 7px 11px; border: 1px solid rgba(255,255,255,.16); border-radius: 8px; color: #f5f7ff; background: rgba(255,255,255,.08); }
+        .stash-topbar button:not(.stash-token-input):hover { background: rgba(255,255,255,.16); }
+        .stash-topbar > .stash-topbar__inner > .stash-topbar-actions > a { min-height: 34px; display: inline-flex; align-items: center; padding: 7px 11px; border: 1px solid rgba(255,255,255,.16); border-radius: 8px; color: #f5f7ff; background: rgba(255,255,255,.08); text-decoration: none; }
+        .stash-topbar > .stash-topbar__inner > .stash-topbar-actions > a:hover { background: rgba(255,255,255,.16); }
+
+        .stash-main { width: min(1440px, 100%) !important; flex: 1; min-width: 0; margin: 0 auto; padding: 28px !important; display: grid !important; grid-template-columns: 228px minmax(0, 1fr); gap: 28px !important; }
+        .stash-sidebar { min-width: 0; width: auto !important; display: flex; flex-direction: column; gap: 16px; }
+        .stash-sidebar-card { padding: 10px !important; border: 1px solid var(--stash-line); border-radius: 14px; background: var(--stash-surface); box-shadow: var(--stash-shadow-sm); }
+        .stash-sidebar-label { padding: 7px 10px 8px; color: var(--stash-subtle); font-size: 10px; font-weight: 800; letter-spacing: .11em; }
+        .stash-nav { display: flex; flex-direction: column; gap: 2px; }
+        .stash-nav-item { width: 100%; min-height: 39px; display: flex; align-items: center; gap: 10px; padding: 8px 10px !important; border: 0; border-radius: 8px; color: #536078; background: transparent; font-size: 13px; text-align: left; transition: color .15s ease, background .15s ease; }
+        .stash-nav-item:hover { color: var(--stash-indigo); background: #f5f6ff; }
+        .stash-nav-item.is-active { color: #3730a3; background: var(--stash-indigo-soft); font-weight: 700; }
+        .stash-nav-icon { width: 20px; height: 20px; display: grid; place-items: center; flex: 0 0 auto; color: #8792a8; font-size: 15px; }
+        .stash-nav-divider { height: 1px; margin: 9px 10px; background: var(--stash-line); }
+        .stash-side-note { padding: 14px !important; border: 1px solid var(--stash-line); border-radius: 14px; color: var(--stash-muted); background: var(--stash-surface); box-shadow: var(--stash-shadow-sm); font-size: 11px; line-height: 1.5; }
+        .stash-side-note strong { display: block; margin-bottom: 4px; color: var(--stash-ink); font-size: 12px; }
+        .stash-side-note code { color: #4338ca; font-size: 10px; }
+
+        .stash-panel { min-width: 0; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--stash-line); border-radius: 16px; background: var(--stash-surface); box-shadow: var(--stash-shadow-sm); }
+        .stash-panel-header { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 18px 24px !important; border-bottom: 1px solid var(--stash-line); background: #fff !important; }
+        .stash-panel-header h2 { margin: 0; color: var(--stash-ink); font-size: 18px; letter-spacing: -.025em; }
+        .stash-panel-header span { color: var(--stash-indigo); font-size: 12px; }
+        .stash-panel-body { min-width: 0; min-height: 0; flex: 1 1 auto; overflow-x: hidden !important; background: var(--stash-canvas) !important; }
+        .stash-text-output { width: 100%; min-height: 550px; padding: 20px !important; overflow: auto; color: #b8f7cf !important; background: #0b1221 !important; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+        .stash-result-content { min-height: 550px; padding: 20px 24px 26px; background: var(--stash-canvas); }
+        .stash-result-list { display: grid; gap: 9px; }
+        .stash-result-card { min-width: 0; padding: 14px 15px; border: 1px solid var(--stash-line); border-radius: 11px; background: #fff; box-shadow: var(--stash-shadow-sm); }
+        .stash-result-card__top { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--stash-subtle); font-size: 10px; }
+        .stash-result-card__kind { color: var(--stash-indigo); font-weight: 800; }
+        .stash-result-card h3 { margin: 8px 0 0; color: var(--stash-ink); font-size: 14px; line-height: 1.45; overflow-wrap: anywhere; }
+        .stash-result-card p { margin: 8px 0 0; color: var(--stash-muted); font-size: 12px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+        .stash-result-card__meta { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
+        .stash-result-card__chip { padding: 3px 6px; border-radius: 5px; color: #475467; background: #f2f4f7; font-size: 10px; }
+        .stash-result-empty { display: grid; min-height: 300px; place-items: center; padding: 30px; color: var(--stash-muted); font-size: 13px; text-align: center; }
+        .stash-result-raw { margin-top: 18px; border-top: 1px solid var(--stash-line); }
+        .stash-result-raw summary { padding: 12px 0; color: var(--stash-muted); cursor: pointer; font-size: 11px; }
+        .stash-result-raw pre { max-height: 320px; margin: 0; padding: 14px; overflow: auto; border-radius: 9px; color: #b8f7cf; background: #0b1221; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+        .stash-pagination { display: flex; align-items: center; justify-content: center; gap: 9px; margin-top: 16px; color: var(--stash-muted); font-size: 11px; }
+        .stash-pagination button { min-width: 64px; min-height: 32px; padding: 6px 10px; border: 1px solid var(--stash-line); border-radius: 7px; color: #475467; background: #fff; font-size: 11px; font-weight: 700; }
+        .stash-pagination button:hover:not(:disabled) { color: var(--stash-indigo); border-color: #c7d2fe; background: var(--stash-indigo-soft); }
+        .stash-pagination button:disabled { cursor: not-allowed; opacity: .45; }
+        .stash-pagination__page { min-width: 52px; text-align: center; }
+
+        .stash-board { width: 100%; min-width: 0 !important; min-height: 0 !important; padding: 20px 24px 26px !important; color: var(--stash-ink) !important; background: var(--stash-canvas) !important; }
+        .stash-board-intro { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 18px; }
+        .stash-board-intro h3 { margin: 0; color: var(--stash-ink); font-size: 21px; letter-spacing: -.035em; }
+        .stash-board-intro p { max-width: 540px; margin: 6px 0 0; color: var(--stash-muted); font-size: 12px; line-height: 1.45; }
+        .stash-board-stats { display: grid; grid-template-columns: repeat(4, minmax(58px, 1fr)); gap: 7px; flex: 0 0 auto; }
+        .stash-board-stat { min-width: 64px; padding: 9px 10px; border: 1px solid var(--stash-line); border-radius: 9px; background: #fff; text-align: center; }
+        .stash-board-stat strong { display: block; color: var(--stash-ink); font-size: 17px; line-height: 1; }
+        .stash-board-stat span { display: block; margin-top: 5px; color: var(--stash-subtle); font-size: 10px; }
+        .stash-board-stat.is-indigo strong { color: var(--stash-indigo); }
+        .stash-board-stat.is-red strong { color: var(--stash-red); }
+        .stash-board-stat.is-green strong { color: var(--stash-green); }
+        .stash-board-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 15px !important; }
+        .stash-board-toolbar input, .stash-board-toolbar select { min-height: 37px; border: 1px solid var(--stash-line) !important; border-radius: 8px !important; color: var(--stash-ink); background: #fff !important; font-size: 12px; }
+        .stash-issue-form { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 10px; margin-bottom: 16px !important; padding: 15px !important; border: 1px solid #dfe3ff !important; border-radius: 12px !important; background: #fafaff !important; }
+        .stash-issue-form input, .stash-issue-form select, .stash-issue-form textarea { min-height: 37px; border: 1px solid var(--stash-line) !important; border-radius: 8px !important; background: #fff !important; font-size: 12px; }
+        .stash-kanban-scroll { max-width: 100%; overflow-x: auto; padding: 2px 2px 9px; overscroll-behavior-inline: contain; }
+        .stash-kanban-scroll::-webkit-scrollbar { height: 9px; }
+        .stash-kanban-scroll::-webkit-scrollbar-thumb { border-radius: 99px; background: #c9d0df; }
+        .stash-kanban { width: max-content; min-width: 100%; display: grid; grid-template-columns: repeat(7, minmax(226px, 1fr)) !important; gap: 11px !important; }
+        .stash-kanban > div { min-height: 420px; padding: 11px !important; border: 1px solid #e7eaf0; border-radius: 12px; background: #f8f9fc !important; }
+        .stash-kanban article { padding: 12px !important; border: 1px solid #e3e7ee !important; border-radius: 10px !important; background: #fff !important; box-shadow: var(--stash-shadow-sm); transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease; }
+        .stash-kanban article:hover { border-color: #b8c0f7 !important; box-shadow: 0 7px 18px rgba(16,24,40,.08); transform: translateY(-1px); }
+        .stash-kanban article h3 { min-height: 38px; overflow-wrap: anywhere; }
+        .stash-issue-detail { position: fixed !important; top: 0; right: 0; z-index: 60; width: min(470px, 100%); height: 100vh; max-height: 100vh; margin: 0 !important; overflow-y: auto; border: 0 !important; border-left: 1px solid var(--stash-line) !important; border-radius: 0 !important; background: #fff !important; box-shadow: -18px 0 40px rgba(15,23,42,.18), 0 0 0 100vmax rgba(15,23,42,.45); }
+        .stash-issue-detail h3 { color: var(--stash-ink); font-size: 18px; }
+        .stash-issue-detail form { display: flex; gap: 7px; }
+        .stash-issue-detail form input { min-width: 0; flex: 1; border: 1px solid var(--stash-line) !important; border-radius: 8px !important; }
+
+        .stash-graph { width: 100%; min-width: 0 !important; min-height: 0 !important; padding: 18px 24px 26px !important; overflow-x: auto; color: #fff !important; background: #111a2f !important; }
+        .stash-graph svg { display: block; width: 1050px !important; min-width: 1050px; height: 560px; }
+        .stash-worktrees { width: 100%; min-width: 0 !important; min-height: 0 !important; padding: 20px 24px 26px !important; color: var(--stash-ink) !important; background: var(--stash-canvas) !important; }
+        .stash-worktrees > div { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 11px; }
+        .stash-worktrees article { min-width: 0; padding: 15px !important; border: 1px solid var(--stash-line) !important; border-radius: 11px !important; background: #fff !important; box-shadow: var(--stash-shadow-sm); }
+        .stash-worktrees article h3 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .stash-worktrees article > div:first-child > span { display: inline-flex; align-items: center; min-height: 22px; padding: 3px 7px; border-radius: 999px; font-size: 10px; font-weight: 800; }
+        .stash-worktrees article > div:first-child > span.bg-emerald-50 { color: var(--stash-green); background: #e8f7ef !important; }
+        .stash-worktrees article > div:first-child > span.bg-amber-50 { color: #b54708; background: #fff4e5 !important; }
+        .stash-worktrees article > div:first-child > span.bg-red-50 { color: var(--stash-red); background: #fff0f0 !important; }
+        .stash-worktrees article > div:first-child > span.bg-indigo-50 { color: #4338ca; background: var(--stash-indigo-soft) !important; }
+        .stash-worktrees article > div:first-child > span.bg-gray-200 { color: #667085; background: #f2f4f7 !important; }
+        .stash-agent { width: 100%; min-width: 0 !important; min-height: 0 !important; padding: 20px 24px 26px !important; color: var(--stash-ink) !important; background: var(--stash-canvas) !important; }
+        .stash-agent textarea { width: 100%; min-height: 520px; padding: 18px !important; border: 1px solid #26324e !important; border-radius: 11px !important; color: #d0d8e8 !important; background: #101828 !important; font-size: 12px; line-height: 1.7; }
+
+        @media (max-width: 980px) {
+            .stash-main { grid-template-columns: 1fr; gap: 16px !important; padding: 20px 18px 34px !important; }
+            .stash-sidebar-label, .stash-nav-divider, .stash-side-note { display: none; }
+            .stash-nav { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 2px; }
+            .stash-nav-item { justify-content: center; padding: 8px 6px !important; font-size: 11px; }
+            .stash-nav-icon { display: none; }
+        }
+        @media (max-width: 680px) {
+            .stash-topbar__inner { min-height: 60px; padding: 10px 16px !important; }
+            .stash-brand-copy small { display: none; }
+            .stash-topbar-actions { gap: 6px; }
+            .stash-token-input { width: 145px !important; }
+            .stash-main { padding: 13px 10px 24px !important; }
+            .stash-panel-header { align-items: flex-start; padding: 16px 17px !important; }
+            .stash-panel-header h2 { font-size: 16px; }
+            .stash-board, .stash-worktrees, .stash-agent { padding: 15px 14px 18px !important; }
+            .stash-board-intro { display: block; margin-bottom: 14px; }
+            .stash-board-intro h3 { font-size: 18px; }
+            .stash-board-stats { margin-top: 12px; }
+            .stash-board-stat { padding: 8px 7px; }
+            .stash-board-toolbar { align-items: stretch; }
+            .stash-board-toolbar input:first-child { min-width: 100%; flex-basis: 100%; }
+            .stash-board-toolbar input, .stash-board-toolbar select { flex: 1; min-width: 0; }
+            .stash-issue-form { grid-template-columns: 1fr; }
+            .stash-issue-form .col-span-5, .stash-issue-form .col-span-2, .stash-issue-form .col-span-3, .stash-issue-form .col-span-10 { grid-column: auto; }
+            .stash-kanban { grid-template-columns: repeat(7, minmax(232px, 1fr)) !important; }
+            .stash-agent textarea { min-height: 470px; }
+            .stash-text-output, .stash-result-content { min-height: 470px; padding: 15px !important; font-size: 11px; }
+            .stash-issue-detail { width: 100%; }
+            .stash-auth-card { padding: 27px 21px; }
+        }
     </style>
 </head>
-<body class="bg-gray-50 text-gray-800 font-sans antialiased">
-    <div x-data="stashConsole()" class="min-h-screen flex flex-col">
+<body class="stash-body bg-gray-50 text-gray-800 font-sans antialiased">
+    <div x-data="stashConsole()" class="stash-root">
+        <section x-show="!authChecked || authLoading" class="stash-auth-screen" aria-live="polite">
+            <div class="stash-auth-card">
+                <div class="stash-auth-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M6 4.75h12A1.25 1.25 0 0 1 19.25 6v12A1.25 1.25 0 0 1 18 19.25H6A1.25 1.25 0 0 1 4.75 18V6A1.25 1.25 0 0 1 6 4.75Z"/><path stroke-linecap="round" d="M8 9h8M8 12h5M8 15h3"/></svg></div>
+                <h1>Stash</h1>
+                <p>인증 상태를 확인하고 있습니다.</p>
+                <div class="stash-auth-loading"><span class="spinner"></span><span>잠시만 기다려 주세요</span></div>
+            </div>
+        </section>
+        <section x-show="authChecked && !authLoading && authMode() === 'oidc' && !auth.authenticated" x-cloak class="stash-auth-screen">
+            <div class="stash-auth-card">
+                <div class="stash-auth-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M6 4.75h12A1.25 1.25 0 0 1 19.25 6v12A1.25 1.25 0 0 1 18 19.25H6A1.25 1.25 0 0 1 4.75 18V6A1.25 1.25 0 0 1 6 4.75Z"/><path stroke-linecap="round" d="M8 9h8M8 12h5M8 15h3"/></svg></div>
+                <h1>Stash에 로그인</h1>
+                <p>작업 보드와 기억을 보려면 먼저 인증해야 합니다.</p>
+                <p x-show="authError" x-text="authError" class="stash-auth-error"></p>
+                <a href="/auth/login" class="stash-auth-button">로그인</a>
+                <button type="button" @click="bootstrap()" class="stash-auth-retry">인증 상태 다시 확인</button>
+            </div>
+        </section>
+        <div x-show="authChecked && !authLoading && (authMode() !== 'oidc' || auth.authenticated)" x-cloak class="stash-app min-h-screen flex flex-col">
         <!-- Header -->
-        <header class="bg-indigo-600 text-white shadow-md">
-            <div class="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
-                <h1 class="text-xl font-bold flex items-center gap-2">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 002-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
-                    Stash 콘솔
+        <header class="stash-topbar bg-indigo-600 text-white shadow-md">
+            <div class="stash-topbar__inner max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
+                <h1 class="stash-brand text-xl font-bold flex items-center gap-2">
+                    <span class="stash-brand-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M6 4.75h12A1.25 1.25 0 0 1 19.25 6v12A1.25 1.25 0 0 1 18 19.25H6A1.25 1.25 0 0 1 4.75 18V6A1.25 1.25 0 0 1 6 4.75Z"/><path stroke-linecap="round" d="M8 9h8M8 12h5M8 15h3"/></svg></span>
+                    <span class="stash-brand-copy"><strong>Stash</strong><small>Memory workspace</small></span>
                 </h1>
-                <div class="flex items-center gap-4">
-                    <a x-cloak x-show="auth.mode === 'oidc' && !auth.authenticated" href="/auth/login" class="text-sm hover:underline">로그인</a>
+                <div class="stash-topbar-actions flex items-center gap-4">
+                    <a x-cloak x-show="authMode() === 'oidc' && !auth.authenticated" href="/auth/login" class="text-sm hover:underline">로그인</a>
                     <div x-cloak x-show="auth.authenticated" class="flex items-center gap-3 text-sm">
                         <span x-text="auth.user"></span>
                         <button @click="logout" class="hover:underline">로그아웃</button>
                     </div>
                     <div class="relative">
-                        <input type="password" x-model="token" @change="normalizeToken" placeholder="API 토큰 (선택)" class="px-3 py-1 rounded text-gray-800 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 w-64" title="이 탭에서 사용할 API 토큰">
+                        <input type="password" x-model="token" @change="normalizeToken" placeholder="API 토큰 (선택)" class="stash-token-input px-3 py-1 rounded text-gray-800 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 w-64" title="이 탭에서 사용할 API 토큰">
                     </div>
                 </div>
             </div>
         </header>
 
         <!-- Main Content -->
-        <main class="flex-grow max-w-7xl mx-auto px-4 py-8 w-full flex flex-col md:flex-row gap-6">
+        <main class="stash-main flex-grow max-w-7xl mx-auto px-4 py-8 w-full flex flex-col md:flex-row gap-6">
             <!-- Sidebar / Controls -->
-            <aside class="w-full md:w-64 flex flex-col gap-4">
-                <div class="bg-white p-4 rounded-lg shadow-sm border border-gray-100">
-                    <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">조회</h2>
-                    <nav class="flex flex-col gap-2">
-                        <button @click="callTool('list_namespaces', {limit: 100})" class="text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors">네임스페이스</button>
-                        <button @click="callTool('query_facts', {namespaces: '/', limit: 100})" class="text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors">사실</button>
-                        <button @click="callTool('list_hypotheses', {namespaces: '/', limit: 100})" class="text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors">가설</button>
-                        <button @click="callTool('list_goals', {namespaces: '/', limit: 100})" class="text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors">목표</button>
+            <aside class="stash-sidebar w-full md:w-64 flex flex-col gap-4">
+                <div class="stash-sidebar-card bg-white p-4 rounded-lg shadow-sm border border-gray-100">
+                    <h2 class="stash-sidebar-label text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">작업 공간</h2>
+                    <nav class="stash-nav flex flex-col gap-2">
+                        <button @click="loadWorkBoard()" :class="{'is-active': activeNav === 'board'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon">▦</span>이슈 보드</button>
+                        <button @click="loadWorkGraph()" :class="{'is-active': activeNav === 'graph'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon">⌁</span>작업 그래프</button>
+                        <button @click="loadWorktrees()" :class="{'is-active': activeNav === 'worktrees'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon">⌘</span>워크트리</button>
+                        <div class="stash-nav-divider"></div>
+                        <button @click="callTool('list_namespaces', {limit: 100})" :class="{'is-active': activeNav === 'list_namespaces'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon">◌</span>네임스페이스</button>
+                        <button @click="callTool('query_facts', {namespaces: '/', limit: 100})" :class="{'is-active': activeNav === 'query_facts'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon">✓</span>사실</button>
+                        <button @click="callTool('list_hypotheses', {namespaces: '/', limit: 100})" :class="{'is-active': activeNav === 'list_hypotheses'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon">?</span>가설</button>
+                        <button @click="callTool('list_goals', {namespaces: '/', limit: 100})" :class="{'is-active': activeNav === 'list_goals'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon">↗</span>목표</button>
+                        <div class="stash-nav-divider"></div>
+                        <button @click="showAgentGuide()" :class="{'is-active': activeNav === 'agent'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon">⌘</span>에이전트 규칙</button>
                     </nav>
                 </div>
+                <div class="stash-side-note"><strong>작업을 한곳에서 연결하세요</strong>이슈, 의존성, 워크트리와 기억의 근거를 함께 남깁니다.<br><code>AGENTS.md</code> 예시는 에이전트 규칙에서 복사할 수 있습니다.</div>
             </aside>
 
             <!-- Results Panel -->
-            <section class="flex-grow bg-white rounded-lg shadow-sm border border-gray-100 flex flex-col">
-                <div class="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50 rounded-t-lg">
-                    <h2 class="font-semibold text-gray-700">결과</h2>
+            <section class="stash-panel flex-grow bg-white rounded-lg shadow-sm border border-gray-100 flex flex-col">
+                <div class="stash-panel-header p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50 rounded-t-lg">
+                    <h2 class="font-semibold text-gray-700" x-text="viewTitle()"></h2>
                     <span x-show="loading" class="text-sm text-indigo-500 flex items-center gap-1" x-cloak>
                         <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
                         불러오는 중...
                     </span>
                 </div>
-                <div class="p-0 flex-grow relative overflow-hidden bg-gray-900 rounded-b-lg">
-                    <textarea readonly x-model="result" class="w-full h-full min-h-[500px] p-4 bg-transparent text-green-400 font-mono text-sm focus:outline-none resize-none" spellcheck="false"></textarea>
+                <div class="stash-panel-body p-0 flex-grow relative overflow-auto bg-gray-900 rounded-b-lg">
+                    <div x-show="view === 'text'" x-cloak class="stash-result-content">
+                        <div x-show="resultItems().length" class="stash-result-list">
+                            <template x-for="item in resultItems()" :key="item.id || item.slug || item.created_at || JSON.stringify(item)">
+                                <article class="stash-result-card">
+                                    <div class="stash-result-card__top"><span class="stash-result-card__kind" x-text="resultItemKind()"></span><span x-text="resultItemMeta(item)"></span></div>
+                                    <h3 x-text="resultItemTitle(item)"></h3>
+                                    <p x-show="resultItemBody(item)" x-text="resultItemBody(item)"></p>
+                                    <div class="stash-result-card__meta"><span x-show="item.status" class="stash-result-card__chip" x-text="statusLabel(item.status)"></span><span x-show="item.confidence !== undefined && item.confidence !== null" class="stash-result-card__chip" x-text="'확신도 ' + Math.round(item.confidence * 100) + '%'"></span><span x-show="item.priority !== undefined && item.priority !== null" class="stash-result-card__chip" x-text="'우선순위 ' + item.priority"></span></div>
+                                </article>
+                            </template>
+                        </div>
+                        <div x-show="!resultItems().length && !loading" class="stash-result-empty">표시할 항목이 없습니다.</div>
+                        <details class="stash-result-raw"><summary>원문 데이터 보기</summary><pre x-text="result"></pre></details>
+                        <div x-show="listPage.tool && (listPage.offset > 0 || listPage.hasNext)" class="stash-pagination">
+                            <button type="button" @click="previousListPage()" :disabled="loading || listPage.offset === 0">이전</button>
+                            <span class="stash-pagination__page" x-text="pageLabel(listPage)"></span>
+                            <button type="button" @click="nextListPage()" :disabled="loading || !listPage.hasNext">다음</button>
+                        </div>
+                    </div>
+
+                    <div x-show="view === 'board'" x-cloak class="stash-board min-w-[1100px] min-h-[560px] p-4 bg-gray-100 text-gray-800">
+                        <div class="stash-board-intro">
+                            <div><h3>작업 현황</h3><p>상태를 바꾸거나 카드를 눌러 이슈의 논의와 근거를 확인하세요.</p></div>
+                            <div class="stash-board-stats" aria-label="이슈 요약">
+                                <div class="stash-board-stat is-indigo"><strong x-text="graph.nodes.length"></strong><span>표시 중</span></div>
+                                <div class="stash-board-stat"><strong x-text="boardItems('doing').length"></strong><span>진행 중</span></div>
+                                <div class="stash-board-stat is-red"><strong x-text="boardItems('blocked').length"></strong><span>막힘</span></div>
+                                <div class="stash-board-stat is-green"><strong x-text="boardItems('done').length"></strong><span>완료</span></div>
+                            </div>
+                        </div>
+                        <div class="stash-board-toolbar flex flex-wrap items-center gap-2 mb-3">
+                            <input x-model="boardFilter.q" @keydown.enter="loadWorkBoard()" placeholder="이슈 검색" class="px-3 py-2 text-sm rounded border border-gray-300 bg-white w-56">
+                            <select x-model="boardFilter.issueType" @change="loadWorkBoard()" class="px-3 py-2 text-sm rounded border border-gray-300 bg-white">
+                                <option value="">모든 종류</option>
+                                <option value="task">작업</option>
+                                <option value="bug">버그</option>
+                                <option value="feature">기능</option>
+                                <option value="chore">정리</option>
+                                <option value="question">질문</option>
+                            </select>
+                            <input x-model="boardFilter.label" @keydown.enter="loadWorkBoard()" placeholder="라벨" class="px-3 py-2 text-sm rounded border border-gray-300 bg-white w-32">
+                            <button @click="loadWorkBoard()" class="px-3 py-2 text-sm rounded bg-indigo-600 text-white hover:bg-indigo-700">새로고침</button>
+                            <button @click="issueFormOpen = !issueFormOpen" class="px-3 py-2 text-sm rounded bg-white border border-gray-300 hover:bg-gray-50">이슈 만들기</button>
+                        </div>
+                        <form x-show="issueFormOpen" @submit.prevent="createIssue" class="stash-issue-form mb-3 grid grid-cols-12 gap-2 rounded-lg bg-white p-3 border border-gray-200">
+                            <input x-model="issueForm.title" required placeholder="제목" class="col-span-5 px-3 py-2 text-sm rounded border border-gray-300">
+                            <select x-model="issueForm.issueType" class="col-span-2 px-3 py-2 text-sm rounded border border-gray-300">
+                                <option value="task">작업</option><option value="bug">버그</option><option value="feature">기능</option><option value="chore">정리</option><option value="question">질문</option>
+                            </select>
+                            <input x-model="issueForm.labels" placeholder="라벨 (쉼표로 구분)" class="col-span-3 px-3 py-2 text-sm rounded border border-gray-300">
+                            <button type="submit" class="col-span-2 px-3 py-2 text-sm rounded bg-emerald-600 text-white hover:bg-emerald-700">저장</button>
+                            <textarea x-model="issueForm.description" placeholder="설명" class="col-span-10 px-3 py-2 text-sm rounded border border-gray-300 min-h-16"></textarea>
+                            <button type="button" @click="issueFormOpen = false" class="col-span-2 px-3 py-2 text-sm rounded border border-gray-300">닫기</button>
+                        </form>
+                        <div class="stash-kanban-scroll"><div class="stash-kanban grid grid-cols-7 gap-3">
+                            <template x-for="column in boardColumns" :key="column.status">
+                                <div class="rounded-lg bg-gray-200 p-2 min-h-[520px]" @dragover.prevent @drop="moveCard(column.status)">
+                                    <div class="flex items-center justify-between px-2 pb-2">
+                                        <h3 class="text-sm font-semibold" x-text="column.label"></h3>
+                                        <span class="text-xs text-gray-500" x-text="boardItems(column.status).length"></span>
+                                    </div>
+                                    <div class="space-y-2">
+                                        <template x-for="item in boardItems(column.status)" :key="item.id">
+                                            <article draggable="true" @dragstart="draggedItem = item.id" @click="openIssue(item.id)" class="cursor-grab rounded-md bg-white p-3 shadow-sm border border-gray-200 active:cursor-grabbing hover:border-indigo-300">
+                                                <div class="text-xs text-gray-400" x-text="(item.issue_key || '#' + item.id) + ' · ' + issueTypeLabel(item.issue_type)"></div>
+                                                <div class="mt-1 text-sm font-medium" x-text="item.title"></div>
+                                                <div x-show="item.labels && item.labels.length" class="mt-2 flex flex-wrap gap-1"><template x-for="label in item.labels" :key="label"><span class="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 text-[11px]" x-text="label"></span></template></div>
+                                                <div x-show="item.owner" class="mt-2 text-xs text-gray-500" x-text="item.owner"></div>
+                                                <div x-show="item.worktree_ids && item.worktree_ids.length" class="mt-2 text-xs text-indigo-500" x-text="'워크트리 ' + item.worktree_ids.join(', ')"></div>
+                                            </article>
+                                        </template>
+                                    </div>
+                                </div>
+                            </template>
+                        </div></div>
+                        <div x-show="boardPage.offset > 0 || boardPage.hasNext" class="stash-pagination">
+                            <button type="button" @click="previousBoardPage()" :disabled="loading || boardPage.offset === 0">이전</button>
+                            <span class="stash-pagination__page" x-text="pageLabel(boardPage)"></span>
+                            <button type="button" @click="nextBoardPage()" :disabled="loading || !boardPage.hasNext">다음</button>
+                        </div>
+                        <section x-show="selectedIssue" x-cloak class="stash-issue-detail mt-4 rounded-lg bg-white border border-gray-200 p-4 max-w-3xl">
+                            <div class="flex items-start justify-between gap-3">
+                                <div>
+                                    <div class="text-xs text-gray-400" x-text="selectedIssue && (selectedIssue.issue_key || '#' + selectedIssue.id)"></div>
+                                    <h3 class="text-base font-semibold" x-text="selectedIssue && selectedIssue.title"></h3>
+                                </div>
+                                <button @click="closeIssue()" class="text-gray-400 hover:text-gray-700">닫기</button>
+                            </div>
+                            <p x-show="selectedIssue && selectedIssue.description" class="mt-3 text-sm whitespace-pre-wrap" x-text="selectedIssue && selectedIssue.description"></p>
+                            <div x-show="selectedMemoryLinks.length" class="mt-3 flex flex-wrap gap-2">
+                                <template x-for="link in selectedMemoryLinks" :key="link.memory_type + '-' + link.memory_id">
+                                    <span class="px-2 py-1 rounded bg-amber-50 text-amber-700 text-xs" x-text="link.memory_type + ' #' + link.memory_id + (link.relation ? ' · ' + link.relation : '')"></span>
+                                </template>
+                            </div>
+                            <div class="mt-4 space-y-2"><template x-for="comment in selectedComments" :key="comment.id"><div class="rounded bg-gray-50 p-2 text-sm"><div class="text-xs text-gray-400" x-text="comment.author || '작성자 없음'"></div><div class="mt-1 whitespace-pre-wrap" x-text="comment.body"></div></div></template></div>
+                            <div x-show="commentPage.offset > 0 || commentPage.hasNext" class="stash-pagination">
+                                <button type="button" @click="previousCommentPage()" :disabled="loading || commentPage.offset === 0">이전</button>
+                                <span class="stash-pagination__page" x-text="pageLabel(commentPage)"></span>
+                                <button type="button" @click="nextCommentPage()" :disabled="loading || !commentPage.hasNext">다음</button>
+                            </div>
+                            <form @submit.prevent="addComment" class="mt-3 flex gap-2"><input x-model="commentBody" required placeholder="댓글" class="flex-1 px-3 py-2 text-sm rounded border border-gray-300"><button class="px-3 py-2 text-sm rounded bg-indigo-600 text-white hover:bg-indigo-700">댓글 남기기</button></form>
+                        </section>
+                    </div>
+
+                    <div x-show="view === 'graph'" x-cloak class="stash-graph min-w-[1050px] min-h-[560px] p-4 bg-slate-950 text-white">
+                        <div class="mb-2 text-xs text-slate-300">실선 화살표: 앞 작업이 뒤 작업을 막습니다. 점선: 관련 작업입니다.</div>
+                        <svg viewBox="0 0 1050 560" class="w-full min-h-[520px]" role="img" aria-label="작업 의존성 그래프">
+                            <defs>
+                                <marker id="work-edge-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+                                    <path d="M0,0 L8,4 L0,8 z" fill="#818cf8"></path>
+                                </marker>
+                            </defs>
+                            <template x-for="edge in graphEdges()" :key="edge.id">
+                                <line :x1="graphPoint(edge.from_item_id).x" :y1="graphPoint(edge.from_item_id).y" :x2="graphPoint(edge.to_item_id).x" :y2="graphPoint(edge.to_item_id).y" :stroke="edge.edge_type === 'blocks' ? '#818cf8' : '#64748b'" stroke-width="2" :stroke-dasharray="edge.edge_type === 'relates_to' ? '6 4' : null" :marker-end="edge.edge_type === 'blocks' ? 'url(#work-edge-arrow)' : null" opacity="0.8"></line>
+                            </template>
+                            <template x-for="column in graphColumns" :key="column.status">
+                                <text :x="graphColumnX(column.status)" y="22" text-anchor="middle" fill="#cbd5e1" font-size="13" x-text="column.label"></text>
+                            </template>
+                            <template x-for="item in graph.nodes" :key="item.id">
+                                <g :transform="`translate(${graphPoint(item.id).x},${graphPoint(item.id).y})`">
+                                    <rect x="-58" y="-25" width="116" height="50" rx="8" :fill="graphColor(item.status)" stroke="#e2e8f0" stroke-opacity="0.35"></rect>
+                                    <text text-anchor="middle" y="-3" fill="white" font-size="11" font-weight="600" x-text="item.issue_key || '#' + item.id"></text>
+                                    <text text-anchor="middle" y="13" fill="white" font-size="10" x-text="shortTitle(item.title)"></text>
+                                </g>
+                            </template>
+                        </svg>
+                    </div>
+
+                    <div x-show="view === 'worktrees'" x-cloak class="stash-worktrees min-w-[760px] min-h-[560px] p-4 bg-gray-100 text-gray-800">
+                        <div class="grid gap-3 md:grid-cols-2">
+                            <template x-for="worktree in graph.worktrees" :key="worktree.id">
+                                <article class="rounded-lg bg-white border border-gray-200 p-4 shadow-sm">
+                                    <div class="flex items-center justify-between gap-3"><h3 class="font-semibold" x-text="worktree.branch || '분리된 HEAD'"></h3><span class="px-2 py-0.5 rounded text-xs" :class="worktreeStatusClass(worktree.status)" x-text="worktreeStatusLabel(worktree.status)"></span></div>
+                                    <div class="mt-2 text-sm break-all" x-text="worktree.worktree_path"></div>
+                                    <div class="mt-2 text-xs text-gray-500" x-text="(worktree.head_sha || '').slice(0, 12) + (worktree.agent_id ? ' · ' + worktree.agent_id : '')"></div>
+                                </article>
+                            </template>
+                        </div>
+                        <p x-show="!graph.worktrees.length" class="text-sm text-gray-500">등록된 워크트리가 없습니다.</p>
+                        <div x-show="worktreePage.offset > 0 || worktreePage.hasNext" class="stash-pagination">
+                            <button type="button" @click="previousWorktreePage()" :disabled="loading || worktreePage.offset === 0">이전</button>
+                            <span class="stash-pagination__page" x-text="pageLabel(worktreePage)"></span>
+                            <button type="button" @click="nextWorktreePage()" :disabled="loading || !worktreePage.hasNext">다음</button>
+                        </div>
+                    </div>
+
+                    <div x-show="view === 'agent'" x-cloak class="stash-agent min-w-[760px] min-h-[560px] p-4 bg-gray-100 text-gray-800">
+                        <div class="flex items-center justify-between gap-3 mb-3">
+                            <h3 class="font-semibold">AGENTS.md 예시</h3>
+                            <button @click="copyAgentGuide()" class="px-3 py-2 text-sm rounded bg-indigo-600 text-white hover:bg-indigo-700" x-text="copyStatus"></button>
+                        </div>
+                        <textarea x-model="agentGuide" readonly class="w-full min-h-[520px] rounded-lg border border-gray-300 bg-white p-4 text-sm font-mono leading-6 focus:outline-none" spellcheck="false"></textarea>
+                    </div>
                 </div>
             </section>
         </main>
+        </div>
     </div>
 
     <script>
@@ -69,12 +412,127 @@
                 token: '',
                 sessionId: '',
                 requestId: 0,
-                auth: { mode: 'none', authenticated: false, user: '' },
-                result: 'Stash 콘솔입니다.\n\nAPI 토큰을 입력한 뒤 왼쪽 조회 항목을 선택하세요.',
+                auth: { auth_mode: 'none', authenticated: false, user: '' },
+                authChecked: false,
+                authLoading: true,
+                authError: '',
+                result: 'Stash 콘솔입니다.\n\n왼쪽 메뉴에서 작업이나 기억을 선택하세요.',
+                resultValue: null,
+                resultKind: '',
+                resultTitle: '결과',
+                resultDescription: '선택한 항목의 응답을 표시합니다.',
                 loading: false,
+                view: 'board',
+                activeNav: 'board',
+                tokenOpen: false,
+                pageSize: 50,
+                listPage: { tool: '', args: {}, offset: 0, limit: 50, hasNext: false },
+                boardPage: { offset: 0, limit: 50, hasNext: false },
+                worktreePage: { offset: 0, limit: 50, hasNext: false },
+                commentPage: { offset: 0, limit: 50, hasNext: false },
+                draggedItem: null,
+                graph: { nodes: [], edges: [], worktrees: [] },
+                boardFilter: { q: '', issueType: '', label: '' },
+                issueFormOpen: false,
+                issueForm: { title: '', description: '', issueType: 'task', labels: '' },
+                selectedIssue: null,
+                selectedComments: [],
+                selectedMemoryLinks: [],
+                commentBody: '',
+                copyStatus: '복사',
+                agentGuide: [
+                    '# Stash 에이전트 작업 규칙',
+                    '',
+                    '이 파일을 프로젝트의 AGENTS.md로 복사해 사용합니다.',
+                    '코드는 Git에 두고, Stash에는 이슈·작업 상태·의존성·워크트리·작업 기록을 저장합니다.',
+                    '',
+                    '## 세션 시작',
+                    '1. init을 호출합니다.',
+                    '2. list_namespaces로 네임스페이스를 확인합니다.',
+                    '3. 프로젝트 네임스페이스로 recall을 호출합니다.',
+                    '4. list_work_items로 진행 중이거나 막힌 이슈를 확인합니다.',
+                    '5. list_worktrees로 연결된 워크트리 상태를 확인합니다.',
+                    '',
+                    '## 작업 중',
+                    '- create_work_item으로 버그·기능·작업을 만듭니다. issue_type, labels, owner를 기록합니다.',
+                    '- add_work_item_dependency로 선행 작업을 연결합니다. from_item_id가 to_item_id를 막습니다.',
+                    '- update_work_item으로 backlog, ready, doing, blocked, review, done, canceled 상태를 기록합니다.',
+                    '- link_work_item_memory로 판단 근거와 실패 원인을 이슈에 연결하고, list_work_item_memory_links로 확인합니다.',
+                    '- add_work_item_comment와 record_work_event로 결정과 진행 상황을 남깁니다.',
+                    '',
+                    '## Git 워크트리',
+                    'stash worktree sync --repo . --namespace /projects/myapp --agent-id my-agent',
+                    '반환된 워크트리 ID를 attach_worktree_to_item으로 이슈에 연결합니다.',
+                    '',
+                    '## 세션 종료',
+                    '1. update_work_item으로 상태와 다음 작업을 저장합니다.',
+                    '2. add_work_item_comment로 인수인계 내용을 남깁니다.',
+                    '3. 오래 보관할 사실은 remember, 짧은 초점은 set_context로 저장합니다.',
+                    '',
+                    'blocks 의존성은 방향 있는 그래프입니다. 한 작업이 여러 작업을 막을 수 있습니다. relates_to는 일반적인 관련성을 표시합니다.',
+                    '',
+                    '--- English ---',
+                    '# Stash Agent Rules',
+                    '',
+                    'Copy this file into the project as AGENTS.md. Git keeps code and diffs; Stash keeps issues, work state, dependencies, worktrees, activity, and evidence.',
+                    '',
+                    '## Session start',
+                    '1. Call init.',
+                    '2. Call list_namespaces and verify the project namespace exists.',
+                    '3. Call recall in the exact project namespace.',
+                    '4. Call list_work_items for active and blocked issues.',
+                    '5. Call list_worktrees for connected worktree status.',
+                    '',
+                    '## While working',
+                    '- Use create_work_item for bugs, features, and tasks. Record issue_type, labels, owner, and reporter.',
+                    '- Use add_work_item_dependency for prerequisites. from_item_id blocks to_item_id.',
+                    '- Use update_work_item for backlog, ready, doing, blocked, review, done, or canceled.',
+                    '- Use link_work_item_memory for evidence and lessons; inspect them with list_work_item_memory_links.',
+                    '- Use add_work_item_comment and record_work_event for decisions and progress.',
+                    '',
+                    '## Git worktrees',
+                    'stash worktree sync --repo . --namespace /projects/myapp --agent-id my-agent',
+                    'Attach the returned worktree ID with attach_worktree_to_item. Use Git for code and Stash for work state.',
+                    '',
+                    '## Session end',
+                    '1. Save status and next step with update_work_item.',
+                    '2. Leave handoff details with add_work_item_comment.',
+                    '3. Save durable facts with remember and short-lived focus with set_context.',
+                    '',
+                    'The work graph is directed, not a linked list. One item may block several items. relates_to records a general relationship.'
+                ].join('\n'),
+                boardColumns: [
+                    { status: 'backlog', label: '대기' },
+                    { status: 'ready', label: '준비' },
+                    { status: 'doing', label: '진행 중' },
+                    { status: 'blocked', label: '막힘' },
+                    { status: 'review', label: '검토' },
+                    { status: 'done', label: '완료' },
+                    { status: 'canceled', label: '취소' }
+                ],
+                graphColumns: [
+                    { status: 'backlog', label: '대기' },
+                    { status: 'ready', label: '준비' },
+                    { status: 'doing', label: '진행 중' },
+                    { status: 'blocked', label: '막힘' },
+                    { status: 'review', label: '검토' },
+                    { status: 'done', label: '완료' },
+                    { status: 'canceled', label: '취소' }
+                ],
 
                 init() {
-                    this.loadAuthStatus();
+                    this.bootstrap();
+                },
+
+                async bootstrap() {
+                    this.authChecked = false;
+                    this.authLoading = true;
+                    this.authError = '';
+                    this.sessionId = '';
+                    await this.loadAuthStatus();
+                    if (this.authMode() !== 'oidc' || this.auth.authenticated) {
+                        await this.loadWorkBoard();
+                    }
                 },
 
                 normalizeToken() {
@@ -84,11 +542,26 @@
                 async loadAuthStatus() {
                     try {
                         const res = await fetch('/auth/status');
-                        if (res.ok) {
-                            this.auth = await res.json();
+                        if (!res.ok) {
+                            throw new Error(`HTTP ${res.status}`);
                         }
+                        const status = await res.json();
+                        if (!status || typeof status !== 'object') {
+                            throw new Error('인증 상태 응답이 올바르지 않습니다.');
+                        }
+                        this.auth = {
+                            ...status,
+                            auth_mode: status.auth_mode || status.mode || 'oidc',
+                            authenticated: status.authenticated === true,
+                            user: status.user || ''
+                        };
                     } catch (_) {
-                        // Authentication status is optional when auth is disabled.
+                        // Fail closed: do not render the workspace when auth status is unknown.
+                        this.auth = { auth_mode: 'oidc', authenticated: false, user: '' };
+                        this.authError = '인증 상태를 확인할 수 없습니다.';
+                    } finally {
+                        this.authChecked = true;
+                        this.authLoading = false;
                     }
                 },
 
@@ -99,41 +572,463 @@
                 },
 
                 async callTool(toolName, args) {
+                    this.view = 'text';
+                    this.activeNav = toolName;
+                    this.resultKind = toolName;
+                    this.resultTitle = this.toolLabel(toolName);
+                    this.resultDescription = '선택한 기억 항목의 응답입니다.';
+                    this.listPage = { tool: toolName, args: { ...args }, offset: 0, limit: this.pageSize, hasNext: false };
+                    await this.loadListPage();
+                },
+
+                async loadListPage() {
                     this.loading = true;
                     this.result = '불러오는 중...';
                     try {
-                        const run = async () => {
-                            await this.initializeSession();
-                            return this.sendMCPRequest('tools/call', { name: toolName, arguments: args });
+                        const args = {
+                            ...this.listPage.args,
+                            limit: this.listPage.limit + 1,
+                            offset: this.listPage.offset
                         };
-                        let data;
+                        const data = await this.invokeTool(this.listPage.tool, args);
+                        const value = this.toolValue(data);
+                        const items = Array.isArray(value) ? value : [];
+                        const pageLimit = this.listPage.limit;
+                        this.listPage.hasNext = items.length > pageLimit;
+                        this.resultValue = Array.isArray(value) ? items.slice(0, pageLimit) : value;
+                        this.result = JSON.stringify(this.resultValue, null, 2);
+                    } catch (e) {
+                        this.resultValue = null;
+                        this.result = '오류: ' + e.message;
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+
+                async previousListPage() {
+                    if (this.listPage.offset <= 0 || this.loading) return;
+                    this.listPage.offset = Math.max(0, this.listPage.offset - this.listPage.limit);
+                    await this.loadListPage();
+                },
+
+                async nextListPage() {
+                    if (!this.listPage.hasNext || this.loading) return;
+                    this.listPage.offset += this.listPage.limit;
+                    await this.loadListPage();
+                },
+
+                async invokeTool(toolName, args) {
+                    const run = async () => {
+                        await this.initializeSession();
+                        return this.sendMCPRequest('tools/call', { name: toolName, arguments: args });
+                    };
+                    try {
+                        return await run();
+                    } catch (e) {
+                        // A server restart invalidates the previous session ID.
+                        if (e.status === 404 && this.sessionId) {
+                            this.sessionId = '';
+                            return await run();
+                        }
+                        throw e;
+                    }
+                },
+
+                toolValue(data) {
+                    if (data && data.result && data.result.content && data.result.content.length > 0) {
                         try {
-                            data = await run();
-                        } catch (e) {
-                            // A server restart invalidates the previous session ID.
-                            if (e.status === 404 && this.sessionId) {
-                                this.sessionId = '';
-                                data = await run();
-                            } else {
-                                throw e;
-                            }
+                            return JSON.parse(data.result.content[0].text);
+                        } catch (_) {
+                            return data;
                         }
-                        // Pretty print the content if it's JSON inside the text
-                        if (data.result && data.result.content && data.result.content.length > 0) {
-                            try {
-                                const innerJson = JSON.parse(data.result.content[0].text);
-                                this.result = JSON.stringify(innerJson, null, 2);
-                            } catch (e) {
-                                this.result = JSON.stringify(data, null, 2);
-                            }
+                    }
+                    return data;
+                },
+
+                authMode() {
+                    return (this.auth && (this.auth.auth_mode || this.auth.mode)) || 'oidc';
+                },
+
+                resultItems() {
+                    if (Array.isArray(this.resultValue)) return this.resultValue;
+                    if (this.resultValue && typeof this.resultValue === 'object') return [this.resultValue];
+                    return [];
+                },
+
+                resultItemKind() {
+                    return {
+                        list_namespaces: '네임스페이스',
+                        query_facts: '사실',
+                        list_hypotheses: '가설',
+                        list_goals: '목표',
+                        list_worktrees: '워크트리'
+                    }[this.resultKind] || '항목';
+                },
+
+                resultItemTitle(item) {
+                    if (!item || typeof item !== 'object') return String(item ?? '');
+                    return item.name || item.content || item.title || item.slug || item.description || '항목';
+                },
+
+                resultItemBody(item) {
+                    if (!item || typeof item !== 'object') return '';
+                    const title = this.resultItemTitle(item);
+                    if (item.description && item.description !== title) return item.description;
+                    if (item.verification_plan) return item.verification_plan;
+                    if (item.notes) return item.notes;
+                    if (item.value && item.value !== title) return item.value;
+                    return '';
+                },
+
+                resultItemMeta(item) {
+                    if (!item || typeof item !== 'object') return '';
+                    if (item.slug) return item.slug;
+                    if (item.entity) return item.entity;
+                    if (item.author) return item.author;
+                    if (item.created_at) return new Date(item.created_at).toLocaleDateString();
+                    return '';
+                },
+
+                pageLabel(page) {
+                    const limit = Number(page && page.limit) || this.pageSize;
+                    const offset = Number(page && page.offset) || 0;
+                    return `${Math.floor(offset / limit) + 1}쪽`;
+                },
+
+                async loadWorkBoard(resetPage = true) {
+                    this.activeNav = 'board';
+                    this.resultTitle = '이슈 보드';
+                    this.resultDescription = '작업을 상태별로 정리합니다.';
+                    if (resetPage) this.boardPage.offset = 0;
+                    await this.loadWorkView('board');
+                },
+
+                async loadWorkGraph() {
+                    this.activeNav = 'graph';
+                    this.resultTitle = '작업 그래프';
+                    this.resultDescription = '작업 사이의 막힘과 관련성을 확인합니다.';
+                    await this.loadWorkView('graph');
+                },
+
+                async loadWorktrees(resetPage = true) {
+                    this.activeNav = 'worktrees';
+                    this.resultTitle = '워크트리';
+                    this.resultDescription = '연결된 Git 작업 공간의 현재 상태입니다.';
+                    this.view = 'worktrees';
+                    if (resetPage) this.worktreePage.offset = 0;
+                    this.loading = true;
+                    this.result = '불러오는 중...';
+                    try {
+                        const data = await this.invokeTool('list_worktrees', {
+                            namespaces: '/',
+                            limit: this.worktreePage.limit + 1,
+                            offset: this.worktreePage.offset
+                        });
+                        const value = this.toolValue(data);
+                        const worktrees = Array.isArray(value) ? value : [];
+                        this.worktreePage.hasNext = worktrees.length > this.worktreePage.limit;
+                        this.graph.worktrees = worktrees.slice(0, this.worktreePage.limit);
+                        this.resultValue = this.graph.worktrees;
+                        this.resultKind = 'list_worktrees';
+                        this.result = JSON.stringify(this.graph.worktrees, null, 2);
+                    } catch (e) {
+                        this.resultValue = null;
+                        this.result = '오류: ' + e.message;
+                        this.view = 'text';
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+
+                async previousWorktreePage() {
+                    if (this.worktreePage.offset <= 0 || this.loading) return;
+                    this.worktreePage.offset = Math.max(0, this.worktreePage.offset - this.worktreePage.limit);
+                    await this.loadWorktrees(false);
+                },
+
+                async nextWorktreePage() {
+                    if (!this.worktreePage.hasNext || this.loading) return;
+                    this.worktreePage.offset += this.worktreePage.limit;
+                    await this.loadWorktrees(false);
+                },
+
+                showAgentGuide() {
+                    this.activeNav = 'agent';
+                    this.resultTitle = '에이전트 규칙';
+                    this.resultDescription = '프로젝트에 복사해 사용할 작업 규칙입니다.';
+                    this.view = 'agent';
+                    this.copyStatus = '복사';
+                },
+
+                async copyAgentGuide() {
+                    try {
+                        if (navigator.clipboard && window.isSecureContext) {
+                            await navigator.clipboard.writeText(this.agentGuide);
                         } else {
-                            this.result = JSON.stringify(data, null, 2);
+                            const input = document.createElement('textarea');
+                            input.value = this.agentGuide;
+                            input.style.position = 'fixed';
+                            input.style.opacity = '0';
+                            document.body.appendChild(input);
+                            input.select();
+                            const copied = document.execCommand('copy');
+                            input.remove();
+                            if (!copied) throw new Error('copy command was rejected');
                         }
+                        this.copyStatus = '복사됨';
+                        window.setTimeout(() => { this.copyStatus = '복사'; }, 1600);
+                    } catch (_) {
+                        this.copyStatus = '복사 실패';
+                    }
+                },
+
+                async loadWorkView(view) {
+                    this.view = view;
+                    if (view === 'board') {
+                        this.resultTitle = '이슈 보드';
+                        this.resultDescription = '작업을 상태별로 정리합니다.';
+                    } else if (view === 'graph') {
+                        this.resultTitle = '작업 그래프';
+                        this.resultDescription = '작업 사이의 막힘과 관련성을 확인합니다.';
+                    }
+                    this.loading = true;
+                    this.result = '불러오는 중...';
+                    try {
+                        let graph;
+                        if (view === 'board') {
+                            const data = await this.invokeTool('list_work_items', {
+                                namespaces: '/', q: this.boardFilter.q, issue_type: this.boardFilter.issueType,
+                                label: this.boardFilter.label,
+                                limit: this.boardPage.limit + 1,
+                                offset: this.boardPage.offset
+                            });
+                            const value = this.toolValue(data);
+                            const items = Array.isArray(value) ? value : [];
+                            this.boardPage.hasNext = items.length > this.boardPage.limit;
+                            graph = { nodes: items.slice(0, this.boardPage.limit), edges: [], worktrees: [] };
+                        } else {
+                            const data = await this.invokeTool('get_work_graph', { namespaces: '/', include_done: true });
+                            graph = this.toolValue(data);
+                        }
+                        this.graph = {
+                            nodes: Array.isArray(graph.nodes) ? graph.nodes : [],
+                            edges: Array.isArray(graph.edges) ? graph.edges : [],
+                            worktrees: Array.isArray(graph.worktrees) ? graph.worktrees : []
+                        };
+                        this.resultValue = this.graph;
+                        this.resultKind = view === 'board' ? 'list_work_items' : 'get_work_graph';
+                        this.result = JSON.stringify(this.graph, null, 2);
+                    } catch (e) {
+                        this.resultValue = null;
+                        this.result = '오류: ' + e.message;
+                        this.view = 'text';
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+
+                async previousBoardPage() {
+                    if (this.boardPage.offset <= 0 || this.loading) return;
+                    this.boardPage.offset = Math.max(0, this.boardPage.offset - this.boardPage.limit);
+                    await this.loadWorkView('board');
+                },
+
+                async nextBoardPage() {
+                    if (!this.boardPage.hasNext || this.loading) return;
+                    this.boardPage.offset += this.boardPage.limit;
+                    await this.loadWorkView('board');
+                },
+
+                boardItems(status) {
+                    return this.graph.nodes
+                        .filter(item => item.status === status)
+                        .slice()
+                        .sort((a, b) => (Number(a.position) || 0) - (Number(b.position) || 0));
+                },
+
+                async moveCard(status) {
+                    const id = this.draggedItem;
+                    this.draggedItem = null;
+                    if (!id) return;
+                    const item = this.graph.nodes.find(candidate => candidate.id === id);
+                    if (!item || item.status === status) return;
+                    this.loading = true;
+                    try {
+                        const destination = this.boardItems(status).filter(candidate => candidate.id !== id);
+                        const position = destination.reduce((max, candidate) => Math.max(max, Number(candidate.position) || 0), -1) + 1;
+                        await this.invokeTool('update_work_item', { id, status, position });
+                        await this.loadWorkView('board');
                     } catch (e) {
                         this.result = '오류: ' + e.message;
                     } finally {
                         this.loading = false;
                     }
+                },
+
+                async createIssue() {
+                    this.loading = true;
+                    try {
+                        await this.invokeTool('create_work_item', {
+                            namespace: '/', title: this.issueForm.title, description: this.issueForm.description,
+                            issue_type: this.issueForm.issueType, labels: this.issueForm.labels, status: 'backlog'
+                        });
+                        this.issueForm = { title: '', description: '', issueType: 'task', labels: '' };
+                        this.issueFormOpen = false;
+                        await this.loadWorkBoard();
+                    } catch (e) {
+                        this.result = '오류: ' + e.message;
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+
+                async openIssue(id) {
+                    this.loading = true;
+                    try {
+                        const item = this.toolValue(await this.invokeTool('get_work_item', { id }));
+                        const links = this.toolValue(await this.invokeTool('list_work_item_memory_links', { work_item_id: id }));
+                        this.selectedIssue = item;
+                        this.commentPage = { offset: 0, limit: this.pageSize, hasNext: false };
+                        this.selectedMemoryLinks = Array.isArray(links) ? links : [];
+                        await this.loadIssueComments(id);
+                    } catch (e) {
+                        this.result = '오류: ' + e.message;
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+
+                closeIssue() {
+                    this.selectedIssue = null;
+                    this.selectedComments = [];
+                    this.selectedMemoryLinks = [];
+                    this.commentBody = '';
+                    this.commentPage = { offset: 0, limit: this.pageSize, hasNext: false };
+                },
+
+                async loadIssueComments(workItemID = this.selectedIssue && this.selectedIssue.id) {
+                    if (!workItemID) return;
+                    const data = await this.invokeTool('list_work_item_comments', {
+                        work_item_id: workItemID,
+                        limit: this.commentPage.limit + 1,
+                        offset: this.commentPage.offset
+                    });
+                    const value = this.toolValue(data);
+                    const comments = Array.isArray(value) ? value : [];
+                    this.commentPage.hasNext = comments.length > this.commentPage.limit;
+                    this.selectedComments = comments.slice(0, this.commentPage.limit);
+                },
+
+                async previousCommentPage() {
+                    if (!this.selectedIssue || this.commentPage.offset <= 0 || this.loading) return;
+                    this.commentPage.offset = Math.max(0, this.commentPage.offset - this.commentPage.limit);
+                    this.loading = true;
+                    try {
+                        await this.loadIssueComments();
+                    } catch (e) {
+                        this.result = '오류: ' + e.message;
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+
+                async nextCommentPage() {
+                    if (!this.selectedIssue || !this.commentPage.hasNext || this.loading) return;
+                    this.commentPage.offset += this.commentPage.limit;
+                    this.loading = true;
+                    try {
+                        await this.loadIssueComments();
+                    } catch (e) {
+                        this.result = '오류: ' + e.message;
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+
+                async addComment() {
+                    if (!this.selectedIssue || !this.commentBody.trim()) return;
+                    this.loading = true;
+                    try {
+                        await this.invokeTool('add_work_item_comment', { work_item_id: this.selectedIssue.id, body: this.commentBody });
+                        this.commentBody = '';
+                        this.commentPage.offset = 0;
+                        await this.loadIssueComments();
+                    } catch (e) {
+                        this.result = '오류: ' + e.message;
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+
+                issueTypeLabel(issueType) {
+                    return { task: '작업', bug: '버그', feature: '기능', chore: '정리', question: '질문' }[issueType] || issueType || '작업';
+                },
+
+                statusLabel(status) {
+                    return {
+                        backlog: '대기', ready: '준비', doing: '진행 중', blocked: '막힘',
+                        review: '검토', done: '완료', canceled: '취소'
+                    }[status] || status || '대기';
+                },
+
+                worktreeStatusLabel(status) {
+                    return {
+                        clean: '깨끗함', dirty: '변경 있음', missing: '찾을 수 없음',
+                        merged: '병합됨', removed: '제거됨'
+                    }[status] || status || '확인 필요';
+                },
+
+                toolLabel(toolName) {
+                    return {
+                        list_namespaces: '네임스페이스',
+                        query_facts: '사실',
+                        list_hypotheses: '가설',
+                        list_goals: '목표'
+                    }[toolName] || '조회 결과';
+                },
+
+                viewTitle() {
+                    return this.resultTitle || '결과';
+                },
+
+                worktreeStatusClass(status) {
+                    return {
+                        clean: 'bg-emerald-50 text-emerald-700', dirty: 'bg-amber-50 text-amber-700',
+                        missing: 'bg-red-50 text-red-700', merged: 'bg-indigo-50 text-indigo-700',
+                        removed: 'bg-gray-200 text-gray-600'
+                    }[status] || 'bg-gray-100 text-gray-600';
+                },
+
+                graphNode(id) {
+                    return this.graph.nodes.find(item => item.id === id);
+                },
+
+                graphEdges() {
+                    return this.graph.edges.filter(edge => this.graphNode(edge.from_item_id) && this.graphNode(edge.to_item_id));
+                },
+
+                graphColumnX(status) {
+                    const index = this.graphColumns.findIndex(column => column.status === status);
+                    return 100 + Math.max(index, 0) * 140;
+                },
+
+                graphPoint(id) {
+                    const item = this.graphNode(id);
+                    if (!item) return { x: 0, y: 0 };
+                    const sameStatus = this.graph.nodes.filter(candidate => candidate.status === item.status);
+                    const row = Math.max(sameStatus.findIndex(candidate => candidate.id === item.id), 0);
+                    return { x: this.graphColumnX(item.status), y: 70 + row * 82 };
+                },
+
+                graphColor(status) {
+                    return {
+                        backlog: '#64748b', ready: '#0ea5e9', doing: '#4f46e5',
+                        blocked: '#dc2626', review: '#9333ea', done: '#059669', canceled: '#475569'
+                    }[status] || '#334155';
+                },
+
+                shortTitle(title) {
+                    return title && title.length > 17 ? title.slice(0, 16) + '…' : title;
                 },
 
                 async initializeSession() {

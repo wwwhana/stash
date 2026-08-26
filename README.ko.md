@@ -11,13 +11,6 @@
 
 오픈 소스. 자체 호스팅(Self-hosted). MCP를 지원하는 모든 에이전트와 호환됩니다.
 
----
-
-> **직접 호스팅하기 번거로우신가요?**
-> **[usestash.io](https://usestash.io)** 클라우드 버전을 이용해 보세요. 구글로 로그인하고 MCP URL 하나만 복사하면 끝입니다. 무료로 시작할 수 있습니다.
-
----
-
 ## 빠른 시작 (Quick Start)
 
 ```bash
@@ -27,7 +20,7 @@ cp .env.example .env   # API 키와 모델을 수정하세요
 docker compose up
 ```
 
-이것이 전부입니다. Postgres + pgvector, 마이그레이션, 그리고 백그라운드 기억 통합(Consolidation)을 수행하는 MCP 서버가 단일 명령어로 모두 실행됩니다.
+이것이 전부입니다. Postgres + pgvector, 마이그레이션, MCP·운영 지표 서버, 백그라운드 기억 통합이 단일 명령어로 모두 실행됩니다.
 
 **다음 단계:** [Getting Started guide](docs/GETTING_STARTED.md) — MCP 클라이언트를 연결하고, `init` / `remember` / `recall`을 실행하여 모든 것이 잘 동작하는지 확인하세요.
 
@@ -92,6 +85,10 @@ codex mcp login stash
 `STASH_AUTH_MODE=oidc`와 발급자·클라이언트 설정을 지정하고,
 Codex에서 사용할 OAuth 클라이언트를 `STASH_AUTH_MCP_CLIENT_ID`에 넣습니다.
 
+## 운영 지표와 상태 확인
+
+`stash serve`를 실행하면 MCP와 함께 운영용 HTTP 포트(기본 `:9090`)가 열립니다. Prometheus 지표는 `http://localhost:9090/metrics`에서 확인하고, `/healthz`는 데이터베이스 연결을, `/readyz`는 준비 상태를 확인합니다. HTTP 요청, 인증 결과, MCP 도구 호출, 네임스페이스 범위 적용, 기억 통합 작업을 기록합니다. 요청·인증·도구·범위 지표의 라벨에는 사용자 ID와 원본 네임스페이스 이름을 넣지 않습니다. `mcp serve`와 `http serve`를 별도 프로세스로 실행하면 카운터도 나뉘므로, 전체 흐름을 한 번에 보려면 `stash serve`를 사용하세요.
+
 ### 3. agy (Antigravity)
 `~/.gemini/config/mcp_config.json`을 통해 설정합니다:
 ```json
@@ -138,15 +135,21 @@ Stash는 AI 에이전트와 현실 세계 사이의 인지적 계층(Cognitive l
 
 9단계의 기억 통합(Consolidation) 파이프라인이 원시 관측 데이터를 팩트, 관계, 인과 고리(Causal links), 패턴, 모순(Contradictions), 목표 추적(Goal tracking), 실패 패턴(Failure patterns), 가설 검증(Hypothesis verification)과 같은 구조화된 지식으로 변환합니다. 각 단계는 마지막 실행 이후의 새로운 데이터만을 처리합니다.
 
-## Stash Cloud (베타 — 무료)
+## 작업 그래프와 Git 워크트리
 
-Stash의 호스팅된 멀티테넌트 버전이 **[usestash.io](https://usestash.io/)**에 제공되며, 베타 기간 동안 무료로 사용할 수 있습니다.
+작업 카드는 기억 데이터와 분리해 저장하고, 목표·작업·의존성·워크트리·작업 이벤트를 하나의 그래프로 연결할 수 있습니다. 이슈 종류(버그·기능·작업), 라벨, 담당자, 댓글도 함께 관리하므로 별도 서비스 없이 로컬 이슈 트래커로 사용할 수 있습니다. 같은 데이터가 상태별 칸반 보드와 의존성 그래프로 표시됩니다. 작업 카드는 관련 사실·실패·가설에도 연결할 수 있어, 에이전트가 작업을 이어받을 때 필요한 근거를 함께 불러옵니다.
 
-이 클라우드 버전은 처음부터 새로 작성되었으며 현재 레포지토리와 코드를 공유하지 않습니다. 확장성, 멀티테넌시, 그리고 제품으로서의 장기적인 지속 가능성을 고려하여 설계되었습니다. 제공되는 기능 세트도 양방향으로 다릅니다 (오픈 소스에만 있는 기능이 클라우드에 없기도 하고 그 반대이기도 합니다).
+로컬 에이전트는 현재 저장소의 워크트리를 Stash에 동기화할 수 있습니다. 코드와 실제 변경 내용은 Git에 남고, Stash에는 경로·브랜치·커밋·상태·작업 기록이 저장됩니다.
 
-## 더 알아보기
+```bash
+stash worktree sync --repo . --namespace /projects/myapp
+stash worktree list --namespaces /projects/myapp
+stash issue create --namespace / "로그인 오류" --type bug --labels auth,login
+stash issue list --namespaces / --status doing --label auth
+stash issue comment add W-000001 --body "재현 조건을 확인했습니다"
+```
 
-**[alash3al.github.io/stash →](https://alash3al.github.io/stash/)**
+에이전트 규칙 파일 예시는 [docs/AGENT.md](docs/AGENT.md)에서 복사할 수 있습니다. MCP 클라이언트에서는 `create_work_item`, `list_work_items`, `add_work_item_dependency`, `get_work_graph`, `add_work_item_comment`, `list_work_item_comments`, `link_work_item_memory`, `list_work_item_memory_links`, `list_worktrees`, `record_work_event` 도구를 사용합니다. `/`는 이미 만들어진 네임스페이스를 지정할 때만 사용하세요.
 
 ## 라이선스
 

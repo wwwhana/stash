@@ -4,11 +4,6 @@
 
 > **Note:** This is an enhanced fork of the original [alash3al/stash](https://github.com/alash3al/stash). 
 > This version (`wwwhana/stash`) introduces significant improvements including Hybrid Search (Vector + Trigram RRF), deterministic episode clustering, safer soft-delete lifecycle, and advanced MCP auto-hydration hooks.
->
->
-> Learn more orignal
->
-> [**alash3al.github.io/stash →**](https://alash3al.github.io/stash/)
 
 **Your AI has amnesia. We fixed it.**
 
@@ -27,7 +22,7 @@ cp .env.example .env   # edit with your API key + model
 docker compose up
 ```
 
-That's it. Postgres + pgvector, migrations, MCP server with background consolidation — all in one command.
+That's it. Postgres + pgvector, migrations, MCP/metrics servers, and background consolidation — all in one command.
 
 **Next:** [Getting Started guide](docs/GETTING_STARTED.md) — connect your MCP client, run `init` / `remember` / `recall`, and verify everything works.
 
@@ -139,6 +134,10 @@ Point any MCP-compatible client at the SSE URL: `http://localhost:8080/sse`
 }
 ```
 
+## Metrics and Health
+
+Run `stash serve` to expose the operational HTTP port (default `:9090`) alongside MCP. Prometheus metrics are available at `http://localhost:9090/metrics`; `/healthz` checks the database connection and `/readyz` checks readiness. The metrics cover HTTP requests, authentication outcomes, MCP tool calls, namespace-scope decisions, and consolidation activity. Request, authentication, tool, and scope metrics use bounded labels and do not include user IDs or raw namespace names. If `mcp serve` and `http serve` run as separate processes, their in-memory counters are separate; use `stash serve` when one complete series is needed.
+
 ### Auto-Save &amp; Seamless Handoff
 
 To make your AI agents automatically save their memory and pass the baton between sessions without manual prompting, read the [**Seamless Agent Handoff Guide**](docs/AGENT_HANDOFF.md). You can configure Cursor, Claude Desktop, or Antigravity IDE to mechanically load and save context.
@@ -148,6 +147,22 @@ To make your AI agents automatically save their memory and pass the baton betwee
 Stash is a cognitive layer between your AI agent and the world. Episodes become facts. Facts become relationships. Relationships become patterns. Patterns become wisdom.
 
 A 9-stage consolidation pipeline turns raw observations into structured knowledge — facts, relationships, causal links, patterns, contradictions, goal tracking, failure patterns, and hypothesis verification. Each stage only processes new data since the last run.
+
+## Work Graphs and Git Worktrees
+
+Work cards live separately from memory data and connect goals, tasks, dependencies, worktrees, and activity events in one graph. Issue types (bug, feature, task), labels, assignees, and comments are included, so the same data can serve as a local issue tracker without another service. The same data can be shown as a Kanban board grouped by status or as a dependency graph. Work cards can also link to facts, failures, and hypotheses so an agent can pick up the evidence it needs in a later session.
+
+An agent-side bridge can sync the repository's local Git worktrees into Stash. Git remains the source for code and diffs; Stash stores paths, branches, commits, status, and work history.
+
+```bash
+stash worktree sync --repo . --namespace /projects/myapp
+stash worktree list --namespaces /projects/myapp
+stash issue create --namespace / "Login error" --type bug --labels auth,login
+stash issue list --namespaces / --status doing --label auth
+stash issue comment add W-000001 --body "Reproduction confirmed"
+```
+
+An agent rules sample is available at [docs/AGENT.md](docs/AGENT.md). MCP clients can use `create_work_item`, `list_work_items`, `add_work_item_dependency`, `get_work_graph`, `add_work_item_comment`, `list_work_item_comments`, `link_work_item_memory`, `list_work_item_memory_links`, `list_worktrees`, and `record_work_event`. The namespace must already exist before syncing or creating work data.
 
 ## License
 

@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/alash3al/stash/internal/observability"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/urfave/cli/v3"
@@ -67,7 +68,7 @@ func serveHTTP(ctx context.Context, cmd *cli.Command) error {
 		_, _ = w.Write([]byte("ready"))
 	})
 
-	srv := &http.Server{Addr: addr, Handler: mux}
+	srv := &http.Server{Addr: addr, Handler: observability.InstrumentHTTP(mux)}
 
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer cancel()

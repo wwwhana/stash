@@ -20,6 +20,7 @@ import (
 	"github.com/alash3al/stash/internal/bootstrap"
 	"github.com/alash3al/stash/internal/brain"
 	"github.com/alash3al/stash/internal/models"
+	"github.com/alash3al/stash/internal/observability"
 	"github.com/alash3al/stash/internal/web"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -59,10 +60,24 @@ func jsonToolResult(value any) (*mcp.CallToolResult, error) {
 	return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(b)}}}, nil
 }
 
+func observeMCPTool(next server.ToolHandlerFunc) server.ToolHandlerFunc {
+	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		started := time.Now()
+		result, err := next(ctx, request)
+		outcome := "ok"
+		if err != nil || (result != nil && result.IsError) {
+			outcome = "error"
+		}
+		observability.RecordMCPToolCall(request.Params.Name, outcome, time.Since(started))
+		return result, err
+	}
+}
+
 func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 	mcpServer := server.NewMCPServer("stash", "0.2.8",
 		server.WithToolCapabilities(true),
 		server.WithDescription(render("server_description")),
+		server.WithToolHandlerMiddleware(observeMCPTool),
 	)
 
 	mcpServer.AddTool(mcp.NewTool("init",
@@ -891,6 +906,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: `{"ok": true}`}}}, nil
 	})
 
+	registerWorkGraphTools(mcpServer, bc)
 	return mcpServer
 }
 
@@ -931,7 +947,7 @@ func mcpServeCmd(ctx context.Context, cmd *cli.Command) error {
 
 	httpServer := &http.Server{
 		Addr:    addr,
-		Handler: mux,
+		Handler: observability.InstrumentHTTP(mux),
 		// SSE 는 응답이 끝나지 않는 스트림이므로 쓰기 타임아웃을 걸지 않는다.
 		ReadHeaderTimeout: 10 * time.Second,
 	}
