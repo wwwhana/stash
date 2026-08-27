@@ -106,7 +106,11 @@ HTTP MCP 요청은 `Authorization: Bearer <access-token>` 헤더를 보내야 �
 
 임베딩 API가 짧은 요청 재시도 후에도 실패하면 원문은 인덱싱 대기 상태로 저장됩니다. PostgreSQL 연결은 정상이지만 벡터 값만 저장하지 못한 경우에도 원문을 보존합니다. 서버는 성공할 때까지 횟수 제한 없이 다시 처리하며, 재시도 간격은 설정한 최댓값까지만 늘어납니다. `STASH_EMBEDDING_RETRY_INTERVAL`, `STASH_EMBEDDING_RETRY_MAX_INTERVAL`, `STASH_EMBEDDING_RETRY_BATCH_SIZE`로 주기와 한 번에 처리할 수를 설정합니다.
 
-MCP 도구 결과는 기본 32KB 단위로 나눕니다. 목록이 이 크기를 넘으면 현재 묶음과 `has_more`, `next_offset`을 반환하므로 같은 도구에 `offset=next_offset`을 보내 이어서 읽을 수 있습니다. 목록이 아닌 큰 결과는 모델 입력 한도를 넘기기 전에 생략 안내를 반환합니다. 상한은 `STASH_MCP_MAX_RESPONSE_BYTES`로 바꿀 수 있습니다. HTTP 접근 기록은 `STASH_LOG_LEVEL=debug`일 때만 출력하며 쿼리 문자열, 인증 헤더, 쿠키는 기록하지 않습니다.
+MCP 도구 결과에는 기본 32KB 안전 상한이 있습니다. 이 값은 전송을 보호하기 위한 값이며 모델의 컨텍스트 한도가 아닙니다. 목록이 상한을 넘으면 `items`, `has_more`, `next_offset`으로 나누므로 같은 도구에 `offset=next_offset`을 보내 이어서 읽을 수 있습니다. 목록이 아닌 큰 결과는 클라이언트의 입력 한도를 넘기기 전에 생략 안내를 반환합니다. 상한은 `STASH_MCP_MAX_RESPONSE_BYTES`로 바꿀 수 있습니다.
+
+리즌 모델과 임베딩 모델의 입력 한도는 MCP 응답 상한과 별도로 설정합니다. 리즌 모델의 전체 컨텍스트 크기를 `STASH_REASONER_CONTEXT_TOKENS`에, 지시문과 JSON 답변을 위해 남겨 둘 공간을 `STASH_REASONER_RESERVED_TOKENS`에 넣습니다. 임베딩 모델의 입력 한도는 `STASH_EMBEDDING_CONTEXT_TOKENS`에 넣습니다. Stash는 이 토큰 예산을 보수적인 UTF-8 바이트 예산으로 바꾸고, 문단과 문장이 끊기지 않도록 자료를 나눠 호출합니다. 긴 임베딩 입력은 여러 묶음의 벡터를 합쳐 하나로 저장합니다. MCP는 모델의 토크나이저나 현재 대화에 남은 토큰을 알려주지 않으므로 값을 `0`으로 두면 제공자가 컨텍스트 초과를 반환했을 때 자동으로 더 작게 나눠 다시 시도합니다. 컨텍스트가 44,544토큰인 리즌 모델이라면 `STASH_REASONER_CONTEXT_TOKENS=44544`, `STASH_REASONER_RESERVED_TOKENS=4096` 이상으로 시작하면 됩니다.
+
+HTTP 접근 기록은 `STASH_LOG_LEVEL=debug`일 때만 출력하며 쿼리 문자열, 인증 헤더, 쿠키는 기록하지 않습니다.
 
 ### 3. agy (Antigravity)
 `~/.gemini/config/mcp_config.json`을 통해 설정합니다:

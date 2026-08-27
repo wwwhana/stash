@@ -42,6 +42,10 @@ STASH_OPENAI_BASE_URL=http://host.docker.internal:11434/v1
 STASH_EMBEDDING_MODEL=nomic-embed-text
 STASH_REASONER_MODEL=qwen2.5:3b
 STASH_VECTOR_DIM=768                 # ⚠ set once before first run — cannot change later
+# Match these to `ollama show <model>` / the server's configured context.
+STASH_EMBEDDING_CONTEXT_TOKENS=0
+STASH_REASONER_CONTEXT_TOKENS=0
+STASH_REASONER_RESERVED_TOKENS=4096
 ```
 
 > **Warning:** `STASH_VECTOR_DIM` locks at first init. If you already started Stash with `1536`, reset the Postgres volume or use a fresh database before switching to Ollama embeddings.
@@ -85,6 +89,7 @@ extra_hosts:
 **Consolidation slow or noisy**
 
 - Smaller reasoners (`qwen2.5:3b`, `llama3.2:3b`) are fine for dev; use a larger model only if synthesis quality matters
+- If Ollama reports a context error, set `STASH_REASONER_CONTEXT_TOKENS` to the model's configured context window. Stash then splits evidence on paragraph and sentence boundaries. Set `STASH_EMBEDDING_CONTEXT_TOKENS` the same way for long passages.
 
 ---
 

@@ -45,6 +45,9 @@ func TestAuthenticationSettingsAreOptionalWhenDisabled(t *testing.T) {
 	if cfg.EmbeddingRetryInterval != time.Minute || cfg.EmbeddingRetryMaxInterval != time.Hour || cfg.EmbeddingRetryBatchSize != 100 {
 		t.Fatalf("unexpected embedding retry defaults: interval=%s max=%s batch=%d", cfg.EmbeddingRetryInterval, cfg.EmbeddingRetryMaxInterval, cfg.EmbeddingRetryBatchSize)
 	}
+	if cfg.ReasonerContextTokens != 0 || cfg.ReasonerReservedTokens != 4096 || cfg.EmbeddingContextTokens != 0 {
+		t.Fatalf("unexpected model context defaults: reasoner=%d reserve=%d embedding=%d", cfg.ReasonerContextTokens, cfg.ReasonerReservedTokens, cfg.EmbeddingContextTokens)
+	}
 	if cfg.MCPMaxResponseBytes != 32768 {
 		t.Fatalf("MCPMaxResponseBytes = %d, want 32768", cfg.MCPMaxResponseBytes)
 	}
@@ -105,6 +108,28 @@ func TestEmbeddingRetrySettingsValidation(t *testing.T) {
 	invalidResponseLimit.MCPMaxResponseBytes = 1000
 	if err := invalidResponseLimit.Validate(); err == nil || !strings.Contains(err.Error(), "STASH_MCP_MAX_RESPONSE_BYTES") {
 		t.Fatalf("invalid MCP response limit error = %v", err)
+	}
+
+	invalidReasonerContext := base
+	invalidReasonerContext.ReasonerContextTokens = -1
+	if err := invalidReasonerContext.Validate(); err == nil || !strings.Contains(err.Error(), "STASH_REASONER_CONTEXT_TOKENS") {
+		t.Fatalf("invalid reasoner context error = %v", err)
+	}
+	invalidReserve := base
+	invalidReserve.ReasonerReservedTokens = -1
+	if err := invalidReserve.Validate(); err == nil || !strings.Contains(err.Error(), "STASH_REASONER_RESERVED_TOKENS") {
+		t.Fatalf("invalid reasoner reserve error = %v", err)
+	}
+	tooLittleContext := base
+	tooLittleContext.ReasonerContextTokens = 4096
+	tooLittleContext.ReasonerReservedTokens = 4096
+	if err := tooLittleContext.Validate(); err == nil || !strings.Contains(err.Error(), "STASH_REASONER_CONTEXT_TOKENS") {
+		t.Fatalf("too-small reasoner context error = %v", err)
+	}
+	invalidEmbeddingContext := base
+	invalidEmbeddingContext.EmbeddingContextTokens = -1
+	if err := invalidEmbeddingContext.Validate(); err == nil || !strings.Contains(err.Error(), "STASH_EMBEDDING_CONTEXT_TOKENS") {
+		t.Fatalf("invalid embedding context error = %v", err)
 	}
 }
 

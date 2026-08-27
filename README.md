@@ -156,7 +156,11 @@ Point any MCP-compatible client at the SSE URL: `http://localhost:8080/sse`
 
 If the embedding endpoint still fails after the SDK's short request retries, Stash saves the raw memory with a pending index state. It also preserves the raw memory when PostgreSQL is reachable but the vector value cannot be stored. The background worker retries without an attempt limit; exponential backoff stops growing at the configured maximum. Configure it with `STASH_EMBEDDING_RETRY_INTERVAL`, `STASH_EMBEDDING_RETRY_MAX_INTERVAL`, and `STASH_EMBEDDING_RETRY_BATCH_SIZE`.
 
-MCP tool results are capped at 32 KiB by default. Oversized list pages are split into `items`, `has_more`, and `next_offset`; call the same tool with `offset=next_offset` to continue. Oversized non-list results return a small notice before they can exhaust the model context. Change the cap with `STASH_MCP_MAX_RESPONSE_BYTES`. Set `STASH_LOG_LEVEL=debug` to emit HTTP access records. Access records omit query strings, authorization headers, and cookies.
+MCP tool results keep a 32 KiB safety cap by default (this is a transport safeguard, not a model context size). Oversized list pages are split into `items`, `has_more`, and `next_offset`; call the same tool with `offset=next_offset` to continue. Oversized non-list results return a small notice before they can exhaust the client context. Change the cap with `STASH_MCP_MAX_RESPONSE_BYTES`.
+
+Reasoner and embedding limits are separate from the MCP response cap. Set `STASH_REASONER_CONTEXT_TOKENS` to the full context window of the configured reasoning model and `STASH_REASONER_RESERVED_TOKENS` to the space kept for instructions and the JSON answer. Set `STASH_EMBEDDING_CONTEXT_TOKENS` to the embedding model's input window. Stash converts these token budgets to a conservative UTF-8 byte budget, splits on paragraph and sentence boundaries, and combines long embedding chunks into one vector. MCP does not publish the model tokenizer or the caller's remaining context; when a limit is left at `0`, Stash adapts after a provider reports a context-length error. For a 44,544-token reasoner, for example, start with `STASH_REASONER_CONTEXT_TOKENS=44544` and a reserve of `4096` or more.
+
+Set `STASH_LOG_LEVEL=debug` to emit HTTP access records. Access records omit query strings, authorization headers, and cookies.
 
 ### Auto-Save &amp; Seamless Handoff
 

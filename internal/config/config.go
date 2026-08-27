@@ -25,6 +25,12 @@ type Config struct {
 	EmbeddingRetryInterval    time.Duration `env:"STASH_EMBEDDING_RETRY_INTERVAL" envDefault:"1m"`
 	EmbeddingRetryMaxInterval time.Duration `env:"STASH_EMBEDDING_RETRY_MAX_INTERVAL" envDefault:"1h"`
 	EmbeddingRetryBatchSize   int           `env:"STASH_EMBEDDING_RETRY_BATCH_SIZE" envDefault:"100"`
+	// Model input limits are provider/model-specific. MCP cannot discover them
+	// or the caller's remaining context, so deployments may set these values to
+	// make consolidation and long-memory embedding split before a request fails.
+	ReasonerContextTokens  int `env:"STASH_REASONER_CONTEXT_TOKENS" envDefault:"0"`
+	ReasonerReservedTokens int `env:"STASH_REASONER_RESERVED_TOKENS" envDefault:"4096"`
+	EmbeddingContextTokens int `env:"STASH_EMBEDDING_CONTEXT_TOKENS" envDefault:"0"`
 
 	// Memory
 	ContextTTL time.Duration `env:"STASH_CONTEXT_TTL,required"`
@@ -160,6 +166,18 @@ func (c *Config) Validate() error {
 	}
 	if c.EmbeddingRetryBatchSize <= 0 {
 		return fmt.Errorf("STASH_EMBEDDING_RETRY_BATCH_SIZE must be greater than zero")
+	}
+	if c.ReasonerContextTokens < 0 {
+		return fmt.Errorf("STASH_REASONER_CONTEXT_TOKENS must not be negative")
+	}
+	if c.ReasonerReservedTokens < 0 {
+		return fmt.Errorf("STASH_REASONER_RESERVED_TOKENS must not be negative")
+	}
+	if c.ReasonerContextTokens > 0 && c.ReasonerContextTokens <= c.ReasonerReservedTokens {
+		return fmt.Errorf("STASH_REASONER_CONTEXT_TOKENS must be greater than STASH_REASONER_RESERVED_TOKENS")
+	}
+	if c.EmbeddingContextTokens < 0 {
+		return fmt.Errorf("STASH_EMBEDDING_CONTEXT_TOKENS must not be negative")
 	}
 	if c.HTTPAddr == "" {
 		return fmt.Errorf("STASH_HTTP_ADDR must not be empty")

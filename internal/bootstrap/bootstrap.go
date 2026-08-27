@@ -73,14 +73,28 @@ func New(ctx context.Context) (*Context, error) {
 		return nil, fmt.Errorf("build embedder: %w", err)
 	}
 
+	// Split oversized passages before the cache/API boundary. The cache still
+	// stores the final vector under the original full memory text.
+	limitedEmb := embedder.NewLimited(emb, cfg.EmbeddingContextTokens)
 	// Wrap embedder with pgx-backed cache
-	cachedEmb := embedder.NewCached(emb, pool)
+	cachedEmb := embedder.NewCached(limitedEmb, pool)
 
 	reas, err := buildReasoner(cfg)
 	if err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("build reasoner: %w", err)
 	}
+	// Keep model-sized batching at the reasoner boundary so every consolidation
+	// stage uses the same context rules.
+	limitedReasoner := reasoner.NewLimited(reas, cfg.ReasonerContextTokens, cfg.ReasonerReservedTokens)
+	reas = limitedReasoner
+	logger.Info("model input limits",
+		"reasoner_context_tokens", cfg.ReasonerContextTokens,
+		"reasoner_reserved_tokens", cfg.ReasonerReservedTokens,
+		"reasoner_input_bytes", limitedReasoner.MaxInputBytes(),
+		"embedding_context_tokens", cfg.EmbeddingContextTokens,
+		"embedding_input_bytes", limitedEmb.MaxInputBytes(),
+	)
 
 	q, err := queries.New()
 	if err != nil {
