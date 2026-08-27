@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/alash3al/stash/internal/models"
@@ -39,12 +41,30 @@ type OpenAI struct {
 	model  string
 }
 
+const defaultRequestTimeout = 2 * time.Minute
+
 func NewOpenAI(baseURL, apiKey, model string) (*OpenAI, error) {
+	return NewOpenAIWithTimeout(baseURL, apiKey, model, defaultRequestTimeout)
+}
+
+// NewOpenAIWithTimeout creates a reasoner with a bounded request attempt.
+// Without this bound a provider that accepts a connection but never returns
+// can hold an MCP tool and every caller waiting behind it indefinitely.
+func NewOpenAIWithTimeout(baseURL, apiKey, model string, requestTimeout time.Duration) (*OpenAI, error) {
 	if model == "" {
 		return nil, errors.New("reasoner: model is required")
 	}
+	if requestTimeout <= 0 {
+		return nil, errors.New("reasoner: request timeout must be greater than zero")
+	}
 
-	options := []option.RequestOption{option.WithBaseURL(baseURL)}
+	options := []option.RequestOption{
+		option.WithBaseURL(baseURL),
+		option.WithRequestTimeout(requestTimeout),
+		// Keep a transport-level deadline as well. Some compatible transports do
+		// not propagate the SDK's per-attempt context while waiting for headers.
+		option.WithHTTPClient(&http.Client{Timeout: requestTimeout}),
+	}
 	if strings.TrimSpace(apiKey) != "" {
 		options = append(options, option.WithAPIKey(apiKey))
 	}
@@ -216,7 +236,7 @@ GOOD example (specific and synthesized):
 			Messages: msgs,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("chat.completions call failed: %w", err)
+			return nil, fmt.Errorf("reasoning request for model %q failed: %w", o.model, err)
 		}
 		if len(resp.Choices) == 0 {
 			return nil, errors.New("reasoner: no response from LLM")
@@ -293,7 +313,7 @@ Rules:
 			Messages: msgs,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("chat.completions call failed: %w", err)
+			return nil, fmt.Errorf("reasoning request for model %q failed: %w", o.model, err)
 		}
 		if len(resp.Choices) == 0 {
 			return nil, errors.New("reasoner: no response from LLM")
@@ -410,7 +430,7 @@ Rules:
 			Messages: msgs,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("chat.completions call failed: %w", err)
+			return nil, fmt.Errorf("reasoning request for model %q failed: %w", o.model, err)
 		}
 		if len(resp.Choices) == 0 {
 			return nil, errors.New("reasoner: no response from LLM")
@@ -512,7 +532,7 @@ Rules:
 			Messages: msgs,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("chat.completions call failed: %w", err)
+			return nil, fmt.Errorf("reasoning request for model %q failed: %w", o.model, err)
 		}
 		if len(resp.Choices) == 0 {
 			return nil, errors.New("reasoner: no response from LLM")
@@ -601,7 +621,7 @@ Rules:
 			Messages: msgs,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("chat.completions call failed: %w", err)
+			return nil, fmt.Errorf("reasoning request for model %q failed: %w", o.model, err)
 		}
 		if len(resp.Choices) == 0 {
 			return nil, errors.New("reasoner: no response from LLM")
@@ -718,7 +738,7 @@ Rules:
 			Messages: msgs,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("chat.completions call failed: %w", err)
+			return nil, fmt.Errorf("reasoning request for model %q failed: %w", o.model, err)
 		}
 		if len(resp.Choices) == 0 {
 			return nil, errors.New("reasoner: no response from LLM")
@@ -842,7 +862,7 @@ Rules for pattern extraction (higher-order):
 			Messages: msgs,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("chat.completions call failed: %w", err)
+			return nil, fmt.Errorf("reasoning request for model %q failed: %w", o.model, err)
 		}
 		if len(resp.Choices) == 0 {
 			return nil, errors.New("reasoner: no response from LLM")
@@ -984,7 +1004,7 @@ Rules:
 			Messages: msgs,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("chat.completions call failed: %w", err)
+			return nil, fmt.Errorf("reasoning request for model %q failed: %w", o.model, err)
 		}
 		if len(resp.Choices) == 0 {
 			return nil, errors.New("reasoner: no response from LLM")
@@ -1126,9 +1146,6 @@ func (o *OpenAI) ValidateWorkPlan(ctx context.Context, plan models.WorkPlan) (*W
 	if err != nil {
 		return nil, fmt.Errorf("reasoner: marshal work plan: %w", err)
 	}
-	if len(payload) > 120_000 {
-		return nil, errors.New("reasoner: work plan is too large for one semantic review")
-	}
 
 	prompt := fmt.Sprintf(`Review this living work plan for its project owner.
 
@@ -1163,7 +1180,7 @@ Review rules:
 			Messages: msgs,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("chat.completions call failed: %w", err)
+			return nil, fmt.Errorf("reasoning request for model %q failed: %w", o.model, err)
 		}
 		if len(resp.Choices) == 0 {
 			return nil, errors.New("reasoner: no response from LLM")

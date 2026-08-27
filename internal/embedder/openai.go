@@ -3,7 +3,10 @@ package embedder
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
 	"strings"
+	"time"
 
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
@@ -33,6 +36,8 @@ type OpenAI struct {
 	dims   int
 }
 
+const defaultRequestTimeout = 2 * time.Minute
+
 // NewOpenAI creates an OpenAI embedder.
 // baseURL: the API endpoint (e.g. "https://openrouter.ai/api/v1")
 // apiKey:  the API key for the endpoint; empty for endpoints without authentication
@@ -40,14 +45,31 @@ type OpenAI struct {
 // dims:    required — the vector dimension for this model (no default)
 // Returns error if model is empty or dims <= 0.
 func NewOpenAI(baseURL, apiKey, model string, dims int) (*OpenAI, error) {
+	return NewOpenAIWithTimeout(baseURL, apiKey, model, dims, defaultRequestTimeout)
+}
+
+// NewOpenAIWithTimeout creates an OpenAI-compatible embedder with a bounded
+// request attempt. An explicit timeout is important for local endpoints too:
+// a dead model server must leave the memory row pending instead of holding a
+// request forever.
+func NewOpenAIWithTimeout(baseURL, apiKey, model string, dims int, requestTimeout time.Duration) (*OpenAI, error) {
 	if model == "" {
 		return nil, errors.New("embedder: model is required")
 	}
 	if dims <= 0 {
 		return nil, errors.New("embedder: dims must be greater than zero")
 	}
+	if requestTimeout <= 0 {
+		return nil, errors.New("embedder: request timeout must be greater than zero")
+	}
 
-	options := []option.RequestOption{option.WithBaseURL(baseURL)}
+	options := []option.RequestOption{
+		option.WithBaseURL(baseURL),
+		option.WithRequestTimeout(requestTimeout),
+		// Keep a transport-level deadline as well. Some compatible transports do
+		// not propagate the SDK's per-attempt context while waiting for headers.
+		option.WithHTTPClient(&http.Client{Timeout: requestTimeout}),
+	}
 	if strings.TrimSpace(apiKey) != "" {
 		options = append(options, option.WithAPIKey(apiKey))
 	}
@@ -95,7 +117,7 @@ func (o *OpenAI) embed(ctx context.Context, text string) ([]float32, error) {
 		Dimensions: openai.Int(int64(o.dims)),
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("embedding request for model %q failed: %w", o.model, err)
 	}
 	if len(resp.Data) == 0 {
 		return nil, errors.New("embedder: endpoint returned no embedding")

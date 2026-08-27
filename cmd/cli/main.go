@@ -523,7 +523,7 @@ func main() {
 			},
 			{
 				Name:   "reindex",
-				Usage:  "Re-embed all episodes and facts (content untouched; run after changing embedding input, e.g. e5 prefixes)",
+				Usage:  "Re-embed all episodes and facts (content untouched; failures stay queued for retry)",
 				Action: reindexCmd,
 				Flags: []cli.Flag{
 					&cli.BoolFlag{Name: "dry-run", Aliases: []string{"d"}, Usage: "Show how many rows would be re-embedded"},

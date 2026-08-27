@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alash3al/stash/internal/bootstrap"
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 func TestConfiguredHTTPAddress(t *testing.T) {
@@ -81,5 +85,22 @@ func TestStashHTTPHandlerAllowsDisabledAuthentication(t *testing.T) {
 	}
 	if !strings.Contains(initialize.Body.String(), `"result"`) {
 		t.Fatalf("POST /mcp initialize body = %q", initialize.Body.String())
+	}
+}
+
+func TestObserveMCPToolStopsStalledHandler(t *testing.T) {
+	middleware := observeMCPTool(nil, 20*time.Millisecond)
+	handler := middleware(func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	})
+
+	started := time.Now()
+	_, err := handler(context.Background(), mcp.CallToolRequest{})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("stalled tool error = %v, want deadline exceeded", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("stalled tool took %s, want it to stop promptly", elapsed)
 	}
 }

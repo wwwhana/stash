@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -77,24 +79,56 @@ func render(name string) string {
 	return buf.String()
 }
 
-func observeMCPTool(next server.ToolHandlerFunc) server.ToolHandlerFunc {
-	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		started := time.Now()
-		result, err := next(ctx, request)
-		outcome := "ok"
-		if err != nil || (result != nil && result.IsError) {
-			outcome = "error"
+// observeMCPTool gives every tool call a finite lifetime. A provider or a
+// database connection pool can otherwise leave one call open until the MCP
+// client gives up, making an unrelated read or write look broken as well.
+func observeMCPTool(logger *slog.Logger, timeout time.Duration) server.ToolHandlerMiddleware {
+	return func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
+		return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			started := time.Now()
+			toolCtx := ctx
+			var cancel context.CancelFunc
+			if timeout > 0 {
+				toolCtx, cancel = context.WithTimeout(ctx, timeout)
+				defer cancel()
+			}
+			result, err := next(toolCtx, request)
+			outcome := "ok"
+			if errors.Is(toolCtx.Err(), context.DeadlineExceeded) {
+				outcome = "timeout"
+				if err == nil {
+					result = nil
+					err = context.DeadlineExceeded
+				}
+				if logger != nil {
+					logger.Warn("mcp tool timed out",
+						"tool", request.Params.Name,
+						"timeout", timeout,
+						"duration_ms", float64(time.Since(started))/float64(time.Millisecond),
+					)
+				}
+			} else if err != nil || (result != nil && result.IsError) {
+				outcome = "error"
+			}
+			observability.RecordMCPToolCall(request.Params.Name, outcome, time.Since(started))
+			return result, err
 		}
-		observability.RecordMCPToolCall(request.Params.Name, outcome, time.Since(started))
-		return result, err
 	}
 }
 
 func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
+	toolTimeout := 2 * time.Minute
+	var logger *slog.Logger
+	if bc != nil {
+		logger = bc.Logger
+		if bc.Config != nil && bc.Config.MCPToolTimeout > 0 {
+			toolTimeout = bc.Config.MCPToolTimeout
+		}
+	}
 	mcpServer := server.NewMCPServer("stash", "0.2.8",
 		server.WithToolCapabilities(true),
 		server.WithDescription(render("server_description")),
-		server.WithToolHandlerMiddleware(observeMCPTool),
+		server.WithToolHandlerMiddleware(observeMCPTool(logger, toolTimeout)),
 	)
 
 	mcpServer.AddTool(mcp.NewTool("init",

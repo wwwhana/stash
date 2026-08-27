@@ -76,13 +76,18 @@ func (b *Brain) RememberWithStatus(ctx context.Context, namespaceSlug, content s
 	return result, nil
 }
 
-func (b *Brain) insertPendingEpisode(ctx context.Context, namespaceID int64, content string, occurred time.Time, cause error) (RememberResult, error) {
+func (b *Brain) insertPendingEpisode(_ context.Context, namespaceID int64, content string, occurred time.Time, cause error) (RememberResult, error) {
 	result := RememberResult{
 		Indexed:        false,
 		IndexingStatus: "pending",
 	}
+	// The caller's context may have been canceled by the provider timeout. The
+	// raw memory must still be durable in that case, so give this small fallback
+	// insert its own short database deadline.
+	persistCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	retryAt := time.Now().UTC().Add(b.config.EmbeddingRetryInterval)
-	err := b.pool.QueryRow(ctx,
+	err := b.pool.QueryRow(persistCtx,
 		`INSERT INTO episodes (
 			namespace_id, content, embedding, embedding_model, occurred_at,
 			embedding_attempts, embedding_last_error, embedding_retry_at, embedding_updated_at

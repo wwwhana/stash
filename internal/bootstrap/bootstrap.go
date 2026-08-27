@@ -62,9 +62,16 @@ func New(ctx context.Context) (*Context, error) {
 		return nil, fmt.Errorf("initialize authentication: %w", err)
 	}
 
-	pool, err := db.Open(ctx, cfg.StoreDSN, cfg.EmbeddingModel, cfg.VectorDim)
+	pool, embeddingReport, err := db.OpenWithReport(ctx, cfg.StoreDSN, cfg.EmbeddingModel, cfg.VectorDim)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
+	}
+	if embeddingReport.DimensionChanged || embeddingReport.ModelChanged || embeddingReport.ReindexQueued > 0 {
+		logger.Warn("embedding reindex queued",
+			"dimension_changed", embeddingReport.DimensionChanged,
+			"model_changed", embeddingReport.ModelChanged,
+			"rows", embeddingReport.ReindexQueued,
+		)
 	}
 
 	emb, err := buildEmbedder(cfg)
@@ -94,6 +101,8 @@ func New(ctx context.Context) (*Context, error) {
 		"reasoner_input_bytes", limitedReasoner.MaxInputBytes(),
 		"embedding_context_tokens", cfg.EmbeddingContextTokens,
 		"embedding_input_bytes", limitedEmb.MaxInputBytes(),
+		"openai_request_timeout", cfg.OpenAIRequestTimeout,
+		"mcp_tool_timeout", cfg.MCPToolTimeout,
 	)
 
 	q, err := queries.New()
@@ -178,18 +187,20 @@ func buildLogger(cfg *config.Config) *slog.Logger {
 }
 
 func buildEmbedder(cfg *config.Config) (embedder.Embedder, error) {
-	return embedder.NewOpenAI(
+	return embedder.NewOpenAIWithTimeout(
 		cfg.OpenAIBaseURL,
 		cfg.OpenAIAPIKey,
 		cfg.EmbeddingModel,
 		cfg.VectorDim,
+		cfg.OpenAIRequestTimeout,
 	)
 }
 
 func buildReasoner(cfg *config.Config) (reasoner.Reasoner, error) {
-	return reasoner.NewOpenAI(
+	return reasoner.NewOpenAIWithTimeout(
 		cfg.OpenAIBaseURL,
 		cfg.OpenAIAPIKey,
 		cfg.ReasonerModel,
+		cfg.OpenAIRequestTimeout,
 	)
 }

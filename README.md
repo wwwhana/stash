@@ -160,6 +160,10 @@ MCP tool results keep a 32 KiB safety cap by default (this is a transport safegu
 
 Reasoner and embedding limits are separate from the MCP response cap. Set `STASH_REASONER_CONTEXT_TOKENS` to the full context window of the configured reasoning model and `STASH_REASONER_RESERVED_TOKENS` to the space kept for instructions and the JSON answer. Set `STASH_EMBEDDING_CONTEXT_TOKENS` to the embedding model's input window. Stash converts these token budgets to a conservative UTF-8 byte budget, prefers paragraph breaks and then sentence endings, and only hard-splits when no natural boundary fits. Long embedding chunks are combined into one vector. MCP does not publish the model tokenizer or the caller's remaining context; when a limit is left at `0`, Stash learns a provider-reported limit when possible and adapts after a context-length error. For a 44,544-token reasoner, for example, start with `STASH_REASONER_CONTEXT_TOKENS=44544` and a reserve of `4096` or more.
 
+Provider requests and MCP tool handlers have a two-minute default deadline. Set `STASH_OPENAI_REQUEST_TIMEOUT` and `STASH_MCP_TOOL_TIMEOUT` higher for a slower local model; when a deadline is reached, the call returns an error instead of holding the client until its own timeout, and failed embeddings remain queued for retry.
+
+When `STASH_EMBEDDING_MODEL` or `STASH_VECTOR_DIM` changes, Stash detects the change at startup. It resizes the pgvector columns when needed, clears old vectors and the embedding cache, and queues every live episode and fact for indexing with the new model. The original content is preserved; the background worker recomputes vectors and retries provider failures. Use `stash reindex --dry-run` to inspect a manual reindex, or `stash reindex` when you want to start one immediately without changing the model setting.
+
 Set `STASH_LOG_LEVEL=debug` to emit HTTP access records. Access records omit query strings, authorization headers, and cookies.
 
 ### Auto-Save &amp; Seamless Handoff

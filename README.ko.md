@@ -112,6 +112,10 @@ MCP 도구 결과에는 기본 32KB 안전 상한이 있습니다. 이 값은 �
 
 HTTP 접근 기록은 `STASH_LOG_LEVEL=debug`일 때만 출력하며 쿼리 문자열, 인증 헤더, 쿠키는 기록하지 않습니다.
 
+제공자 요청과 MCP 도구 호출은 기본 2분 안에 끝나야 합니다. 모델 서버가 느리거나 큰 계획을 검토하는 환경에서는 `STASH_OPENAI_REQUEST_TIMEOUT`과 `STASH_MCP_TOOL_TIMEOUT`을 같은 값 또는 도구 제한을 더 크게 설정하세요. 제한 시간이 지나면 요청은 오류로 끝나고, 임베딩은 원문을 보존한 채 다음 재시도 대상으로 남습니다.
+
+`STASH_EMBEDDING_MODEL`이나 `STASH_VECTOR_DIM`을 바꾸고 서버를 다시 시작하면 Stash가 변경을 감지합니다. 필요하면 pgvector 열을 새 차원으로 바꾸고, 이전 벡터와 임베딩 캐시를 비운 뒤 살아 있는 모든 에피소드와 팩트를 새 모델의 인덱싱 대기열에 넣습니다. 원문은 삭제하지 않으며 백그라운드 작업자가 새 벡터를 계산하고 실패한 항목을 계속 다시 시도합니다. 수동 작업량만 확인하려면 `stash reindex --dry-run`, 즉시 다시 계산하려면 `stash reindex`를 사용할 수 있습니다.
+
 ### 3. agy (Antigravity)
 `~/.gemini/config/mcp_config.json`을 통해 설정합니다:
 ```json

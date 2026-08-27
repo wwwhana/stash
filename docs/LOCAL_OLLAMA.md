@@ -39,16 +39,18 @@ Stash runs in Docker; Ollama runs on the host. From inside the container, reach 
 # --- Ollama (fully local) ---
 STASH_OPENAI_API_KEY=                # leave empty; Ollama does not require a key
 STASH_OPENAI_BASE_URL=http://host.docker.internal:11434/v1
+STASH_OPENAI_REQUEST_TIMEOUT=2m
 STASH_EMBEDDING_MODEL=nomic-embed-text
 STASH_REASONER_MODEL=qwen2.5:3b
-STASH_VECTOR_DIM=768                 # ⚠ set once before first run — cannot change later
+STASH_VECTOR_DIM=768                 # must match Ollama's embedding output
 # Match these to `ollama show <model>` / the server's configured context.
 STASH_EMBEDDING_CONTEXT_TOKENS=0
 STASH_REASONER_CONTEXT_TOKENS=0
 STASH_REASONER_RESERVED_TOKENS=4096
+STASH_MCP_TOOL_TIMEOUT=2m
 ```
 
-> **Warning:** `STASH_VECTOR_DIM` locks at first init. If you already started Stash with `1536`, reset the Postgres volume or use a fresh database before switching to Ollama embeddings.
+> **Changing models later:** Update `STASH_EMBEDDING_MODEL` and `STASH_VECTOR_DIM`, then restart Stash. It resizes the pgvector columns, clears old vectors, and re-embeds the saved content in the background. Make a database backup first; the original text is preserved, but vector search is incomplete until reindexing finishes.
 
 ---
 

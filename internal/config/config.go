@@ -25,6 +25,9 @@ type Config struct {
 	EmbeddingRetryInterval    time.Duration `env:"STASH_EMBEDDING_RETRY_INTERVAL" envDefault:"1m"`
 	EmbeddingRetryMaxInterval time.Duration `env:"STASH_EMBEDDING_RETRY_MAX_INTERVAL" envDefault:"1h"`
 	EmbeddingRetryBatchSize   int           `env:"STASH_EMBEDDING_RETRY_BATCH_SIZE" envDefault:"100"`
+	// OpenAI-compatible providers are allowed to be remote or local. Keep one
+	// request from holding an MCP call (or the background retry worker) forever.
+	OpenAIRequestTimeout time.Duration `env:"STASH_OPENAI_REQUEST_TIMEOUT" envDefault:"2m"`
 	// Model input limits are provider/model-specific. MCP cannot discover them
 	// or the caller's remaining context, so deployments may set these values to
 	// make consolidation and long-memory embedding split before a request fails.
@@ -40,6 +43,9 @@ type Config struct {
 	LogLevel            string `env:"STASH_LOG_LEVEL,required"`
 	LogFormat           string `env:"STASH_LOG_FORMAT,required"`
 	MCPMaxResponseBytes int    `env:"STASH_MCP_MAX_RESPONSE_BYTES" envDefault:"32768"`
+	// Tool handlers use a separate bound so database-only calls cannot remain
+	// queued behind a stalled provider request until the client's timeout.
+	MCPToolTimeout time.Duration `env:"STASH_MCP_TOOL_TIMEOUT" envDefault:"2m"`
 
 	// Authentication
 	AuthMode           string        `env:"STASH_AUTH_MODE" envDefault:"none"`
@@ -167,6 +173,9 @@ func (c *Config) Validate() error {
 	if c.EmbeddingRetryBatchSize <= 0 {
 		return fmt.Errorf("STASH_EMBEDDING_RETRY_BATCH_SIZE must be greater than zero")
 	}
+	if c.OpenAIRequestTimeout <= 0 {
+		return fmt.Errorf("STASH_OPENAI_REQUEST_TIMEOUT must be greater than zero")
+	}
 	if c.ReasonerContextTokens < 0 {
 		return fmt.Errorf("STASH_REASONER_CONTEXT_TOKENS must not be negative")
 	}
@@ -184,6 +193,9 @@ func (c *Config) Validate() error {
 	}
 	if c.MCPMaxResponseBytes < 1024 {
 		return fmt.Errorf("STASH_MCP_MAX_RESPONSE_BYTES must be at least 1024")
+	}
+	if c.MCPToolTimeout <= 0 {
+		return fmt.Errorf("STASH_MCP_TOOL_TIMEOUT must be greater than zero")
 	}
 	if c.ConsolidationBatchSize <= 0 {
 		return fmt.Errorf("STASH_CONSOLIDATION_BATCH_SIZE must be greater than zero")

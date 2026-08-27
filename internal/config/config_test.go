@@ -45,6 +45,9 @@ func TestAuthenticationSettingsAreOptionalWhenDisabled(t *testing.T) {
 	if cfg.EmbeddingRetryInterval != time.Minute || cfg.EmbeddingRetryMaxInterval != time.Hour || cfg.EmbeddingRetryBatchSize != 100 {
 		t.Fatalf("unexpected embedding retry defaults: interval=%s max=%s batch=%d", cfg.EmbeddingRetryInterval, cfg.EmbeddingRetryMaxInterval, cfg.EmbeddingRetryBatchSize)
 	}
+	if cfg.OpenAIRequestTimeout != 2*time.Minute || cfg.MCPToolTimeout != 2*time.Minute {
+		t.Fatalf("unexpected request timeout defaults: openai=%s mcp=%s", cfg.OpenAIRequestTimeout, cfg.MCPToolTimeout)
+	}
 	if cfg.ReasonerContextTokens != 0 || cfg.ReasonerReservedTokens != 4096 || cfg.EmbeddingContextTokens != 0 {
 		t.Fatalf("unexpected model context defaults: reasoner=%d reserve=%d embedding=%d", cfg.ReasonerContextTokens, cfg.ReasonerReservedTokens, cfg.EmbeddingContextTokens)
 	}
@@ -57,6 +60,7 @@ func TestAuthenticationModeValidation(t *testing.T) {
 	base := &Config{
 		VectorDim: 1536, MaxResultSize: 10000, ContextTTL: time.Hour,
 		EmbeddingRetryInterval: time.Minute, EmbeddingRetryMaxInterval: time.Hour, EmbeddingRetryBatchSize: 100,
+		OpenAIRequestTimeout: 2 * time.Minute, MCPToolTimeout: 2 * time.Minute,
 		HTTPAddr: ":8080", MCPMaxResponseBytes: 32768, ConsolidationBatchSize: 1,
 		ConsolidationSimilarityThreshold: .5, ConsolidationDedupThreshold: .5,
 		DecayFactor: .5, ExpiryThreshold: .1,
@@ -80,6 +84,7 @@ func TestEmbeddingRetrySettingsValidation(t *testing.T) {
 	base := Config{
 		VectorDim: 1536, MaxResultSize: 10000, ContextTTL: time.Hour,
 		EmbeddingRetryInterval: time.Minute, EmbeddingRetryMaxInterval: time.Hour, EmbeddingRetryBatchSize: 100,
+		OpenAIRequestTimeout: 2 * time.Minute, MCPToolTimeout: 2 * time.Minute,
 		HTTPAddr: ":8080", MCPMaxResponseBytes: 32768, ConsolidationBatchSize: 1,
 		ConsolidationSimilarityThreshold: .5, ConsolidationDedupThreshold: .5,
 		DecayFactor: .5, ExpiryThreshold: .1,
@@ -130,6 +135,16 @@ func TestEmbeddingRetrySettingsValidation(t *testing.T) {
 	invalidEmbeddingContext.EmbeddingContextTokens = -1
 	if err := invalidEmbeddingContext.Validate(); err == nil || !strings.Contains(err.Error(), "STASH_EMBEDDING_CONTEXT_TOKENS") {
 		t.Fatalf("invalid embedding context error = %v", err)
+	}
+	invalidProviderTimeout := base
+	invalidProviderTimeout.OpenAIRequestTimeout = 0
+	if err := invalidProviderTimeout.Validate(); err == nil || !strings.Contains(err.Error(), "STASH_OPENAI_REQUEST_TIMEOUT") {
+		t.Fatalf("invalid provider timeout error = %v", err)
+	}
+	invalidToolTimeout := base
+	invalidToolTimeout.MCPToolTimeout = 0
+	if err := invalidToolTimeout.Validate(); err == nil || !strings.Contains(err.Error(), "STASH_MCP_TOOL_TIMEOUT") {
+		t.Fatalf("invalid tool timeout error = %v", err)
 	}
 }
 

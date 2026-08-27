@@ -29,6 +29,7 @@ services:
       # Leave the key empty for local or internal endpoints without authentication.
       STASH_OPENAI_API_KEY: ${STASH_OPENAI_API_KEY:-}
       STASH_OPENAI_BASE_URL: ${STASH_OPENAI_BASE_URL:-https://api.openai.com/v1}
+      STASH_OPENAI_REQUEST_TIMEOUT: ${STASH_OPENAI_REQUEST_TIMEOUT:-2m}
       STASH_EMBEDDING_MODEL: ${STASH_EMBEDDING_MODEL:-text-embedding-3-small}
       STASH_EMBEDDING_RETRY_INTERVAL: ${STASH_EMBEDDING_RETRY_INTERVAL:-1m}
       STASH_EMBEDDING_RETRY_MAX_INTERVAL: ${STASH_EMBEDDING_RETRY_MAX_INTERVAL:-1h}
@@ -42,6 +43,7 @@ services:
       STASH_CONTEXT_TTL: 1h
       STASH_HTTP_ADDR: ${STASH_HTTP_ADDR:-:8080}
       STASH_MCP_MAX_RESPONSE_BYTES: ${STASH_MCP_MAX_RESPONSE_BYTES:-32768}
+      STASH_MCP_TOOL_TIMEOUT: ${STASH_MCP_TOOL_TIMEOUT:-2m}
       STASH_LOG_LEVEL: ${STASH_LOG_LEVEL:-info}
       STASH_LOG_FORMAT: ${STASH_LOG_FORMAT:-text}
       # none is safe for the bundled local sample; use oauth for a remote MCP.

@@ -3,11 +3,13 @@ package reasoner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/alash3al/stash/internal/models"
 )
@@ -19,6 +21,31 @@ func TestNewOpenAIAllowsEmptyAPIKey(t *testing.T) {
 	}
 	if got.model != "local-reasoner" {
 		t.Fatalf("model = %q, want local-reasoner", got.model)
+	}
+}
+
+func TestOpenAIRequestTimeoutStopsUnavailableProvider(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		// Do not write a response before the client's request deadline. The
+		// handler returns shortly afterwards so httptest.Server.Close can finish.
+		time.Sleep(100 * time.Millisecond)
+	}))
+	defer server.Close()
+
+	client, err := NewOpenAIWithTimeout(server.URL+"/v1", "", "plan-model", 20*time.Millisecond)
+	if err != nil {
+		t.Fatalf("NewOpenAIWithTimeout: %v", err)
+	}
+	started := time.Now()
+	_, err = client.ValidateWorkPlan(context.Background(), testWorkPlan())
+	if err == nil {
+		t.Fatal("ValidateWorkPlan succeeded against a provider that never responds")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("ValidateWorkPlan error = %v, want deadline exceeded", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("ValidateWorkPlan took %s, want it to stop promptly", elapsed)
 	}
 }
 
@@ -118,5 +145,37 @@ func TestValidateWorkPlanRetriesUnknownIDs(t *testing.T) {
 	}
 	if len(result.Findings) != 0 {
 		t.Fatalf("findings = %#v", result.Findings)
+	}
+}
+
+func TestValidateWorkPlanUsesConfiguredBudgetInsteadOfFixedPayloadCap(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Messages []struct {
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		joined := ""
+		for _, message := range request.Messages {
+			joined += message.Content
+		}
+		if len(joined) <= 120_000 {
+			t.Fatalf("request prompt is %d bytes, want it to exceed the removed fixed cap", len(joined))
+		}
+		writeChatCompletion(t, w, `{"summary":"The plan was reviewed.","findings":[]}`)
+	}))
+	defer server.Close()
+
+	plan := testWorkPlan()
+	plan.Components[0].Description = strings.Repeat("A", 130_000)
+	client, err := NewOpenAIWithTimeout(server.URL+"/v1", "", "plan-model", time.Second)
+	if err != nil {
+		t.Fatalf("NewOpenAIWithTimeout: %v", err)
+	}
+	if _, err := client.ValidateWorkPlan(context.Background(), plan); err != nil {
+		t.Fatalf("ValidateWorkPlan: %v", err)
 	}
 }
