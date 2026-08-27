@@ -33,12 +33,24 @@ func rememberCmd(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	bc := getBootstrap(cmd)
-	id, err := bc.Brain.Remember(ctx, namespace, content, occurredAt)
+	remembered, err := bc.Brain.RememberWithStatus(ctx, namespace, content, occurredAt)
 	if err != nil {
 		return err
 	}
 
-	output := map[string]any{"id": id, "message": "Memory remembered successfully"}
+	message := "Memory remembered successfully"
+	if !remembered.Indexed {
+		message = "Memory saved; indexing is pending and will retry automatically"
+	}
+	output := map[string]any{
+		"id":              remembered.ID,
+		"indexed":         remembered.Indexed,
+		"indexing_status": remembered.IndexingStatus,
+		"message":         message,
+	}
+	if remembered.RetryAt != nil {
+		output["retry_at"] = remembered.RetryAt
+	}
 	return printJSON(output)
 }
 

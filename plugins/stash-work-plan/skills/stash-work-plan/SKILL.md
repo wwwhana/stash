@@ -16,6 +16,8 @@ Use the Stash MCP server as the shared, owner-facing plan. Git remains the sourc
 
 Tool names may carry a client-specific MCP prefix. Match by the final Stash tool name shown here.
 
+Large list responses are split by the server. When a result contains `has_more: true`, call the same tool again with `offset` set to `next_offset`. Process one chunk at a time; do not combine every page into one model prompt.
+
 ## Maintain the component map
 
 - Components are recognizable parts of the system, not phases, sprints, milestones, or chronological buckets. Create them with `create_plan_component`.

@@ -147,7 +147,7 @@ func registerWorkGraphTools(mcpServer *server.MCPServer, bc *bootstrap.Context) 
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(items)
+		return jsonToolResult(bc, items, request.GetInt("offset", 0))
 	})
 
 	mcpServer.AddTool(mcp.NewTool("get_work_item",
@@ -165,7 +165,7 @@ func registerWorkGraphTools(mcpServer *server.MCPServer, bc *bootstrap.Context) 
 		if err := authorizeNamespaceID(ctx, bc, item.NamespaceID); err != nil {
 			return nil, err
 		}
-		return jsonToolResult(item)
+		return jsonToolResult(bc, item)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("get_work_item_by_key",
@@ -179,7 +179,7 @@ func registerWorkGraphTools(mcpServer *server.MCPServer, bc *bootstrap.Context) 
 		if err := authorizeNamespaceID(ctx, bc, item.NamespaceID); err != nil {
 			return nil, err
 		}
-		return jsonToolResult(item)
+		return jsonToolResult(bc, item)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("create_work_item",
@@ -246,7 +246,7 @@ func registerWorkGraphTools(mcpServer *server.MCPServer, bc *bootstrap.Context) 
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(item)
+		return jsonToolResult(bc, item)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("update_work_item",
@@ -315,7 +315,7 @@ func registerWorkGraphTools(mcpServer *server.MCPServer, bc *bootstrap.Context) 
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(item)
+		return jsonToolResult(bc, item)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("delete_work_item",
@@ -336,7 +336,7 @@ func registerWorkGraphTools(mcpServer *server.MCPServer, bc *bootstrap.Context) 
 		if err := bc.Brain.DeleteWorkItem(ctx, id); err != nil {
 			return nil, err
 		}
-		return jsonToolResult(map[string]any{"ok": true, "id": id})
+		return jsonToolResult(bc, map[string]any{"ok": true, "id": id})
 	})
 
 	mcpServer.AddTool(mcp.NewTool("add_work_item_comment",
@@ -363,7 +363,7 @@ func registerWorkGraphTools(mcpServer *server.MCPServer, bc *bootstrap.Context) 
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(comment)
+		return jsonToolResult(bc, comment)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("list_work_item_comments",
@@ -388,7 +388,7 @@ func registerWorkGraphTools(mcpServer *server.MCPServer, bc *bootstrap.Context) 
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(comments)
+		return jsonToolResult(bc, comments, request.GetInt("offset", 0))
 	})
 
 	mcpServer.AddTool(mcp.NewTool("add_work_item_dependency",
@@ -414,7 +414,7 @@ func registerWorkGraphTools(mcpServer *server.MCPServer, bc *bootstrap.Context) 
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(edge)
+		return jsonToolResult(bc, edge)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("delete_work_item_dependency",
@@ -435,7 +435,7 @@ func registerWorkGraphTools(mcpServer *server.MCPServer, bc *bootstrap.Context) 
 		if err := bc.Brain.DeleteWorkItemEdge(ctx, id); err != nil {
 			return nil, err
 		}
-		return jsonToolResult(map[string]any{"ok": true, "id": id})
+		return jsonToolResult(bc, map[string]any{"ok": true, "id": id})
 	})
 
 	mcpServer.AddTool(mcp.NewTool("get_work_graph",
@@ -451,7 +451,7 @@ func registerWorkGraphTools(mcpServer *server.MCPServer, bc *bootstrap.Context) 
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(graph)
+		return jsonToolResult(bc, graph)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("list_worktrees",
@@ -469,7 +469,7 @@ func registerWorkGraphTools(mcpServer *server.MCPServer, bc *bootstrap.Context) 
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(worktrees)
+		return jsonToolResult(bc, worktrees, request.GetInt("offset", 0))
 	})
 
 	mcpServer.AddTool(mcp.NewTool("register_worktree",
@@ -494,7 +494,7 @@ func registerWorkGraphTools(mcpServer *server.MCPServer, bc *bootstrap.Context) 
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(worktree)
+		return jsonToolResult(bc, worktree)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("attach_worktree_to_item",
@@ -520,7 +520,7 @@ func registerWorkGraphTools(mcpServer *server.MCPServer, bc *bootstrap.Context) 
 		if err := bc.Brain.AttachWorktreeToItem(ctx, itemID, worktreeID, request.GetString("relation", "active")); err != nil {
 			return nil, err
 		}
-		return jsonToolResult(map[string]any{"ok": true, "work_item_id": itemID, "worktree_id": worktreeID})
+		return jsonToolResult(bc, map[string]any{"ok": true, "work_item_id": itemID, "worktree_id": worktreeID})
 	})
 
 	mcpServer.AddTool(mcp.NewTool("record_work_event",
@@ -553,7 +553,7 @@ func registerWorkGraphTools(mcpServer *server.MCPServer, bc *bootstrap.Context) 
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(event)
+		return jsonToolResult(bc, event)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("list_work_events",
@@ -579,7 +579,7 @@ func registerWorkGraphTools(mcpServer *server.MCPServer, bc *bootstrap.Context) 
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(events)
+		return jsonToolResult(bc, events, request.GetInt("offset", 0))
 	})
 
 	mcpServer.AddTool(mcp.NewTool("link_work_item_memory",
@@ -606,7 +606,7 @@ func registerWorkGraphTools(mcpServer *server.MCPServer, bc *bootstrap.Context) 
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(link)
+		return jsonToolResult(bc, link)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("list_work_item_memory_links",
@@ -628,6 +628,6 @@ func registerWorkGraphTools(mcpServer *server.MCPServer, bc *bootstrap.Context) 
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(links)
+		return jsonToolResult(bc, links)
 	})
 }

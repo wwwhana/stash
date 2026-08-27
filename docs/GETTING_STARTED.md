@@ -76,7 +76,11 @@ If tools fail, check `.env`:
 | `STASH_OPENAI_API_KEY` | Embeddings + reasoner; optional for endpoints without authentication |
 | `STASH_OPENAI_BASE_URL` | API base URL |
 | `STASH_EMBEDDING_MODEL` | Must match `STASH_VECTOR_DIM` (1536 for `text-embedding-3-small`) |
+| `STASH_EMBEDDING_RETRY_INTERVAL` | How often pending embeddings are retried (default `1m`) |
+| `STASH_EMBEDDING_RETRY_MAX_INTERVAL` | Maximum exponential backoff (default `1h`) |
+| `STASH_EMBEDDING_RETRY_BATCH_SIZE` | Maximum pending rows considered per pass (default `100`) |
 | `STASH_REASONER_MODEL` | Model used for consolidation and `validate_work_plan` |
+| `STASH_MCP_MAX_RESPONSE_BYTES` | Maximum JSON bytes in one MCP tool result (default `32768`); large pages return `next_offset` |
 
 ### HTTP MCP authentication
 

@@ -79,7 +79,7 @@ func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(plan)
+		return jsonToolResult(bc, plan)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("validate_work_plan",
@@ -94,7 +94,7 @@ func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(validation)
+		return jsonToolResult(bc, validation)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("create_plan_component",
@@ -129,7 +129,7 @@ func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(component)
+		return jsonToolResult(bc, component)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("update_plan_component",
@@ -176,7 +176,7 @@ func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(component)
+		return jsonToolResult(bc, component)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("create_plan_task",
@@ -210,7 +210,7 @@ func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(task)
+		return jsonToolResult(bc, task)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("update_plan_task",
@@ -257,7 +257,7 @@ func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(task)
+		return jsonToolResult(bc, task)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("start_plan_task",
@@ -279,7 +279,7 @@ func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(task)
+		return jsonToolResult(bc, task)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("complete_plan_task",
@@ -301,7 +301,7 @@ func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(task)
+		return jsonToolResult(bc, task)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("block_plan_task",
@@ -323,7 +323,7 @@ func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(task)
+		return jsonToolResult(bc, task)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("unblock_plan_task",
@@ -345,7 +345,7 @@ func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(task)
+		return jsonToolResult(bc, task)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("delete_plan_component",
@@ -366,7 +366,7 @@ func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 		if err := bc.Brain.DeleteWorkPlanComponent(ctx, componentID); err != nil {
 			return nil, err
 		}
-		return jsonToolResult(map[string]any{"ok": true, "component_id": componentID})
+		return jsonToolResult(bc, map[string]any{"ok": true, "component_id": componentID})
 	})
 
 	mcpServer.AddTool(mcp.NewTool("delete_plan_task",
@@ -387,7 +387,7 @@ func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 		if err := bc.Brain.DeleteWorkPlanTask(ctx, taskID); err != nil {
 			return nil, err
 		}
-		return jsonToolResult(map[string]any{"ok": true, "task_id": taskID})
+		return jsonToolResult(bc, map[string]any{"ok": true, "task_id": taskID})
 	})
 
 	mcpServer.AddTool(mcp.NewTool("set_plan_component_paths",
@@ -413,7 +413,7 @@ func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(component)
+		return jsonToolResult(bc, component)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("link_plan_components",
@@ -438,7 +438,7 @@ func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(edge)
+		return jsonToolResult(bc, edge)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("record_plan_decision",
@@ -470,7 +470,7 @@ func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(decision)
+		return jsonToolResult(bc, decision)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("list_plan_decisions",
@@ -488,6 +488,6 @@ func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(decisions)
+		return jsonToolResult(bc, decisions, request.GetInt("offset", 0))
 	})
 }

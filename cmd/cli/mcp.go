@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	_ "embed"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net"
@@ -78,14 +77,6 @@ func render(name string) string {
 	return buf.String()
 }
 
-func jsonToolResult(value any) (*mcp.CallToolResult, error) {
-	b, err := json.Marshal(value)
-	if err != nil {
-		return nil, fmt.Errorf("marshal MCP result: %w", err)
-	}
-	return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(b)}}}, nil
-}
-
 func observeMCPTool(next server.ToolHandlerFunc) server.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		started := time.Now()
@@ -135,7 +126,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		}
 
 		result := map[string]any{"ok": true, "namespaces_created": created}
-		return jsonToolResult(result)
+		return jsonToolResult(bc, result)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("remember",
@@ -150,12 +141,31 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		}
 		namespace := nss[0]
 
-		id, err := bc.Brain.Remember(ctx, namespace, content, nil)
+		remembered, err := bc.Brain.RememberWithStatus(ctx, namespace, content, nil)
 		if err != nil {
 			return nil, err
 		}
-		result := map[string]any{"id": id, "message": "Memory remembered successfully"}
-		return jsonToolResult(result)
+		message := "Memory remembered successfully"
+		if !remembered.Indexed {
+			message = "Memory saved; indexing is pending and will retry automatically"
+			recordEmbeddingQueued()
+			if bc.Logger != nil {
+				bc.Logger.Warn("memory saved with pending embedding",
+					"episode_id", remembered.ID,
+					"retry_at", remembered.RetryAt,
+				)
+			}
+		}
+		result := map[string]any{
+			"id":              remembered.ID,
+			"indexed":         remembered.Indexed,
+			"indexing_status": remembered.IndexingStatus,
+			"message":         message,
+		}
+		if remembered.RetryAt != nil {
+			result["retry_at"] = remembered.RetryAt
+		}
+		return jsonToolResult(bc, result)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("recall",
@@ -163,10 +173,12 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		mcp.WithString("query", mcp.Description(render("recall_query")), mcp.Required()),
 		mcp.WithString("namespaces", mcp.Description(render("recall_namespaces"))),
 		mcp.WithNumber("limit", mcp.Description(render("limit_param")), mcp.DefaultNumber(10)),
+		mcp.WithNumber("offset", mcp.Description(render("pagination_offset")), mcp.DefaultNumber(0)),
 		mcp.WithNumber("min_score", mcp.Description(render("recall_min_score")), mcp.DefaultNumber(0)),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		query := request.GetString("query", "")
 		limit := request.GetInt("limit", 10)
+		offset := request.GetInt("offset", 0)
 
 		namespaces, err := resolveNamespaces(ctx, request.GetString("namespaces", "/"))
 		if err != nil {
@@ -175,11 +187,12 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 
 		results, err := bc.Brain.RecallWithOptions(ctx, namespaces, query, limit, brain.RecallOptions{
 			MinScore: float32(request.GetFloat("min_score", 0)),
+			Offset:   offset,
 		})
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(results)
+		return jsonToolResult(bc, results, offset)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("forget",
@@ -225,7 +238,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if opts.DryRun {
 			out["dry_run"] = true
 		}
-		return jsonToolResult(out)
+		return jsonToolResult(bc, out)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("consolidate",
@@ -273,7 +286,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 				"errors":                       result.Errors,
 			})
 		}
-		return jsonToolResult(summaries)
+		return jsonToolResult(bc, summaries)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("set_context",
@@ -319,7 +332,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if c == nil {
 			return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: `{"focus": ""}`}}}, nil
 		}
-		return jsonToolResult(c)
+		return jsonToolResult(bc, c)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("clear_context",
@@ -365,7 +378,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(logicalNamespaces(ctx, namespaces))
+		return jsonToolResult(bc, logicalNamespaces(ctx, namespaces), page.Offset)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("create_namespace",
@@ -416,7 +429,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(facts)
+		return jsonToolResult(bc, facts, page.Offset)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("query_relationships",
@@ -439,7 +452,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(rels)
+		return jsonToolResult(bc, rels, page.Offset)
 	})
 
 	// patterns 는 consolidation 6단계가 채우는데 조회 도구가 없어 에이전트가 꺼내 볼 수 없었다.
@@ -464,7 +477,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(pats)
+		return jsonToolResult(bc, pats, page.Offset)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("list_contradictions",
@@ -487,7 +500,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(contradictions)
+		return jsonToolResult(bc, contradictions, page.Offset)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("resolve_contradiction",
@@ -531,7 +544,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(links)
+		return jsonToolResult(bc, links, page.Offset)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("create_causal_link",
@@ -570,7 +583,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(link)
+		return jsonToolResult(bc, link)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("trace_causal_chain",
@@ -604,7 +617,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(chain)
+		return jsonToolResult(bc, chain)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("list_hypotheses",
@@ -629,7 +642,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(hypotheses)
+		return jsonToolResult(bc, hypotheses, page.Offset)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("create_hypothesis",
@@ -673,7 +686,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(h)
+		return jsonToolResult(bc, h)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("confirm_hypothesis",
@@ -697,7 +710,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 			"hypothesis": h,
 			"fact":       f,
 		}
-		return jsonToolResult(result)
+		return jsonToolResult(bc, result)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("reject_hypothesis",
@@ -719,7 +732,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(h)
+		return jsonToolResult(bc, h)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("list_goals",
@@ -758,7 +771,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(goals)
+		return jsonToolResult(bc, goals, page.Offset)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("create_goal",
@@ -795,7 +808,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(g)
+		return jsonToolResult(bc, g)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("complete_goal",
@@ -817,7 +830,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(g)
+		return jsonToolResult(bc, g)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("abandon_goal",
@@ -839,7 +852,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(g)
+		return jsonToolResult(bc, g)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("list_failures",
@@ -876,7 +889,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(failures)
+		return jsonToolResult(bc, failures, page.Offset)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("create_failure",
@@ -915,7 +928,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(f)
+		return jsonToolResult(bc, f)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("delete_failure",
@@ -1003,6 +1016,11 @@ func serveMCPHTTP(ctx context.Context, bc *bootstrap.Context, options mcpHTTPOpt
 	defer cancel()
 
 	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		runEmbeddingRetryTicker(ctx, bc)
+	}()
 
 	if options.Consolidation != nil {
 		wg.Add(1)
@@ -1078,29 +1096,84 @@ func newStashHTTPHandler(bc *bootstrap.Context) http.Handler {
 	registerOperationalRoutes(mux, bc)
 	mux.Handle("/", web.GetUIHandler())
 
-	return observability.InstrumentHTTP(mux)
+	return observability.InstrumentHTTP(bc.Logger, mux)
 }
 
 func mcpExecuteCmd(ctx context.Context, cmd *cli.Command) error {
 	bc := getBootstrap(cmd)
 	mcpServer := newMCPServer(bc)
 
+	workerCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		runEmbeddingRetryTicker(workerCtx, bc)
+	}()
 
 	if cmd.Bool("with-consolidation") {
-		ctx2, cancel := context.WithCancel(ctx)
-		defer cancel()
 		consolidation := consolidationOptionsFromCommand(cmd)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			runConsolidationTicker(ctx2, bc, consolidation)
+			runConsolidationTicker(workerCtx, bc, consolidation)
 		}()
 	}
 
 	err := server.ServeStdio(mcpServer, server.WithStdioContextFunc(stdioContextFuncFor(bc.Auth)))
+	cancel()
 	wg.Wait()
 	return err
+}
+
+func runEmbeddingRetryTicker(ctx context.Context, bc *bootstrap.Context) {
+	if bc == nil || bc.Config == nil || bc.Brain == nil {
+		return
+	}
+	interval := bc.Config.EmbeddingRetryInterval
+	batchSize := bc.Config.EmbeddingRetryBatchSize
+
+	run := func() {
+		result, err := bc.Brain.RetryPendingEmbeddings(ctx, batchSize)
+		if err != nil {
+			if ctx.Err() == nil && bc.Logger != nil {
+				bc.Logger.Error("embedding retry pass failed", "error", err)
+			}
+			return
+		}
+		recordEmbeddingRetryMetrics(result)
+		if result.Attempted == 0 || bc.Logger == nil {
+			return
+		}
+		if result.Failed > 0 {
+			bc.Logger.Warn("embedding retry pass completed",
+				"attempted", result.Attempted,
+				"indexed", result.Indexed,
+				"failed", result.Failed,
+				"pending", result.Pending,
+			)
+			return
+		}
+		bc.Logger.Info("embedding retry pass completed",
+			"attempted", result.Attempted,
+			"indexed", result.Indexed,
+			"failed", result.Failed,
+			"pending", result.Pending,
+		)
+	}
+
+	run()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			run()
+		}
+	}
 }
 
 func runConsolidationTicker(ctx context.Context, bc *bootstrap.Context, options consolidationOptions) {

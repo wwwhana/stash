@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/alash3al/stash/internal/embedder"
@@ -78,6 +79,8 @@ type Config struct {
 	ExpiryThreshold                float32
 	HypothesisAutoConfirmThreshold float32
 	HypothesisAutoRejectThreshold  float32
+	EmbeddingRetryInterval         time.Duration
+	EmbeddingRetryMaxInterval      time.Duration
 }
 
 func DefaultConfig() Config {
@@ -91,6 +94,8 @@ func DefaultConfig() Config {
 		ExpiryThreshold:                0.1,
 		HypothesisAutoConfirmThreshold: 0.9,
 		HypothesisAutoRejectThreshold:  0.9,
+		EmbeddingRetryInterval:         time.Minute,
+		EmbeddingRetryMaxInterval:      time.Hour,
 	}
 }
 
@@ -104,6 +109,9 @@ type Brain struct {
 	// is running. Keep the checkpoint and derived rows consistent when both
 	// paths target the same process.
 	consolidationMu sync.Mutex
+	// Alternate which durable embedding queue receives an odd batch slot. This
+	// keeps a batch size of one from permanently starving facts or episodes.
+	embeddingRetryPass atomic.Uint64
 }
 
 func (b *Brain) sanitizePage(page Pagination) Pagination {
@@ -122,6 +130,16 @@ func New(pool *pgxpool.Pool, e embedder.Embedder, r reasoner.Reasoner, q *querie
 	}
 	if q == nil {
 		return nil, fmt.Errorf("brain: queries is required")
+	}
+	defaults := DefaultConfig()
+	if cfg.EmbeddingRetryInterval <= 0 {
+		cfg.EmbeddingRetryInterval = defaults.EmbeddingRetryInterval
+	}
+	if cfg.EmbeddingRetryMaxInterval < cfg.EmbeddingRetryInterval {
+		cfg.EmbeddingRetryMaxInterval = defaults.EmbeddingRetryMaxInterval
+		if cfg.EmbeddingRetryMaxInterval < cfg.EmbeddingRetryInterval {
+			cfg.EmbeddingRetryMaxInterval = cfg.EmbeddingRetryInterval
+		}
 	}
 	return &Brain{
 		pool:     pool,

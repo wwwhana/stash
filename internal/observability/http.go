@@ -1,19 +1,45 @@
 package observability
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 )
 
 // InstrumentHTTP records stable, low-cardinality HTTP request metrics while
-// preserving the interfaces used by streaming handlers.
-func InstrumentHTTP(next http.Handler) http.Handler {
+// preserving the interfaces used by streaming handlers. Access records are
+// emitted at debug level so normal production logs stay quiet until an
+// operator explicitly sets STASH_LOG_LEVEL=debug.
+func InstrumentHTTP(logger *slog.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
 		observed := &responseObserver{ResponseWriter: w}
+		requestID := safeRequestID(r.Header.Get("X-Request-ID"))
+		if requestID == "" {
+			requestID = newRequestID()
+		}
+		if requestID != "" {
+			observed.Header().Set("X-Request-ID", requestID)
+		}
 		defer func() {
-			RecordHTTP(routeLabel(r.URL.Path), r.Method, observed.statusCode(), time.Since(started))
+			elapsed := time.Since(started)
+			route := routeLabel(r.URL.Path)
+			RecordHTTP(route, r.Method, observed.statusCode(), elapsed)
+			if logger != nil {
+				logger.Debug("http access",
+					slog.String("request_id", requestID),
+					slog.String("method", r.Method),
+					slog.String("path", accessLogPath(r.URL.Path)),
+					slog.String("route", route),
+					slog.Int("status", observed.statusCode()),
+					slog.Int64("bytes", observed.bytes),
+					slog.Float64("duration_ms", float64(elapsed)/float64(time.Millisecond)),
+					slog.String("remote_addr", r.RemoteAddr),
+				)
+			}
 		}()
 		next.ServeHTTP(observed, r)
 	})
@@ -22,6 +48,7 @@ func InstrumentHTTP(next http.Handler) http.Handler {
 type responseObserver struct {
 	http.ResponseWriter
 	status      int
+	bytes       int64
 	wroteHeader bool
 }
 
@@ -38,7 +65,9 @@ func (w *responseObserver) Write(body []byte) (int, error) {
 	if !w.wroteHeader {
 		w.WriteHeader(http.StatusOK)
 	}
-	return w.ResponseWriter.Write(body)
+	n, err := w.ResponseWriter.Write(body)
+	w.bytes += int64(n)
+	return n, err
 }
 
 func (w *responseObserver) Flush() {
@@ -62,6 +91,36 @@ func (w *responseObserver) statusCode() int {
 		return http.StatusOK
 	}
 	return w.status
+}
+
+func accessLogPath(path string) string {
+	const maxPathBytes = 256
+	if len(path) <= maxPathBytes {
+		return path
+	}
+	return path[:maxPathBytes]
+}
+
+func safeRequestID(value string) string {
+	if value == "" || len(value) > 128 {
+		return ""
+	}
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+			continue
+		}
+		return ""
+	}
+	return value
+}
+
+func newRequestID() string {
+	var raw [12]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(raw[:])
 }
 
 func routeLabel(path string) string {

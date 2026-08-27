@@ -58,6 +58,9 @@ type RecallOptions struct {
 	// this, because it scores purely by rank: position 1 is 1/61 whether the match
 	// was near-exact or nonsense.
 	MinScore float32
+	// Offset continues through the stable fused ranking without asking callers
+	// to retrieve an oversized first page.
+	Offset int
 }
 
 // RecallWithOptions is Recall with retrieval controls.
@@ -76,6 +79,17 @@ func (b *Brain) RecallWithOptions(ctx context.Context, namespaces []string, quer
 	}
 	if b.config.MaxResultSize > 0 && limit > b.config.MaxResultSize {
 		limit = b.config.MaxResultSize
+	}
+	offset := opts.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	window := offset + limit
+	if window > 100 {
+		window = 100
+	}
+	if window <= offset {
+		return []RecallResult{}, nil
 	}
 
 	vec, err := b.embedder.EmbedQuery(ctx, query)
@@ -96,7 +110,7 @@ func (b *Brain) RecallWithOptions(ctx context.Context, namespaces []string, quer
 	// so once facts filled the limit the episode query was skipped entirely — a
 	// perfectly matching episode could never surface no matter how high its score.
 	// Both pools are now gathered in full and merged by score below.
-	factLimit := limit
+	factLimit := window
 	factSQL, factArgs, err := b.queries.RecallFacts(nsIDs, pgVec, factLimit, opts.MinScore)
 	if err != nil {
 		return nil, fmt.Errorf("build fact query: %w", err)
@@ -135,7 +149,7 @@ func (b *Brain) RecallWithOptions(ctx context.Context, namespaces []string, quer
 	}
 
 	// Episodes get their own full budget, not the leftovers.
-	episodeLimit := limit
+	episodeLimit := window
 	if episodeLimit > 0 {
 		epSQL, epArgs, err := b.queries.RecallEpisodes(nsIDs, pgVec, episodeLimit, opts.MinScore)
 		if err != nil {
@@ -178,9 +192,16 @@ func (b *Brain) RecallWithOptions(ctx context.Context, namespaces []string, quer
 	// Vectors match meaning; they do not reliably match literal tokens such as
 	// ticket keys ("FROMM-4414") or symbol names. Trigram search covers that gap
 	// and is language-neutral, which matters because the corpus is mixed Korean/English.
-	keywordResults := b.keywordCandidates(ctx, nsIDs, query, limit)
+	keywordResults := b.keywordCandidates(ctx, nsIDs, query, window)
 
-	merged := fuseRRF(results, keywordResults, limit)
+	merged := fuseRRF(results, keywordResults, window)
+	if offset >= len(merged) {
+		return []RecallResult{}, nil
+	}
+	merged = merged[offset:]
+	if len(merged) > limit {
+		merged = merged[:limit]
+	}
 	b.attachFactSources(ctx, merged)
 	return merged, nil
 }

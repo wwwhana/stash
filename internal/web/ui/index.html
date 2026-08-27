@@ -1038,10 +1038,10 @@
                 activeNav: 'plan',
                 tokenOpen: false,
                 pageSize: 50,
-                listPage: { tool: '', args: {}, offset: 0, limit: 50, hasNext: false },
-                boardPage: { offset: 0, limit: 50, hasNext: false },
-                worktreePage: { offset: 0, limit: 50, hasNext: false },
-                commentPage: { offset: 0, limit: 50, hasNext: false },
+                listPage: { tool: '', args: {}, offset: 0, nextOffset: 0, limit: 50, hasNext: false, history: [] },
+                boardPage: { offset: 0, nextOffset: 0, limit: 50, hasNext: false, history: [] },
+                worktreePage: { offset: 0, nextOffset: 0, limit: 50, hasNext: false, history: [] },
+                commentPage: { offset: 0, nextOffset: 0, limit: 50, hasNext: false, history: [] },
                 draggedItem: null,
                 graph: { nodes: [], edges: [], worktrees: [] },
                 boardFilter: { q: '', issueType: '', label: '' },
@@ -1103,6 +1103,7 @@
 	                    '- Call `validate_work_plan` after meaningful component, task, dependency, or decision changes and before handing off the plan. It uses the configured Reasoner model, not the embedding model.',
 	                    '- Treat model findings as review advice. Fix supported component findings with `update_plan_component` and task findings with `update_plan_task`, then run `validate_work_plan` again.',
 	                    '- If `get_work_plan.validation.stale` is true, the saved review predates the current plan. Run it again before relying on the result.',
+	                    '- If a list response contains `has_more: true`, call the same tool again with `offset` set to its `next_offset`. Keep each chunk separate instead of combining every page into one prompt.',
 	                    '- A plan review does not replace builds, tests, or observing the product.',
 	                    '',
 	                    '## Session start and end',
@@ -1237,7 +1238,7 @@
                     this.resultKind = toolName;
                     this.resultTitle = this.toolLabel(toolName);
                     this.resultDescription = '선택한 기억 항목의 응답입니다.';
-                    this.listPage = { tool: toolName, args: { ...args }, offset: 0, limit: this.pageSize, hasNext: false };
+                    this.listPage = { tool: toolName, args: { ...args }, offset: 0, nextOffset: 0, limit: this.pageSize, hasNext: false, history: [] };
                     await this.loadListPage();
                 },
 
@@ -1252,10 +1253,11 @@
                         };
                         const data = await this.invokeTool(this.listPage.tool, args);
                         const value = this.toolValue(data);
-                        const items = Array.isArray(value) ? value : [];
                         const pageLimit = this.listPage.limit;
-                        this.listPage.hasNext = items.length > pageLimit;
-                        this.resultValue = Array.isArray(value) ? items.slice(0, pageLimit) : value;
+                        const page = this.pageSlice(value, pageLimit, this.listPage.offset);
+                        this.listPage.hasNext = page.hasMore;
+                        this.listPage.nextOffset = page.nextOffset;
+                        this.resultValue = page.isPage ? page.items : value;
                         this.result = JSON.stringify(this.resultValue, null, 2);
                         this.markLoaded();
                         this.setNotice('', 'success', 0);
@@ -1270,13 +1272,16 @@
 
                 async previousListPage() {
                     if (this.listPage.offset <= 0 || this.loading) return;
-                    this.listPage.offset = Math.max(0, this.listPage.offset - this.listPage.limit);
+                    this.listPage.offset = this.listPage.history.length
+                        ? this.listPage.history.pop()
+                        : Math.max(0, this.listPage.offset - this.listPage.limit);
                     await this.loadListPage();
                 },
 
                 async nextListPage() {
                     if (!this.listPage.hasNext || this.loading) return;
-                    this.listPage.offset += this.listPage.limit;
+                    this.listPage.history.push(this.listPage.offset);
+                    this.listPage.offset = this.listPage.nextOffset;
                     await this.loadListPage();
                 },
 
@@ -1306,6 +1311,27 @@
                         }
                     }
                     return data;
+                },
+
+                pageSlice(value, limit, offset) {
+                    if (value && Array.isArray(value.items) && value.has_more !== undefined) {
+                        return {
+                            isPage: true,
+                            items: value.items,
+                            hasMore: Boolean(value.has_more),
+                            nextOffset: Number(value.next_offset) || offset + value.items.length
+                        };
+                    }
+                    if (Array.isArray(value)) {
+                        const items = value.slice(0, limit);
+                        return {
+                            isPage: true,
+                            items,
+                            hasMore: value.length > limit,
+                            nextOffset: offset + items.length
+                        };
+                    }
+                    return { isPage: false, items: [], hasMore: false, nextOffset: offset };
                 },
 
                 authMode() {
@@ -1379,16 +1405,18 @@
                 },
 
                 pageLabel(page) {
-                    const limit = Number(page && page.limit) || this.pageSize;
-                    const offset = Number(page && page.offset) || 0;
-                    return `${Math.floor(offset / limit) + 1}쪽`;
+                    const depth = page && Array.isArray(page.history) ? page.history.length : 0;
+                    return `${depth + 1}쪽`;
                 },
 
                 async loadWorkBoard(resetPage = true) {
                     this.activeNav = 'board';
                     this.resultTitle = '이슈 보드';
                     this.resultDescription = '작업을 상태별로 정리합니다.';
-                    if (resetPage) this.boardPage.offset = 0;
+                    if (resetPage) {
+                        this.boardPage.offset = 0;
+                        this.boardPage.history = [];
+                    }
                     await this.loadWorkView('board');
                 },
 
@@ -1404,7 +1432,10 @@
                     this.resultTitle = '워크트리';
                     this.resultDescription = '연결된 Git 작업 공간의 현재 상태입니다.';
                     this.view = 'worktrees';
-                    if (resetPage) this.worktreePage.offset = 0;
+                    if (resetPage) {
+                        this.worktreePage.offset = 0;
+                        this.worktreePage.history = [];
+                    }
                     this.loading = true;
                     this.result = '불러오는 중...';
                     try {
@@ -1414,9 +1445,10 @@
                             offset: this.worktreePage.offset
                         });
                         const value = this.toolValue(data);
-                        const worktrees = Array.isArray(value) ? value : [];
-                        this.worktreePage.hasNext = worktrees.length > this.worktreePage.limit;
-                        this.graph.worktrees = worktrees.slice(0, this.worktreePage.limit);
+                        const page = this.pageSlice(value, this.worktreePage.limit, this.worktreePage.offset);
+                        this.worktreePage.hasNext = page.hasMore;
+                        this.worktreePage.nextOffset = page.nextOffset;
+                        this.graph.worktrees = page.items;
                         this.resultValue = this.graph.worktrees;
                         this.resultKind = 'list_worktrees';
                         this.result = JSON.stringify(this.graph.worktrees, null, 2);
@@ -1434,13 +1466,16 @@
 
                 async previousWorktreePage() {
                     if (this.worktreePage.offset <= 0 || this.loading) return;
-                    this.worktreePage.offset = Math.max(0, this.worktreePage.offset - this.worktreePage.limit);
+                    this.worktreePage.offset = this.worktreePage.history.length
+                        ? this.worktreePage.history.pop()
+                        : Math.max(0, this.worktreePage.offset - this.worktreePage.limit);
                     await this.loadWorktrees(false);
                 },
 
                 async nextWorktreePage() {
                     if (!this.worktreePage.hasNext || this.loading) return;
-                    this.worktreePage.offset += this.worktreePage.limit;
+                    this.worktreePage.history.push(this.worktreePage.offset);
+                    this.worktreePage.offset = this.worktreePage.nextOffset;
                     await this.loadWorktrees(false);
                 },
 
@@ -1496,9 +1531,10 @@
                                 offset: this.boardPage.offset
                             });
                             const value = this.toolValue(data);
-                            const items = Array.isArray(value) ? value : [];
-                            this.boardPage.hasNext = items.length > this.boardPage.limit;
-                            graph = { nodes: items.slice(0, this.boardPage.limit), edges: [], worktrees: [] };
+                            const page = this.pageSlice(value, this.boardPage.limit, this.boardPage.offset);
+                            this.boardPage.hasNext = page.hasMore;
+                            this.boardPage.nextOffset = page.nextOffset;
+                            graph = { nodes: page.items, edges: [], worktrees: [] };
                         } else {
                             const data = await this.invokeTool('get_work_graph', { namespaces: '/', include_done: true });
                             graph = this.toolValue(data);
@@ -1525,13 +1561,16 @@
 
                 async previousBoardPage() {
                     if (this.boardPage.offset <= 0 || this.loading) return;
-                    this.boardPage.offset = Math.max(0, this.boardPage.offset - this.boardPage.limit);
+                    this.boardPage.offset = this.boardPage.history.length
+                        ? this.boardPage.history.pop()
+                        : Math.max(0, this.boardPage.offset - this.boardPage.limit);
                     await this.loadWorkView('board');
                 },
 
                 async nextBoardPage() {
                     if (!this.boardPage.hasNext || this.loading) return;
-                    this.boardPage.offset += this.boardPage.limit;
+                    this.boardPage.history.push(this.boardPage.offset);
+                    this.boardPage.offset = this.boardPage.nextOffset;
                     await this.loadWorkView('board');
                 },
 
@@ -1588,7 +1627,7 @@
                         const item = this.toolValue(await this.invokeTool('get_work_item', { id }));
                         const links = this.toolValue(await this.invokeTool('list_work_item_memory_links', { work_item_id: id }));
                         this.selectedIssue = item;
-                        this.commentPage = { offset: 0, limit: this.pageSize, hasNext: false };
+                        this.commentPage = { offset: 0, nextOffset: 0, limit: this.pageSize, hasNext: false, history: [] };
                         this.selectedMemoryLinks = Array.isArray(links) ? links : [];
                         await this.loadIssueComments(id);
                         this.markLoaded();
@@ -1605,7 +1644,7 @@
                     this.selectedComments = [];
                     this.selectedMemoryLinks = [];
                     this.commentBody = '';
-                    this.commentPage = { offset: 0, limit: this.pageSize, hasNext: false };
+                    this.commentPage = { offset: 0, nextOffset: 0, limit: this.pageSize, hasNext: false, history: [] };
                 },
 
                 async loadIssueComments(workItemID = this.selectedIssue && this.selectedIssue.id) {
@@ -1616,14 +1655,17 @@
                         offset: this.commentPage.offset
                     });
                     const value = this.toolValue(data);
-                    const comments = Array.isArray(value) ? value : [];
-                    this.commentPage.hasNext = comments.length > this.commentPage.limit;
-                    this.selectedComments = comments.slice(0, this.commentPage.limit);
+                    const page = this.pageSlice(value, this.commentPage.limit, this.commentPage.offset);
+                    this.commentPage.hasNext = page.hasMore;
+                    this.commentPage.nextOffset = page.nextOffset;
+                    this.selectedComments = page.items;
                 },
 
                 async previousCommentPage() {
                     if (!this.selectedIssue || this.commentPage.offset <= 0 || this.loading) return;
-                    this.commentPage.offset = Math.max(0, this.commentPage.offset - this.commentPage.limit);
+                    this.commentPage.offset = this.commentPage.history.length
+                        ? this.commentPage.history.pop()
+                        : Math.max(0, this.commentPage.offset - this.commentPage.limit);
                     this.loading = true;
                     try {
                         await this.loadIssueComments();
@@ -1637,7 +1679,8 @@
 
                 async nextCommentPage() {
                     if (!this.selectedIssue || !this.commentPage.hasNext || this.loading) return;
-                    this.commentPage.offset += this.commentPage.limit;
+                    this.commentPage.history.push(this.commentPage.offset);
+                    this.commentPage.offset = this.commentPage.nextOffset;
                     this.loading = true;
                     try {
                         await this.loadIssueComments();
@@ -1656,6 +1699,7 @@
                         await this.invokeTool('add_work_item_comment', { work_item_id: this.selectedIssue.id, body: this.commentBody });
                         this.commentBody = '';
                         this.commentPage.offset = 0;
+                        this.commentPage.history = [];
                         await this.loadIssueComments();
                         this.setNotice('댓글을 남겼습니다.');
                     } catch (e) {

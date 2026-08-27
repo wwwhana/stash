@@ -152,7 +152,11 @@ Point any MCP-compatible client at the SSE URL: `http://localhost:8080/sse`
 
 ## Metrics and Health
 
-`stash serve` uses one HTTP port for MCP, the web console, OAuth endpoints, metrics, and status checks (default `:8080`). Prometheus metrics are available at `http://localhost:8080/metrics`; `/healthz` checks the database connection and `/readyz` checks readiness. The metrics cover HTTP requests, authentication outcomes, MCP tool calls, namespace-scope decisions, and consolidation activity. Request, authentication, tool, and scope metrics use bounded labels and do not include user IDs or raw namespace names.
+`stash serve` uses one HTTP port for MCP, the web console, OAuth endpoints, metrics, and status checks (default `:8080`). Prometheus metrics are available at `http://localhost:8080/metrics`; `/healthz` checks the database connection and `/readyz` checks readiness. The metrics cover HTTP requests, authentication outcomes, MCP tool calls, namespace-scope decisions, consolidation activity, and pending embedding retries. Request, authentication, tool, and scope metrics use bounded labels and do not include user IDs or raw namespace names.
+
+If the embedding endpoint still fails after the SDK's short request retries, Stash saves the raw memory with a pending index state. It also preserves the raw memory when PostgreSQL is reachable but the vector value cannot be stored. The background worker retries without an attempt limit; exponential backoff stops growing at the configured maximum. Configure it with `STASH_EMBEDDING_RETRY_INTERVAL`, `STASH_EMBEDDING_RETRY_MAX_INTERVAL`, and `STASH_EMBEDDING_RETRY_BATCH_SIZE`.
+
+MCP tool results are capped at 32 KiB by default. Oversized list pages are split into `items`, `has_more`, and `next_offset`; call the same tool with `offset=next_offset` to continue. Oversized non-list results return a small notice before they can exhaust the model context. Change the cap with `STASH_MCP_MAX_RESPONSE_BYTES`. Set `STASH_LOG_LEVEL=debug` to emit HTTP access records. Access records omit query strings, authorization headers, and cookies.
 
 ### Auto-Save &amp; Seamless Handoff
 

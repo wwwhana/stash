@@ -102,7 +102,11 @@ HTTP MCP 요청은 `Authorization: Bearer <access-token>` 헤더를 보내야 �
 
 ## 운영 지표와 상태 확인
 
-`stash serve`는 MCP, 관리 화면, OAuth 경로, 운영 지표, 상태 확인을 하나의 HTTP 포트(기본 `:8080`)에서 제공합니다. Prometheus 지표는 `http://localhost:8080/metrics`에서 확인하고, `/healthz`는 데이터베이스 연결을, `/readyz`는 준비 상태를 확인합니다. HTTP 요청, 인증 결과, MCP 도구 호출, 네임스페이스 범위 적용, 기억 통합 작업을 기록합니다. 요청·인증·도구·범위 지표의 라벨에는 사용자 ID와 원본 네임스페이스 이름을 넣지 않습니다.
+`stash serve`는 MCP, 관리 화면, OAuth 경로, 운영 지표, 상태 확인을 하나의 HTTP 포트(기본 `:8080`)에서 제공합니다. Prometheus 지표는 `http://localhost:8080/metrics`에서 확인하고, `/healthz`는 데이터베이스 연결을, `/readyz`는 준비 상태를 확인합니다. HTTP 요청, 인증 결과, MCP 도구 호출, 네임스페이스 범위 적용, 기억 통합 작업, 임베딩 재시도 대기 건수를 기록합니다. 요청·인증·도구·범위 지표의 라벨에는 사용자 ID와 실제 네임스페이스 이름을 넣지 않습니다.
+
+임베딩 API가 짧은 요청 재시도 후에도 실패하면 원문은 인덱싱 대기 상태로 저장됩니다. PostgreSQL 연결은 정상이지만 벡터 값만 저장하지 못한 경우에도 원문을 보존합니다. 서버는 성공할 때까지 횟수 제한 없이 다시 처리하며, 재시도 간격은 설정한 최댓값까지만 늘어납니다. `STASH_EMBEDDING_RETRY_INTERVAL`, `STASH_EMBEDDING_RETRY_MAX_INTERVAL`, `STASH_EMBEDDING_RETRY_BATCH_SIZE`로 주기와 한 번에 처리할 수를 설정합니다.
+
+MCP 도구 결과는 기본 32KB 단위로 나눕니다. 목록이 이 크기를 넘으면 현재 묶음과 `has_more`, `next_offset`을 반환하므로 같은 도구에 `offset=next_offset`을 보내 이어서 읽을 수 있습니다. 목록이 아닌 큰 결과는 모델 입력 한도를 넘기기 전에 생략 안내를 반환합니다. 상한은 `STASH_MCP_MAX_RESPONSE_BYTES`로 바꿀 수 있습니다. HTTP 접근 기록은 `STASH_LOG_LEVEL=debug`일 때만 출력하며 쿼리 문자열, 인증 헤더, 쿠키는 기록하지 않습니다.
 
 ### 3. agy (Antigravity)
 `~/.gemini/config/mcp_config.json`을 통해 설정합니다:

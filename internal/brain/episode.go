@@ -15,16 +15,34 @@ import (
 // If occurredAt is nil, the current time is used.
 // Returns the episode ID on success.
 func (b *Brain) Remember(ctx context.Context, namespaceSlug, content string, occurredAt *time.Time) (int64, error) {
+	result, err := b.RememberWithStatus(ctx, namespaceSlug, content, occurredAt)
+	return result.ID, err
+}
+
+// RememberResult distinguishes a searchable episode from one that was durably
+// stored and queued after its embedding request failed.
+type RememberResult struct {
+	ID             int64      `json:"id"`
+	Indexed        bool       `json:"indexed"`
+	IndexingStatus string     `json:"indexing_status"`
+	RetryAt        *time.Time `json:"retry_at,omitempty"`
+}
+
+// RememberWithStatus preserves the raw memory even when the embedding endpoint
+// is unavailable. A pending row is retried by the server's embedding worker and
+// remains excluded from vector search until indexing succeeds.
+func (b *Brain) RememberWithStatus(ctx context.Context, namespaceSlug, content string, occurredAt *time.Time) (RememberResult, error) {
+	var result RememberResult
 	if err := validateContent(content); err != nil {
-		return 0, err
+		return result, err
 	}
 	if err := validatePath(namespaceSlug); err != nil {
-		return 0, err
+		return result, err
 	}
 
 	nsID, err := b.resolveNamespaceID(ctx, namespaceSlug)
 	if err != nil {
-		return 0, err
+		return result, err
 	}
 
 	occurred := time.Now().UTC()
@@ -34,19 +52,48 @@ func (b *Brain) Remember(ctx context.Context, namespaceSlug, content string, occ
 
 	vec, err := b.embedder.Embed(ctx, content)
 	if err != nil {
-		return 0, fmt.Errorf("embed: %w", err)
+		pending, pendingErr := b.insertPendingEpisode(ctx, nsID, content, occurred, err)
+		if pendingErr != nil {
+			return result, fmt.Errorf("embed episode: %v; %w", err, pendingErr)
+		}
+		return pending, nil
 	}
 
-	var id int64
 	err = b.pool.QueryRow(ctx,
-		`INSERT INTO episodes (namespace_id, content, embedding, embedding_model, occurred_at)
-		 VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+		`INSERT INTO episodes (namespace_id, content, embedding, embedding_model, occurred_at, embedding_updated_at)
+		 VALUES ($1, $2, $3, $4, $5, now()) RETURNING id`,
 		nsID, content, pgvector.NewVector(vec), b.embedder.Model(), occurred,
-	).Scan(&id)
+	).Scan(&result.ID)
 	if err != nil {
-		return 0, fmt.Errorf("insert episode: %w", err)
+		pending, pendingErr := b.insertPendingEpisode(ctx, nsID, content, occurred, err)
+		if pendingErr != nil {
+			return result, fmt.Errorf("insert episode embedding: %v; %w", err, pendingErr)
+		}
+		return pending, nil
 	}
-	return id, nil
+	result.Indexed = true
+	result.IndexingStatus = "indexed"
+	return result, nil
+}
+
+func (b *Brain) insertPendingEpisode(ctx context.Context, namespaceID int64, content string, occurred time.Time, cause error) (RememberResult, error) {
+	result := RememberResult{
+		Indexed:        false,
+		IndexingStatus: "pending",
+	}
+	retryAt := time.Now().UTC().Add(b.config.EmbeddingRetryInterval)
+	err := b.pool.QueryRow(ctx,
+		`INSERT INTO episodes (
+			namespace_id, content, embedding, embedding_model, occurred_at,
+			embedding_attempts, embedding_last_error, embedding_retry_at, embedding_updated_at
+		 ) VALUES ($1, $2, NULL, $3, $4, 1, $5, $6, now()) RETURNING id`,
+		namespaceID, content, b.embedder.Model(), occurred, embeddingErrorText(cause), retryAt,
+	).Scan(&result.ID)
+	if err != nil {
+		return RememberResult{}, fmt.Errorf("insert pending episode: %w", err)
+	}
+	result.RetryAt = &retryAt
+	return result, nil
 }
 
 // ForgetOptions tunes how ForgetEpisodeMatch selects and removes a match.

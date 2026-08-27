@@ -18,18 +18,22 @@ type Config struct {
 	MaxResultSize int    `env:"STASH_MAX_RESULT_SIZE,required"`
 
 	// OpenAI (embeddings + reasoning)
-	OpenAIAPIKey   string `env:"STASH_OPENAI_API_KEY" envDefault:""`
-	OpenAIBaseURL  string `env:"STASH_OPENAI_BASE_URL,required"`
-	EmbeddingModel string `env:"STASH_EMBEDDING_MODEL,required"`
-	ReasonerModel  string `env:"STASH_REASONER_MODEL,required"`
+	OpenAIAPIKey              string        `env:"STASH_OPENAI_API_KEY" envDefault:""`
+	OpenAIBaseURL             string        `env:"STASH_OPENAI_BASE_URL,required"`
+	EmbeddingModel            string        `env:"STASH_EMBEDDING_MODEL,required"`
+	ReasonerModel             string        `env:"STASH_REASONER_MODEL,required"`
+	EmbeddingRetryInterval    time.Duration `env:"STASH_EMBEDDING_RETRY_INTERVAL" envDefault:"1m"`
+	EmbeddingRetryMaxInterval time.Duration `env:"STASH_EMBEDDING_RETRY_MAX_INTERVAL" envDefault:"1h"`
+	EmbeddingRetryBatchSize   int           `env:"STASH_EMBEDDING_RETRY_BATCH_SIZE" envDefault:"100"`
 
 	// Memory
 	ContextTTL time.Duration `env:"STASH_CONTEXT_TTL,required"`
 
 	// Server
-	HTTPAddr  string `env:"STASH_HTTP_ADDR,required"`
-	LogLevel  string `env:"STASH_LOG_LEVEL,required"`
-	LogFormat string `env:"STASH_LOG_FORMAT,required"`
+	HTTPAddr            string `env:"STASH_HTTP_ADDR,required"`
+	LogLevel            string `env:"STASH_LOG_LEVEL,required"`
+	LogFormat           string `env:"STASH_LOG_FORMAT,required"`
+	MCPMaxResponseBytes int    `env:"STASH_MCP_MAX_RESPONSE_BYTES" envDefault:"32768"`
 
 	// Authentication
 	AuthMode           string        `env:"STASH_AUTH_MODE" envDefault:"none"`
@@ -148,8 +152,20 @@ func (c *Config) Validate() error {
 	if c.ContextTTL <= 0 {
 		return fmt.Errorf("STASH_CONTEXT_TTL must be greater than zero")
 	}
+	if c.EmbeddingRetryInterval <= 0 {
+		return fmt.Errorf("STASH_EMBEDDING_RETRY_INTERVAL must be greater than zero")
+	}
+	if c.EmbeddingRetryMaxInterval < c.EmbeddingRetryInterval {
+		return fmt.Errorf("STASH_EMBEDDING_RETRY_MAX_INTERVAL must be greater than or equal to STASH_EMBEDDING_RETRY_INTERVAL")
+	}
+	if c.EmbeddingRetryBatchSize <= 0 {
+		return fmt.Errorf("STASH_EMBEDDING_RETRY_BATCH_SIZE must be greater than zero")
+	}
 	if c.HTTPAddr == "" {
 		return fmt.Errorf("STASH_HTTP_ADDR must not be empty")
+	}
+	if c.MCPMaxResponseBytes < 1024 {
+		return fmt.Errorf("STASH_MCP_MAX_RESPONSE_BYTES must be at least 1024")
 	}
 	if c.ConsolidationBatchSize <= 0 {
 		return fmt.Errorf("STASH_CONSOLIDATION_BATCH_SIZE must be greater than zero")

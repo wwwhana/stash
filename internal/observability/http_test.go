@@ -1,8 +1,11 @@
 package observability
 
 import (
+	"bytes"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -10,7 +13,9 @@ import (
 )
 
 func TestInstrumentHTTPRecordsResponseAndPreservesFlushing(t *testing.T) {
-	handler := InstrumentHTTP(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	handler := InstrumentHTTP(logger, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := w.(http.Flusher); !ok {
 			t.Fatal("instrumented writer does not preserve http.Flusher")
 		}
@@ -19,12 +24,30 @@ func TestInstrumentHTTPRecordsResponseAndPreservesFlushing(t *testing.T) {
 	}))
 
 	recorder := httptest.NewRecorder()
-	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/mcp", nil))
+	request := httptest.NewRequest(http.MethodPost, "/mcp?access_token=must-not-appear", nil)
+	request.Header.Set("Authorization", "Bearer must-not-appear")
+	request.Header.Set("X-Request-ID", "request-123")
+	handler.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusCreated)
 	}
 	if recorder.Body.String() != "created" {
 		t.Fatalf("body = %q, want created", recorder.Body.String())
+	}
+	if got := recorder.Header().Get("X-Request-ID"); got != "request-123" {
+		t.Fatalf("X-Request-ID = %q, want request-123", got)
+	}
+
+	accessLog := logs.String()
+	for _, want := range []string{"msg=\"http access\"", "request_id=request-123", "method=POST", "path=/mcp", "route=/mcp", "status=201", "bytes=7"} {
+		if !strings.Contains(accessLog, want) {
+			t.Fatalf("access log %q does not contain %q", accessLog, want)
+		}
+	}
+	for _, secret := range []string{"access_token", "must-not-appear", "Authorization"} {
+		if strings.Contains(accessLog, secret) {
+			t.Fatalf("access log leaked %q: %s", secret, accessLog)
+		}
 	}
 
 	metrics, err := prometheus.DefaultGatherer.Gather()
@@ -35,6 +58,19 @@ func TestInstrumentHTTPRecordsResponseAndPreservesFlushing(t *testing.T) {
 		"route": "/mcp", "method": http.MethodPost, "status": "201",
 	}) {
 		t.Fatal("HTTP request metric was not recorded")
+	}
+}
+
+func TestInstrumentHTTPSuppressesAccessLogAboveDebugLevel(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	handler := InstrumentHTTP(logger, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if logs.Len() != 0 {
+		t.Fatalf("debug access log was emitted at info level: %s", logs.String())
 	}
 }
 

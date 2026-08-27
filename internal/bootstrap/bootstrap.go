@@ -104,6 +104,8 @@ func New(ctx context.Context) (*Context, error) {
 		ExpiryThreshold:                cfg.ExpiryThreshold,
 		HypothesisAutoConfirmThreshold: cfg.HypothesisAutoConfirmThreshold,
 		HypothesisAutoRejectThreshold:  cfg.HypothesisAutoRejectThreshold,
+		EmbeddingRetryInterval:         cfg.EmbeddingRetryInterval,
+		EmbeddingRetryMaxInterval:      cfg.EmbeddingRetryMaxInterval,
 	})
 	if err != nil {
 		pool.Close()

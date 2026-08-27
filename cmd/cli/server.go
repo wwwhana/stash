@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/alash3al/stash/internal/bootstrap"
+	"github.com/alash3al/stash/internal/brain"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -18,11 +19,51 @@ var (
 		},
 		[]string{"version"},
 	)
+	embeddingRetryAttempts = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "stash_embedding_retry_attempts_total",
+			Help: "Durable embedding retry attempts by result",
+		},
+		[]string{"result"},
+	)
+	embeddingQueued = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "stash_embedding_queued_total",
+			Help: "Memories durably queued after an embedding failure",
+		},
+	)
+	embeddingPending = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "stash_embedding_pending",
+			Help: "Episodes and facts currently waiting for embedding",
+		},
+	)
+	mcpResponseLimited = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "stash_mcp_response_limited_total",
+			Help: "MCP tool responses split or omitted to stay within the configured byte limit",
+		},
+	)
 )
 
 func init() {
-	prometheus.MustRegister(buildInfo)
+	prometheus.MustRegister(buildInfo, embeddingRetryAttempts, embeddingQueued, embeddingPending, mcpResponseLimited)
 	buildInfo.WithLabelValues("0.2.8").Set(1)
+}
+
+func recordEmbeddingQueued() {
+	embeddingQueued.Inc()
+	embeddingPending.Inc()
+}
+
+func recordEmbeddingRetryMetrics(result brain.EmbeddingRetryResult) {
+	if result.Indexed > 0 {
+		embeddingRetryAttempts.WithLabelValues("indexed").Add(float64(result.Indexed))
+	}
+	if result.Failed > 0 {
+		embeddingRetryAttempts.WithLabelValues("failed").Add(float64(result.Failed))
+	}
+	embeddingPending.Set(float64(result.Pending))
 }
 
 // registerOperationalRoutes adds process-level status and metrics endpoints to

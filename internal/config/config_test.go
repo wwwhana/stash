@@ -42,12 +42,19 @@ func TestAuthenticationSettingsAreOptionalWhenDisabled(t *testing.T) {
 	if cfg.OpenAIAPIKey != "" {
 		t.Fatalf("OpenAIAPIKey = %q, want empty", cfg.OpenAIAPIKey)
 	}
+	if cfg.EmbeddingRetryInterval != time.Minute || cfg.EmbeddingRetryMaxInterval != time.Hour || cfg.EmbeddingRetryBatchSize != 100 {
+		t.Fatalf("unexpected embedding retry defaults: interval=%s max=%s batch=%d", cfg.EmbeddingRetryInterval, cfg.EmbeddingRetryMaxInterval, cfg.EmbeddingRetryBatchSize)
+	}
+	if cfg.MCPMaxResponseBytes != 32768 {
+		t.Fatalf("MCPMaxResponseBytes = %d, want 32768", cfg.MCPMaxResponseBytes)
+	}
 }
 
 func TestAuthenticationModeValidation(t *testing.T) {
 	base := &Config{
 		VectorDim: 1536, MaxResultSize: 10000, ContextTTL: time.Hour,
-		HTTPAddr: ":8080", ConsolidationBatchSize: 1,
+		EmbeddingRetryInterval: time.Minute, EmbeddingRetryMaxInterval: time.Hour, EmbeddingRetryBatchSize: 100,
+		HTTPAddr: ":8080", MCPMaxResponseBytes: 32768, ConsolidationBatchSize: 1,
 		ConsolidationSimilarityThreshold: .5, ConsolidationDedupThreshold: .5,
 		DecayFactor: .5, ExpiryThreshold: .1,
 		HypothesisAutoConfirmThreshold: .9, HypothesisAutoRejectThreshold: .9,
@@ -63,6 +70,41 @@ func TestAuthenticationModeValidation(t *testing.T) {
 	invalid.AuthMode = "basic"
 	if err := invalid.Validate(); err == nil || !strings.Contains(err.Error(), "STASH_AUTH_MODE") {
 		t.Fatalf("invalid auth mode error = %v", err)
+	}
+}
+
+func TestEmbeddingRetrySettingsValidation(t *testing.T) {
+	base := Config{
+		VectorDim: 1536, MaxResultSize: 10000, ContextTTL: time.Hour,
+		EmbeddingRetryInterval: time.Minute, EmbeddingRetryMaxInterval: time.Hour, EmbeddingRetryBatchSize: 100,
+		HTTPAddr: ":8080", MCPMaxResponseBytes: 32768, ConsolidationBatchSize: 1,
+		ConsolidationSimilarityThreshold: .5, ConsolidationDedupThreshold: .5,
+		DecayFactor: .5, ExpiryThreshold: .1,
+		HypothesisAutoConfirmThreshold: .9, HypothesisAutoRejectThreshold: .9,
+	}
+
+	invalidInterval := base
+	invalidInterval.EmbeddingRetryInterval = 0
+	if err := invalidInterval.Validate(); err == nil || !strings.Contains(err.Error(), "STASH_EMBEDDING_RETRY_INTERVAL") {
+		t.Fatalf("invalid retry interval error = %v", err)
+	}
+
+	invalidMaximum := base
+	invalidMaximum.EmbeddingRetryMaxInterval = 30 * time.Second
+	if err := invalidMaximum.Validate(); err == nil || !strings.Contains(err.Error(), "STASH_EMBEDDING_RETRY_MAX_INTERVAL") {
+		t.Fatalf("invalid retry maximum error = %v", err)
+	}
+
+	invalidBatch := base
+	invalidBatch.EmbeddingRetryBatchSize = 0
+	if err := invalidBatch.Validate(); err == nil || !strings.Contains(err.Error(), "STASH_EMBEDDING_RETRY_BATCH_SIZE") {
+		t.Fatalf("invalid retry batch error = %v", err)
+	}
+
+	invalidResponseLimit := base
+	invalidResponseLimit.MCPMaxResponseBytes = 1000
+	if err := invalidResponseLimit.Validate(); err == nil || !strings.Contains(err.Error(), "STASH_MCP_MAX_RESPONSE_BYTES") {
+		t.Fatalf("invalid MCP response limit error = %v", err)
 	}
 }
 
