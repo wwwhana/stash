@@ -19,8 +19,9 @@ const maxAdaptiveReasonerSplits = 8
 // If the provider does not publish a limit, a context-length error triggers an
 // adaptive split and retry rather than being returned as a permanent failure.
 type Limited struct {
-	inner         Reasoner
-	maxInputBytes int
+	inner          Reasoner
+	maxInputBytes  int
+	reservedTokens int
 }
 
 // NewLimited wraps a reasoner with a model context budget. ContextTokens is
@@ -37,8 +38,9 @@ func NewLimited(inner Reasoner, contextTokens, reservedTokens int) *Limited {
 		}
 	}
 	return &Limited{
-		inner:         inner,
-		maxInputBytes: textbudget.BytesForTokens(inputTokens),
+		inner:          inner,
+		maxInputBytes:  textbudget.BytesForTokens(inputTokens),
+		reservedTokens: maxInt(0, reservedTokens),
 	}
 }
 
@@ -121,7 +123,7 @@ func (l *Limited) reasonStructured(ctx context.Context, texts []string, depth in
 		if !textbudget.IsContextLimitError(err) || depth >= maxAdaptiveReasonerSplits {
 			return nil, err
 		}
-		return l.withBudget(shrinkBudget(chunks[0], l.maxInputBytes)).reasonStructured(ctx, texts, depth+1)
+		return l.withBudget(l.nextBudget(err, shrinkBudget(chunks[0], l.maxInputBytes))).reasonStructured(ctx, texts, depth+1)
 	}
 
 	var summaries []string
@@ -129,7 +131,7 @@ func (l *Limited) reasonStructured(ctx context.Context, texts []string, depth in
 		result, err := l.inner.ReasonStructured(ctx, chunk)
 		if err != nil {
 			if textbudget.IsContextLimitError(err) && depth < maxAdaptiveReasonerSplits {
-				return l.withBudget(shrinkBudget(chunk, l.maxInputBytes)).reasonStructured(ctx, texts, depth+1)
+				return l.withBudget(l.nextBudget(err, shrinkBudget(chunk, l.maxInputBytes))).reasonStructured(ctx, texts, depth+1)
 			}
 			return nil, fmt.Errorf("reasoner: structured chunk %d/%d: %w", i+1, len(chunks), err)
 		}
@@ -155,6 +157,17 @@ func (l *Limited) withBudget(maxBytes int) *Limited {
 	copyLimited := *l
 	copyLimited.maxInputBytes = maxBytes
 	return &copyLimited
+}
+
+// nextBudget prefers the exact limit reported by the provider. If the error
+// does not contain a limit, or the reported limit is not smaller than the
+// current budget, the caller's deterministic fallback is used.
+func (l *Limited) nextBudget(err error, fallback int) int {
+	if budget, ok := textbudget.InputBudgetFromContextError(err, l.reservedTokens); ok &&
+		(l.maxInputBytes <= 0 || budget < l.maxInputBytes) {
+		return budget
+	}
+	return fallback
 }
 
 func shrinkBudget(values []string, current int) int {
@@ -270,7 +283,7 @@ func (l *Limited) reasonRelationships(ctx context.Context, factContent string, d
 		if depth >= maxAdaptiveReasonerSplits {
 			return nil, err
 		}
-		return l.withBudget(shrinkBudgetText(factContent, l.maxInputBytes)).reasonRelationships(ctx, factContent, depth+1)
+		return l.withBudget(l.nextBudget(err, shrinkBudgetText(factContent, l.maxInputBytes))).reasonRelationships(ctx, factContent, depth+1)
 	}
 	return l.relationshipChunks(ctx, parts, factContent, depth)
 }
@@ -282,7 +295,7 @@ func (l *Limited) relationshipChunks(ctx context.Context, parts []string, origin
 		items, err := l.inner.ReasonRelationships(ctx, part)
 		if err != nil {
 			if textbudget.IsContextLimitError(err) && depth < maxAdaptiveReasonerSplits && len(part) > 1 {
-				return l.withBudget(shrinkBudgetText(part, l.maxInputBytes)).reasonRelationships(ctx, original, depth+1)
+				return l.withBudget(l.nextBudget(err, shrinkBudgetText(part, l.maxInputBytes))).reasonRelationships(ctx, original, depth+1)
 			}
 			return nil, fmt.Errorf("reasoner: relationship chunk %d/%d: %w", i+1, len(parts), err)
 		}
@@ -317,7 +330,7 @@ func (l *Limited) reasonPatterns(ctx context.Context, facts []models.Fact, relat
 		if depth >= maxAdaptiveReasonerSplits {
 			return nil, err
 		}
-		return l.withBudget(shrinkPatternBudget(batches[0], l.maxInputBytes)).reasonPatterns(ctx, facts, relationships, depth+1)
+		return l.withBudget(l.nextBudget(err, shrinkPatternBudget(batches[0], l.maxInputBytes))).reasonPatterns(ctx, facts, relationships, depth+1)
 	}
 	seen := make(map[string]struct{})
 	var result []*StructuredPattern
@@ -328,7 +341,7 @@ func (l *Limited) reasonPatterns(ctx context.Context, facts []models.Fact, relat
 		items, err := l.inner.ReasonPatterns(ctx, batch.facts, batch.relationships)
 		if err != nil {
 			if textbudget.IsContextLimitError(err) && depth < maxAdaptiveReasonerSplits {
-				return l.withBudget(shrinkPatternBudget(batch, l.maxInputBytes)).reasonPatterns(ctx, facts, relationships, depth+1)
+				return l.withBudget(l.nextBudget(err, shrinkPatternBudget(batch, l.maxInputBytes))).reasonPatterns(ctx, facts, relationships, depth+1)
 			}
 			return nil, fmt.Errorf("reasoner: pattern chunk %d/%d: %w", i+1, len(batches), err)
 		}
@@ -345,14 +358,104 @@ func (l *Limited) reasonPatterns(ctx context.Context, facts []models.Fact, relat
 }
 
 func (l *Limited) ReasonContradiction(ctx context.Context, entity, property, oldValue, newValue string) (*ContradictionResult, error) {
-	result, err := l.inner.ReasonContradiction(ctx, entity, property, oldValue, newValue)
-	if err == nil || !textbudget.IsContextLimitError(err) {
-		return result, err
+	return l.reasonContradiction(ctx, entity, property, oldValue, newValue, 0)
+}
+
+func (l *Limited) reasonContradiction(ctx context.Context, entity, property, oldValue, newValue string, depth int) (*ContradictionResult, error) {
+	parts := splitContradictionValues(oldValue, newValue, l.maxInputBytes)
+	if len(parts) == 1 {
+		result, err := l.inner.ReasonContradiction(ctx, entity, property, oldValue, newValue)
+		if err == nil || !textbudget.IsContextLimitError(err) {
+			return result, err
+		}
+		if depth >= maxAdaptiveReasonerSplits {
+			return nil, err
+		}
+		return l.withBudget(l.nextBudget(err, shrinkBudget([]string{oldValue, newValue}, l.maxInputBytes))).reasonContradiction(ctx, entity, property, oldValue, newValue, depth+1)
 	}
-	// Contradiction prompts are normally small. If a caller stores unusually
-	// large values, keep their ends and make the failure explicit rather than
-	// issuing an unbounded retry with invented context.
-	return nil, fmt.Errorf("reasoner: contradiction input exceeds model context: %w", err)
+
+	results := make([]*ContradictionResult, 0, len(parts))
+	for i, part := range parts {
+		result, err := l.inner.ReasonContradiction(ctx, entity, property, part.oldValue, part.newValue)
+		if err != nil {
+			if textbudget.IsContextLimitError(err) && depth < maxAdaptiveReasonerSplits {
+				return l.withBudget(l.nextBudget(err, shrinkBudget([]string{part.oldValue, part.newValue}, l.maxInputBytes))).reasonContradiction(ctx, entity, property, oldValue, newValue, depth+1)
+			}
+			return nil, fmt.Errorf("reasoner: contradiction chunk %d/%d: %w", i+1, len(parts), err)
+		}
+		if result != nil {
+			results = append(results, result)
+		}
+	}
+	return mergeContradictions(results), nil
+}
+
+type contradictionPart struct {
+	oldValue string
+	newValue string
+}
+
+func splitContradictionValues(oldValue, newValue string, maxBytes int) []contradictionPart {
+	if maxBytes <= 0 {
+		return []contradictionPart{{oldValue: oldValue, newValue: newValue}}
+	}
+	// Keep the two values in separate halves so each request has room for the
+	// entity, property, and the wrapped prompt's instructions.
+	valueBudget := maxInt(1, maxBytes/2)
+	oldParts := textbudget.SplitText(oldValue, valueBudget)
+	newParts := textbudget.SplitText(newValue, valueBudget)
+	if len(oldParts) == 1 && len(newParts) == 1 {
+		return []contradictionPart{{oldValue: oldValue, newValue: newValue}}
+	}
+	count := len(oldParts)
+	if len(newParts) > count {
+		count = len(newParts)
+	}
+	parts := make([]contradictionPart, 0, count)
+	for i := 0; i < count; i++ {
+		parts = append(parts, contradictionPart{
+			oldValue: oldParts[minIndex(i, len(oldParts))],
+			newValue: newParts[minIndex(i, len(newParts))],
+		})
+	}
+	return parts
+}
+
+func mergeContradictions(results []*ContradictionResult) *ContradictionResult {
+	if len(results) == 0 {
+		return nil
+	}
+	merged := &ContradictionResult{Classification: ClassificationCompatible}
+	var explanations []string
+	for _, result := range results {
+		if result == nil {
+			continue
+		}
+		if contradictionRank(result.Classification) > contradictionRank(merged.Classification) {
+			merged.Classification = result.Classification
+		}
+		if result.Confidence > merged.Confidence {
+			merged.Confidence = result.Confidence
+		}
+		if explanation := strings.TrimSpace(result.Explanation); explanation != "" {
+			explanations = append(explanations, explanation)
+		}
+	}
+	merged.Explanation = strings.Join(explanations, " ")
+	return merged
+}
+
+func contradictionRank(classification ContradictionClassification) int {
+	switch classification {
+	case ClassificationContradiction:
+		return 3
+	case ClassificationReplacement:
+		return 2
+	case ClassificationCompatible:
+		return 1
+	default:
+		return 0
+	}
 }
 
 func (l *Limited) ReasonCausalLinks(ctx context.Context, facts []models.Fact) ([]*StructuredCausalLink, error) {
@@ -369,7 +472,7 @@ func (l *Limited) reasonCausalLinks(ctx context.Context, facts []models.Fact, de
 		if depth >= maxAdaptiveReasonerSplits {
 			return nil, err
 		}
-		return l.withBudget(shrinkFactsBudget(chunks[0], l.maxInputBytes)).reasonCausalLinks(ctx, facts, depth+1)
+		return l.withBudget(l.nextBudget(err, shrinkFactsBudget(chunks[0], l.maxInputBytes))).reasonCausalLinks(ctx, facts, depth+1)
 	}
 	seen := make(map[string]struct{})
 	var result []*StructuredCausalLink
@@ -380,7 +483,7 @@ func (l *Limited) reasonCausalLinks(ctx context.Context, facts []models.Fact, de
 		items, err := l.inner.ReasonCausalLinks(ctx, chunk)
 		if err != nil {
 			if textbudget.IsContextLimitError(err) && depth < maxAdaptiveReasonerSplits {
-				return l.withBudget(shrinkFactsBudget(chunk, l.maxInputBytes)).reasonCausalLinks(ctx, facts, depth+1)
+				return l.withBudget(l.nextBudget(err, shrinkFactsBudget(chunk, l.maxInputBytes))).reasonCausalLinks(ctx, facts, depth+1)
 			}
 			return nil, fmt.Errorf("reasoner: causal chunk %d/%d: %w", i+1, len(chunks), err)
 		}
@@ -410,7 +513,7 @@ func (l *Limited) reasonGoalProgress(ctx context.Context, goals []models.Goal, f
 		if depth >= maxAdaptiveReasonerSplits {
 			return nil, err
 		}
-		return l.withBudget(shrinkGoalFactsBudget(batches[0], l.maxInputBytes)).reasonGoalProgress(ctx, goals, facts, depth+1)
+		return l.withBudget(l.nextBudget(err, shrinkGoalFactsBudget(batches[0], l.maxInputBytes))).reasonGoalProgress(ctx, goals, facts, depth+1)
 	}
 	var result []*GoalProgressAssessment
 	seen := make(map[string]struct{})
@@ -418,7 +521,7 @@ func (l *Limited) reasonGoalProgress(ctx context.Context, goals []models.Goal, f
 		items, err := l.inner.ReasonGoalProgress(ctx, batch.goals, batch.facts)
 		if err != nil {
 			if textbudget.IsContextLimitError(err) && depth < maxAdaptiveReasonerSplits {
-				return l.withBudget(shrinkGoalFactsBudget(batch, l.maxInputBytes)).reasonGoalProgress(ctx, goals, facts, depth+1)
+				return l.withBudget(l.nextBudget(err, shrinkGoalFactsBudget(batch, l.maxInputBytes))).reasonGoalProgress(ctx, goals, facts, depth+1)
 			}
 			return nil, fmt.Errorf("reasoner: goal-progress chunk %d/%d: %w", i+1, len(batches), err)
 		}
@@ -448,7 +551,7 @@ func (l *Limited) reasonFailurePatterns(ctx context.Context, failures []models.F
 		if depth >= maxAdaptiveReasonerSplits {
 			return nil, err
 		}
-		return l.withBudget(shrinkFailureEvidenceBudget(batches[0], l.maxInputBytes)).reasonFailurePatterns(ctx, failures, evidence, depth+1)
+		return l.withBudget(l.nextBudget(err, shrinkFailureEvidenceBudget(batches[0], l.maxInputBytes))).reasonFailurePatterns(ctx, failures, evidence, depth+1)
 	}
 	var result []*FailurePatternResult
 	seen := make(map[string]struct{})
@@ -456,7 +559,7 @@ func (l *Limited) reasonFailurePatterns(ctx context.Context, failures []models.F
 		items, err := l.inner.ReasonFailurePatterns(ctx, batch.failures, batch.evidence)
 		if err != nil {
 			if textbudget.IsContextLimitError(err) && depth < maxAdaptiveReasonerSplits {
-				return l.withBudget(shrinkFailureEvidenceBudget(batch, l.maxInputBytes)).reasonFailurePatterns(ctx, failures, evidence, depth+1)
+				return l.withBudget(l.nextBudget(err, shrinkFailureEvidenceBudget(batch, l.maxInputBytes))).reasonFailurePatterns(ctx, failures, evidence, depth+1)
 			}
 			return nil, fmt.Errorf("reasoner: failure-pattern chunk %d/%d: %w", i+1, len(batches), err)
 		}
@@ -486,7 +589,7 @@ func (l *Limited) reasonHypothesisEvidence(ctx context.Context, hypotheses []mod
 		if depth >= maxAdaptiveReasonerSplits {
 			return nil, err
 		}
-		return l.withBudget(shrinkHypothesisFactsBudget(batches[0], l.maxInputBytes)).reasonHypothesisEvidence(ctx, hypotheses, facts, depth+1)
+		return l.withBudget(l.nextBudget(err, shrinkHypothesisFactsBudget(batches[0], l.maxInputBytes))).reasonHypothesisEvidence(ctx, hypotheses, facts, depth+1)
 	}
 	var result []*HypothesisEvidenceResult
 	seen := make(map[string]struct{})
@@ -494,7 +597,7 @@ func (l *Limited) reasonHypothesisEvidence(ctx context.Context, hypotheses []mod
 		items, err := l.inner.ReasonHypothesisEvidence(ctx, batch.hypotheses, batch.facts)
 		if err != nil {
 			if textbudget.IsContextLimitError(err) && depth < maxAdaptiveReasonerSplits {
-				return l.withBudget(shrinkHypothesisFactsBudget(batch, l.maxInputBytes)).reasonHypothesisEvidence(ctx, hypotheses, facts, depth+1)
+				return l.withBudget(l.nextBudget(err, shrinkHypothesisFactsBudget(batch, l.maxInputBytes))).reasonHypothesisEvidence(ctx, hypotheses, facts, depth+1)
 			}
 			return nil, fmt.Errorf("reasoner: hypothesis-evidence chunk %d/%d: %w", i+1, len(batches), err)
 		}
@@ -563,6 +666,9 @@ func (l *Limited) patternBatches(facts []models.Fact, relationships []models.Rel
 	sectionBudget := maxInt(1, l.maxInputBytes/2)
 	factBatches := l.factBatches(facts, sectionBudget, patternFactSize)
 	relBatches := chunkItems(relationships, sectionBudget, patternRelSize)
+	if len(factBatches) == 0 {
+		return nil
+	}
 	if len(relBatches) == 0 {
 		result := make([]patternBatch, 0, len(factBatches))
 		for _, batch := range factBatches {
@@ -570,30 +676,31 @@ func (l *Limited) patternBatches(facts []models.Fact, relationships []models.Rel
 		}
 		return result
 	}
-	result := make([]patternBatch, 0, len(factBatches))
-	for i, factsChunk := range factBatches {
-		batch := patternBatch{facts: factsChunk}
-		// Relationship lists are generally tiny. Keep all of them with each
-		// fact chunk when they fit; otherwise pair one relation chunk per call.
-		if totalRelationshipSize(relationships) <= sectionBudget {
-			batch.relationships = append([]models.Relationship(nil), relationships...)
-		} else if i < len(relBatches) {
-			batch.relationships = relBatches[i]
+	// Repeat the shorter section when necessary so no fact or relationship
+	// chunk disappears just because the other section produced more chunks.
+	count := len(factBatches)
+	if len(relBatches) > count {
+		count = len(relBatches)
+	}
+	result := make([]patternBatch, 0, count)
+	for i := 0; i < count; i++ {
+		batch := patternBatch{
+			facts:         factBatches[minIndex(i, len(factBatches))],
+			relationships: relBatches[minIndex(i, len(relBatches))],
 		}
 		result = append(result, batch)
 	}
 	return result
 }
 
-func totalRelationshipSize(values []models.Relationship) int {
-	used := 0
-	for i, value := range values {
-		if i > 0 {
-			used++
-		}
-		used += patternRelSize(value)
+func minIndex(index, length int) int {
+	if length <= 0 {
+		return 0
 	}
-	return used
+	if index >= length {
+		return length - 1
+	}
+	return index
 }
 
 func (l *Limited) goalFactBatches(goals []models.Goal, facts []models.Fact) []goalFactBatch {
@@ -646,9 +753,10 @@ func pairGoalFacts(goals [][]models.Goal, facts [][]models.Fact, max int) []goal
 	}
 	result := make([]goalFactBatch, 0, count)
 	for i := 0; i < count; i++ {
-		if i < len(goals) && i < len(facts) {
-			result = append(result, goalFactBatch{goals: goals[i], facts: facts[i]})
-		}
+		result = append(result, goalFactBatch{
+			goals: goals[minIndex(i, len(goals))],
+			facts: facts[minIndex(i, len(facts))],
+		})
 	}
 	return result
 }
@@ -703,9 +811,10 @@ func pairFailureEvidence(failures [][]models.Failure, evidence [][]string) []fai
 	}
 	result := make([]failureEvidenceBatch, 0, count)
 	for i := 0; i < count; i++ {
-		if i < len(failures) && i < len(evidence) {
-			result = append(result, failureEvidenceBatch{failures: failures[i], evidence: evidence[i]})
-		}
+		result = append(result, failureEvidenceBatch{
+			failures: failures[minIndex(i, len(failures))],
+			evidence: evidence[minIndex(i, len(evidence))],
+		})
 	}
 	return result
 }
@@ -740,9 +849,10 @@ func (l *Limited) hypothesisFactBatches(hypotheses []models.Hypothesis, facts []
 	}
 	result := make([]hypothesisFactBatch, 0, count)
 	for i := 0; i < count; i++ {
-		if i < len(hypothesisParts) && i < len(factParts) {
-			result = append(result, hypothesisFactBatch{hypotheses: hypothesisParts[i], facts: factParts[i]})
-		}
+		result = append(result, hypothesisFactBatch{
+			hypotheses: hypothesisParts[minIndex(i, len(hypothesisParts))],
+			facts:      factParts[minIndex(i, len(factParts))],
+		})
 	}
 	return result
 }

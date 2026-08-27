@@ -81,19 +81,30 @@ func preferredCut(segment string) int {
 				paragraph = next + 1
 			}
 		case strings.ContainsRune(".!?。！？", r):
-			if next == len(segment) {
-				sentence = next
+			sentenceEnd := next
+			// A sentence can end with a closing quote or bracket after the
+			// punctuation. Include it before looking for whitespace so the
+			// next request never starts with a dangling closer.
+			for sentenceEnd < len(segment) {
+				closing, closingSize := utf8.DecodeRuneInString(segment[sentenceEnd:])
+				if !strings.ContainsRune("\"'”’)]}〉》」』】〕≫", closing) {
+					break
+				}
+				sentenceEnd += closingSize
+			}
+			if sentenceEnd == len(segment) {
+				sentence = sentenceEnd
 			} else {
-				nextRune, _ := utf8.DecodeRuneInString(segment[next:])
+				nextRune, _ := utf8.DecodeRuneInString(segment[sentenceEnd:])
 				if unicode.IsSpace(nextRune) {
-					for next < len(segment) {
-						spaceRune, spaceSize := utf8.DecodeRuneInString(segment[next:])
+					for sentenceEnd < len(segment) {
+						spaceRune, spaceSize := utf8.DecodeRuneInString(segment[sentenceEnd:])
 						if !unicode.IsSpace(spaceRune) {
 							break
 						}
-						next += spaceSize
+						sentenceEnd += spaceSize
 					}
-					sentence = next
+					sentence = sentenceEnd
 				}
 			}
 		}

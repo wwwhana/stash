@@ -98,3 +98,30 @@ func TestLimitedReasonerAdaptsWhenContextWindowIsUnknown(t *testing.T) {
 		t.Fatalf("underlying calls = %d, want adaptive retries", len(inner.structuredCall))
 	}
 }
+
+func TestLimitedReasonerKeepsAllPairedChunks(t *testing.T) {
+	goals := [][]models.Goal{
+		{{ID: 1}},
+		{{ID: 2}},
+		{{ID: 3}},
+	}
+	facts := [][]models.Fact{
+		{{ID: 10}},
+		{{ID: 11}},
+	}
+	batches := pairGoalFacts(goals, facts, 100)
+	if len(batches) != 3 {
+		t.Fatalf("pairGoalFacts returned %d batches, want 3", len(batches))
+	}
+	for i, batch := range batches {
+		if len(batch.goals) == 0 || len(batch.facts) == 0 {
+			t.Fatalf("batch %d lost one side: %#v", i, batch)
+		}
+	}
+	if got := batches[2].goals[0].ID; got != 3 {
+		t.Fatalf("last goal chunk ID = %d, want 3", got)
+	}
+	if got := batches[2].facts[0].ID; got != 11 {
+		t.Fatalf("last fact chunk ID = %d, want repeated tail 11", got)
+	}
+}

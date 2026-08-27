@@ -49,6 +49,12 @@ func (l *Limited) embed(ctx context.Context, text string, call func(context.Cont
 		if !textbudget.IsContextLimitError(err) || len(text) < 2 || depth >= maxAdaptiveEmbeddingSplits {
 			return nil, err
 		}
+		if budget, ok := textbudget.InputBudgetFromContextError(err, 0); ok &&
+			(l.maxInputBytes <= 0 || budget < l.maxInputBytes) {
+			copyLimited := *l
+			copyLimited.maxInputBytes = budget
+			return copyLimited.embed(ctx, text, call, depth+1)
+		}
 		// The endpoint did not publish a usable limit. Halve the text and let
 		// the same natural-boundary splitter keep the pieces readable.
 		parts = textbudget.SplitText(text, len(text)/2)

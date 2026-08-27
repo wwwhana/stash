@@ -108,7 +108,7 @@ HTTP MCP 요청은 `Authorization: Bearer <access-token>` 헤더를 보내야 �
 
 MCP 도구 결과에는 기본 32KB 안전 상한이 있습니다. 이 값은 전송을 보호하기 위한 값이며 모델의 컨텍스트 한도가 아닙니다. 목록이 상한을 넘으면 `items`, `has_more`, `next_offset`으로 나누므로 같은 도구에 `offset=next_offset`을 보내 이어서 읽을 수 있습니다. 목록이 아닌 큰 결과는 클라이언트의 입력 한도를 넘기기 전에 생략 안내를 반환합니다. 상한은 `STASH_MCP_MAX_RESPONSE_BYTES`로 바꿀 수 있습니다.
 
-리즌 모델과 임베딩 모델의 입력 한도는 MCP 응답 상한과 별도로 설정합니다. 리즌 모델의 전체 컨텍스트 크기를 `STASH_REASONER_CONTEXT_TOKENS`에, 지시문과 JSON 답변을 위해 남겨 둘 공간을 `STASH_REASONER_RESERVED_TOKENS`에 넣습니다. 임베딩 모델의 입력 한도는 `STASH_EMBEDDING_CONTEXT_TOKENS`에 넣습니다. Stash는 이 토큰 예산을 보수적인 UTF-8 바이트 예산으로 바꾸고, 문단과 문장이 끊기지 않도록 자료를 나눠 호출합니다. 긴 임베딩 입력은 여러 묶음의 벡터를 합쳐 하나로 저장합니다. MCP는 모델의 토크나이저나 현재 대화에 남은 토큰을 알려주지 않으므로 값을 `0`으로 두면 제공자가 컨텍스트 초과를 반환했을 때 자동으로 더 작게 나눠 다시 시도합니다. 컨텍스트가 44,544토큰인 리즌 모델이라면 `STASH_REASONER_CONTEXT_TOKENS=44544`, `STASH_REASONER_RESERVED_TOKENS=4096` 이상으로 시작하면 됩니다.
+리즌 모델과 임베딩 모델의 입력 한도는 MCP 응답 상한과 별도로 설정합니다. 리즌 모델의 전체 컨텍스트 크기를 `STASH_REASONER_CONTEXT_TOKENS`에, 지시문과 JSON 답변을 위해 남겨 둘 공간을 `STASH_REASONER_RESERVED_TOKENS`에 넣습니다. 임베딩 모델의 입력 한도는 `STASH_EMBEDDING_CONTEXT_TOKENS`에 넣습니다. Stash는 이 토큰 예산을 보수적인 UTF-8 바이트 예산으로 바꾸고, 문단을 먼저 나눈 뒤 마침표 같은 문장 끝을 우선해 자료를 나눠 호출합니다. 자연스러운 경계가 없을 때만 글자 중간을 나눕니다. 긴 임베딩 입력은 여러 묶음의 벡터를 합쳐 하나로 저장합니다. MCP는 모델의 토크나이저나 현재 대화에 남은 토큰을 알려주지 않으므로 값을 `0`으로 두면 제공자가 알려 준 한도를 읽어 자동으로 맞추고, 한도를 알 수 없을 때도 컨텍스트 초과 후 더 작게 나눠 다시 시도합니다. 컨텍스트가 44,544토큰인 리즌 모델이라면 `STASH_REASONER_CONTEXT_TOKENS=44544`, `STASH_REASONER_RESERVED_TOKENS=4096` 이상으로 시작하면 됩니다.
 
 HTTP 접근 기록은 `STASH_LOG_LEVEL=debug`일 때만 출력하며 쿼리 문자열, 인증 헤더, 쿠키는 기록하지 않습니다.
 
