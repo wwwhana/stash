@@ -32,14 +32,14 @@ var hnswIndexes = []struct {
 func prepareEmbeddingStorage(ctx context.Context, sqlDB *sql.DB, expectedModel string, expectedDim int) (EmbeddingStorageReport, error) {
 	var report EmbeddingStorageReport
 
-	needsResize := false
+	var mismatchedColumns []vectorColumn
 	for _, vc := range vectorColumns {
 		currentDim, err := vectorColumnDimension(ctx, sqlDB, vc)
 		if err != nil {
 			return report, err
 		}
 		if currentDim != expectedDim {
-			needsResize = true
+			mismatchedColumns = append(mismatchedColumns, vc)
 		}
 	}
 
@@ -47,7 +47,7 @@ func prepareEmbeddingStorage(ctx context.Context, sqlDB *sql.DB, expectedModel s
 	if err != nil {
 		return report, fmt.Errorf("read embedding model setting: %w", err)
 	}
-	report.DimensionChanged = needsResize
+	report.DimensionChanged = len(mismatchedColumns) > 0
 	report.ModelChanged = modelExists && previousModel != "" && previousModel != expectedModel
 
 	// A row-level check also repairs mixed data left by older releases or a
@@ -56,7 +56,20 @@ func prepareEmbeddingStorage(ctx context.Context, sqlDB *sql.DB, expectedModel s
 	if err != nil {
 		return report, err
 	}
-	needsReindex := needsResize || report.ModelChanged || mixedRows > 0
+	// A cache-only mismatch does not invalidate vectors already stored on
+	// episodes or facts. Reindex only source tables whose column changed; a
+	// model change or mixed row models still requires both source tables.
+	reindexTables := map[string]bool{}
+	for _, vc := range mismatchedColumns {
+		if vc.table == "episodes" || vc.table == "facts" {
+			reindexTables[vc.table] = true
+		}
+	}
+	if report.ModelChanged || mixedRows > 0 {
+		reindexTables["episodes"] = true
+		reindexTables["facts"] = true
+	}
+	needsReindex := len(reindexTables) > 0
 
 	tx, err := sqlDB.BeginTx(ctx, nil)
 	if err != nil {
@@ -64,15 +77,28 @@ func prepareEmbeddingStorage(ctx context.Context, sqlDB *sql.DB, expectedModel s
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if needsResize {
+	if report.DimensionChanged || needsReindex {
+		// Cache entries are an optimization only. Clear them before changing
+		// the cache column type: embedding_cache.embedding is NOT NULL, so the
+		// dimension change cannot temporarily fill it with NULL values.
+		if _, err := tx.ExecContext(ctx, "DELETE FROM embedding_cache"); err != nil {
+			return report, fmt.Errorf("clear embedding cache: %w", err)
+		}
+	}
+
+	if report.DimensionChanged {
 		for _, idx := range hnswIndexes {
+			if !containsVectorColumn(mismatchedColumns, idx.table, idx.column) {
+				continue
+			}
 			if _, err := tx.ExecContext(ctx, "DROP INDEX IF EXISTS "+idx.name); err != nil {
 				return report, fmt.Errorf("drop hnsw index %s: %w", idx.name, err)
 			}
 		}
-		for _, vc := range vectorColumns {
-			// Existing values cannot be cast between arbitrary dimensions. The
-			// content remains intact and all rows are queued below for fresh vectors.
+		for _, vc := range mismatchedColumns {
+			// Existing vectors cannot be cast between arbitrary dimensions. Source
+			// content remains intact and affected rows are queued below for fresh
+			// vectors; the cache was cleared above because it is disposable.
 			ddl := fmt.Sprintf(
 				"ALTER TABLE %s ALTER COLUMN %s TYPE vector(%d) USING NULL::vector(%d)",
 				vc.table, vc.column, expectedDim, expectedDim,
@@ -86,6 +112,9 @@ func prepareEmbeddingStorage(ctx context.Context, sqlDB *sql.DB, expectedModel s
 	if needsReindex {
 		reason := fmt.Sprintf("embedding configuration changed to model %q (%d dimensions); queued for reindex", expectedModel, expectedDim)
 		for _, table := range []string{"episodes", "facts"} {
+			if !reindexTables[table] {
+				continue
+			}
 			result, err := tx.ExecContext(ctx, fmt.Sprintf(`
 				UPDATE %s
 				SET embedding = NULL,
@@ -104,11 +133,6 @@ func prepareEmbeddingStorage(ctx context.Context, sqlDB *sql.DB, expectedModel s
 				return report, fmt.Errorf("count queued %s reindex rows: %w", table, err)
 			}
 			report.ReindexQueued += rows
-		}
-		// Cache entries are an optimization only. Clearing it avoids returning
-		// a vector produced by an old endpoint under a reused model name.
-		if _, err := tx.ExecContext(ctx, "DELETE FROM embedding_cache"); err != nil {
-			return report, fmt.Errorf("clear embedding cache: %w", err)
 		}
 	}
 
@@ -149,6 +173,15 @@ func prepareEmbeddingStorage(ctx context.Context, sqlDB *sql.DB, expectedModel s
 		return report, fmt.Errorf("commit embedding storage update: %w", err)
 	}
 	return report, nil
+}
+
+func containsVectorColumn(columns []vectorColumn, table, column string) bool {
+	for _, vc := range columns {
+		if vc.table == table && vc.column == column {
+			return true
+		}
+	}
+	return false
 }
 
 func vectorColumnDimension(ctx context.Context, sqlDB *sql.DB, vc vectorColumn) (int, error) {
