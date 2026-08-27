@@ -1,0 +1,28 @@
+{
+  "name": "stash-work-plan",
+  "version": "0.1.0",
+  "description": "Manage a shared component-oriented work plan through a configured Stash MCP server.",
+  "author": {
+    "name": "wwwhana",
+    "url": "https://github.com/wwwhana"
+  },
+  "homepage": "https://github.com/wwwhana/stash",
+  "repository": "https://github.com/wwwhana/stash",
+  "license": "Apache-2.0",
+  "keywords": ["stash", "mcp", "planning", "worktrees"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Stash Work Plan",
+    "shortDescription": "Keep agent work and decisions in Stash.",
+    "longDescription": "Resume and maintain a shared Stash work plan, coordinate tasks and worktrees, record decisions, and review plan meaning with the configured Reasoner model.",
+    "developerName": "wwwhana",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Write"],
+    "websiteURL": "https://github.com/wwwhana/stash",
+    "defaultPrompt": [
+      "Resume this project's Stash plan and start the next task.",
+      "Review the Stash plan and fix supported findings."
+    ],
+    "brandColor": "#4F46E5"
+  }
+}

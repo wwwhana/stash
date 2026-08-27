@@ -17,6 +17,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/alash3al/stash/internal/auth"
 	"github.com/alash3al/stash/internal/bootstrap"
 	"github.com/alash3al/stash/internal/brain"
 	"github.com/alash3al/stash/internal/models"
@@ -29,6 +30,31 @@ import (
 
 func stdioContextFunc(ctx context.Context) context.Context {
 	return context.WithValue(ctx, keyMode, "local")
+}
+
+func stdioContextFuncFor(provider *auth.Provider) server.StdioContextFunc {
+	return func(ctx context.Context) context.Context {
+		if provider == nil || provider.Mode() == "none" {
+			return context.WithValue(ctx, keyMode, "local")
+		}
+		if provider.Mode() != "stdio" {
+			// HTTP OAuth does not apply to a trusted local STDIO process.
+			return context.WithValue(ctx, keyMode, "local")
+		}
+
+		rawToken := provider.StdioCredential()
+		if rawToken == "" {
+			return context.WithValue(ctx, keyMode, "local")
+		}
+		user, err := provider.VerifyBearerToken(ctx, rawToken)
+		if err != nil || user == "" {
+			// Keep the request in the remote mode without an identity. Namespace
+			// resolution will reject it instead of silently falling back to /.
+			return context.WithValue(ctx, keyMode, "remote")
+		}
+		ctx = context.WithValue(ctx, keyMode, "remote")
+		return context.WithValue(ctx, keySSOUser, user)
+	}
 }
 
 //go:embed mcp_prompts.tmpl
@@ -88,6 +114,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 			name        string
 			description string
 		}{
+			{"/", "Workspace", "Default workspace for this Stash user."},
 			{"/self", "Self", "Agent's self-knowledge: capabilities, limits, preferences, and behavioral patterns."},
 			{"/self/capabilities", "Capabilities", "What the agent can do well. Strengths and proven competencies."},
 			{"/self/limits", "Limits", "What the agent struggles with or cannot do. Known failure modes."},
@@ -338,7 +365,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(namespaces)
+		return jsonToolResult(logicalNamespaces(ctx, namespaces))
 	})
 
 	mcpServer.AddTool(mcp.NewTool("create_namespace",
@@ -359,9 +386,13 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		if err != nil {
 			return nil, err
 		}
+		displaySlug, ok := logicalNamespaceSlug(ctx, slug)
+		if !ok {
+			return nil, fmt.Errorf("unauthorized: verified identity is required")
+		}
 		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{
 			Type: "text",
-			Text: fmt.Sprintf(`{"id": %d, "slug": "%s"}`, id, slug),
+			Text: fmt.Sprintf(`{"id": %d, "slug": "%s"}`, id, displaySlug),
 		}}}, nil
 	})
 
@@ -907,15 +938,110 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 	})
 
 	registerWorkGraphTools(mcpServer, bc)
+	registerWorkPlanTools(mcpServer, bc)
 	return mcpServer
 }
 
 func mcpServeCmd(ctx context.Context, cmd *cli.Command) error {
 	bc := getBootstrap(cmd)
-	mcpServer := newMCPServer(bc)
+	options := mcpHTTPOptions{Addr: configuredListenAddress(bc, cmd)}
+	if cmd.Bool("with-consolidation") {
+		consolidation := consolidationOptionsFromCommand(cmd)
+		options.Consolidation = &consolidation
+	}
+	return serveMCPHTTP(ctx, bc, options)
+}
 
+type mcpHTTPOptions struct {
+	Addr          string
+	Consolidation *consolidationOptions
+}
+
+type consolidationOptions struct {
+	Interval   time.Duration
+	Namespaces []string
+}
+
+func consolidationOptionsFromCommand(cmd *cli.Command) consolidationOptions {
+	return consolidationOptions{
+		Interval:   cmd.Duration("consolidate-interval"),
+		Namespaces: cmd.StringSlice("consolidate-namespaces"),
+	}
+}
+
+func configuredListenAddress(bc *bootstrap.Context, cmd *cli.Command) string {
 	host := cmd.String("host")
-	addr := net.JoinHostPort(host, cmd.String("port"))
+	port := cmd.String("port")
+	if bc != nil && bc.Config != nil {
+		configuredHost, configuredPort := configuredHTTPAddress(bc.Config.HTTPAddr, host, port)
+		if !cmd.IsSet("host") {
+			host = configuredHost
+		}
+		if !cmd.IsSet("port") {
+			port = configuredPort
+		}
+	}
+	return net.JoinHostPort(host, port)
+}
+
+func serveMCPHTTP(ctx context.Context, bc *bootstrap.Context, options mcpHTTPOptions) error {
+	if bc == nil {
+		return fmt.Errorf("server is not initialized")
+	}
+	if bc.Auth != nil && bc.Auth.Mode() == "stdio" {
+		return fmt.Errorf("STASH_AUTH_MODE=stdio can only be used with `mcp execute`")
+	}
+
+	httpServer := &http.Server{
+		Addr:    options.Addr,
+		Handler: newStashHTTPHandler(bc),
+		// SSE 는 응답이 끝나지 않는 스트림이므로 쓰기 타임아웃을 걸지 않는다.
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	var wg sync.WaitGroup
+
+	if options.Consolidation != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			runConsolidationTicker(ctx, bc, *options.Consolidation)
+		}()
+	}
+
+	fmt.Printf("Starting Stash server on %s (MCP: /mcp, SSE: /sse, console: /, metrics: /metrics)\n", options.Addr)
+
+	errCh := make(chan error, 1)
+	go func() {
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errCh <- err
+			return
+		}
+		errCh <- nil
+	}()
+
+	select {
+	case <-ctx.Done():
+		fmt.Println("\nStash server shutting down")
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		_ = httpServer.Shutdown(shutdownCtx)
+		wg.Wait()
+		return nil
+	case err := <-errCh:
+		cancel()
+		wg.Wait()
+		return err
+	}
+}
+
+// newStashHTTPHandler keeps every HTTP surface on one listener. A nil Auth
+// provider is the intentional representation of STASH_AUTH_MODE=none.
+func newStashHTTPHandler(bc *bootstrap.Context) http.Handler {
+	mcpServer := newMCPServer(bc)
 
 	// 전송 방식 두 가지를 같은 포트에서 각자의 경로로 제공한다.
 	//
@@ -938,57 +1064,21 @@ func mcpServeCmd(ctx context.Context, cmd *cli.Command) error {
 	mux.HandleFunc("/.well-known/oauth-protected-resource/mcp", bc.Auth.HandleProtectedResourceMetadata)
 	mux.HandleFunc("/.well-known/oauth-protected-resource/sse", bc.Auth.HandleProtectedResourceMetadata)
 	mux.HandleFunc("/.well-known/oauth-protected-resource/message", bc.Auth.HandleProtectedResourceMetadata)
+	mux.HandleFunc("/.well-known/oauth-authorization-server", bc.Auth.HandleAuthorizationServerMetadata)
+	mux.HandleFunc("/.well-known/openid-configuration", bc.Auth.HandleAuthorizationServerMetadata)
+	mux.HandleFunc("/authorize", bc.Auth.HandleAuthorize)
+	mux.HandleFunc("/oauth/token", bc.Auth.HandleOAuthToken)
+	mux.HandleFunc("/oauth/register", bc.Auth.HandleOAuthRegister)
 	mux.HandleFunc("/auth/login", bc.Auth.HandleLogin)
 	mux.HandleFunc("/auth/callback", bc.Auth.HandleCallback)
+	mux.HandleFunc("/oauth/callback", bc.Auth.HandleCallback)
 	mux.HandleFunc("/auth/logout", bc.Auth.HandleLogout)
 	mux.HandleFunc("/auth/status", bc.Auth.HandleStatus)
 	mux.HandleFunc("/auth/token", bc.Auth.HandleGenerateToken)
+	registerOperationalRoutes(mux, bc)
 	mux.Handle("/", web.GetUIHandler())
 
-	httpServer := &http.Server{
-		Addr:    addr,
-		Handler: observability.InstrumentHTTP(mux),
-		// SSE 는 응답이 끝나지 않는 스트림이므로 쓰기 타임아웃을 걸지 않는다.
-		ReadHeaderTimeout: 10 * time.Second,
-	}
-
-	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-
-	var wg sync.WaitGroup
-
-	if cmd.Bool("with-consolidation") {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			runConsolidationTicker(ctx, bc, cmd)
-		}()
-	}
-
-	fmt.Printf("Starting MCP server on %s (streamable http: /mcp, sse: /sse + /message)\n", addr)
-
-	errCh := make(chan error, 1)
-	go func() {
-		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			errCh <- err
-			return
-		}
-		errCh <- nil
-	}()
-
-	select {
-	case <-ctx.Done():
-		fmt.Println("\nMCP server shutting down")
-		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer shutdownCancel()
-		_ = httpServer.Shutdown(shutdownCtx)
-		wg.Wait()
-		return nil
-	case err := <-errCh:
-		cancel()
-		wg.Wait()
-		return err
-	}
+	return observability.InstrumentHTTP(mux)
 }
 
 func mcpExecuteCmd(ctx context.Context, cmd *cli.Command) error {
@@ -1000,21 +1090,22 @@ func mcpExecuteCmd(ctx context.Context, cmd *cli.Command) error {
 	if cmd.Bool("with-consolidation") {
 		ctx2, cancel := context.WithCancel(ctx)
 		defer cancel()
+		consolidation := consolidationOptionsFromCommand(cmd)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			runConsolidationTicker(ctx2, bc, cmd)
+			runConsolidationTicker(ctx2, bc, consolidation)
 		}()
 	}
 
-	err := server.ServeStdio(mcpServer, server.WithStdioContextFunc(stdioContextFunc))
+	err := server.ServeStdio(mcpServer, server.WithStdioContextFunc(stdioContextFuncFor(bc.Auth)))
 	wg.Wait()
 	return err
 }
 
-func runConsolidationTicker(ctx context.Context, bc *bootstrap.Context, cmd *cli.Command) {
-	interval := cmd.Duration("consolidate-interval")
-	namespaces := cmd.StringSlice("consolidate-namespaces")
+func runConsolidationTicker(ctx context.Context, bc *bootstrap.Context, options consolidationOptions) {
+	interval := options.Interval
+	namespaces := options.Namespaces
 
 	if len(namespaces) == 0 {
 		namespaces = []string{"/"}

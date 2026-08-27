@@ -10,6 +10,7 @@ import (
 
 	"github.com/alash3al/stash/internal/auth"
 	"github.com/alash3al/stash/internal/bootstrap"
+	"github.com/alash3al/stash/internal/models"
 	"github.com/alash3al/stash/internal/observability"
 )
 
@@ -35,6 +36,11 @@ func authenticatedHTTP(provider *auth.Provider, next http.Handler) http.Handler 
 			observability.RecordAuthCheck(r.URL.Path, "disabled")
 			ctx := context.WithValue(r.Context(), keyMode, "local")
 			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
+		if !provider.HTTPAuthEnabled() {
+			observability.RecordAuthCheck(r.URL.Path, "unsupported")
+			http.Error(w, "STDIO authentication is only available on the STDIO transport", http.StatusNotImplemented)
 			return
 		}
 
@@ -92,6 +98,55 @@ func resolveNamespaces(ctx context.Context, nsRaw string) ([]string, error) {
 func namespaceOwnerKey(user string) string {
 	sum := sha256.Sum256([]byte("stash-namespace:" + user))
 	return "u_" + hex.EncodeToString(sum[:16])
+}
+
+// logicalNamespaceSlug converts an authenticated user's internal namespace
+// path back to the path exposed by the API. The /sso/u_<hash> prefix is an
+// implementation detail and must not become part of the user's namespace
+// paths or MCP prompts.
+func logicalNamespaceSlug(ctx context.Context, slug string) (string, bool) {
+	mode, _ := ctx.Value(keyMode).(string)
+	if mode != "remote" {
+		return slug, true
+	}
+
+	user, ok := ctx.Value(keySSOUser).(string)
+	if !ok || user == "" {
+		return "", false
+	}
+	prefix := "/sso/" + namespaceOwnerKey(user)
+	if slug == prefix {
+		return "/", true
+	}
+	if strings.HasPrefix(slug, prefix+"/") {
+		return strings.TrimPrefix(slug, prefix), true
+	}
+	// A remote query should only return this user's subtree. Do not expose an
+	// internal path if a future query accidentally violates that invariant.
+	return "", false
+}
+
+func logicalNamespaces(ctx context.Context, namespaces []models.Namespace) []models.Namespace {
+	mode, _ := ctx.Value(keyMode).(string)
+	if mode != "remote" {
+		return namespaces
+	}
+
+	result := make([]models.Namespace, 0, len(namespaces))
+	for _, namespace := range namespaces {
+		logicalSlug, ok := logicalNamespaceSlug(ctx, namespace.Slug)
+		if !ok {
+			continue
+		}
+		// Auto-created parent namespaces use their slug as the name. Keep those
+		// names logical too, while preserving user-provided display names.
+		if namespace.Name == namespace.Slug {
+			namespace.Name = logicalSlug
+		}
+		namespace.Slug = logicalSlug
+		result = append(result, namespace)
+	}
+	return result
 }
 
 func resolveSingleNamespace(ctx context.Context, raw string) (string, error) {

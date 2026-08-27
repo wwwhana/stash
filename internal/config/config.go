@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/caarlos0/env/v11"
@@ -40,6 +42,20 @@ type Config struct {
 	AuthMCPResourceURL string        `env:"STASH_AUTH_MCP_RESOURCE_URL" envDefault:""`
 	AuthCookieSecure   bool          `env:"STASH_AUTH_COOKIE_SECURE" envDefault:"true"`
 	AuthTokenTTL       time.Duration `env:"STASH_AUTH_TOKEN_TTL" envDefault:"720h"`
+	AuthStdioToken     string        `env:"STASH_AUTH_STDIO_TOKEN" envDefault:""`
+
+	// OAuth-prefixed aliases make the profile explicit while preserving the
+	// original STASH_AUTH_* names used by existing deployments.
+	AuthOAuthIssuer          string        `env:"STASH_AUTH_OAUTH_ISSUER" envDefault:""`
+	AuthOAuthClientID        string        `env:"STASH_AUTH_OAUTH_CLIENT_ID" envDefault:""`
+	AuthOAuthMCPClientID     string        `env:"STASH_AUTH_OAUTH_MCP_CLIENT_ID" envDefault:""`
+	AuthOAuthClientSecret    string        `env:"STASH_AUTH_OAUTH_CLIENT_SECRET" envDefault:""`
+	AuthOAuthRedirectURL     string        `env:"STASH_AUTH_OAUTH_REDIRECT_URL" envDefault:""`
+	AuthOAuthAPISecret       string        `env:"STASH_AUTH_OAUTH_API_SECRET" envDefault:""`
+	AuthOAuthResourceURL     string        `env:"STASH_AUTH_OAUTH_RESOURCE_URL" envDefault:""`
+	AuthOAuthCookieSecureRaw string        `env:"STASH_AUTH_OAUTH_COOKIE_SECURE" envDefault:""`
+	AuthOAuthTokenTTL        time.Duration `env:"STASH_AUTH_OAUTH_TOKEN_TTL" envDefault:"0s"`
+	AuthOAuthStdioToken      string        `env:"STASH_AUTH_OAUTH_STDIO_TOKEN" envDefault:""`
 
 	// Consolidation
 	ConsolidationBatchSize           int     `env:"STASH_CONSOLIDATION_BATCH_SIZE" envDefault:"100"`
@@ -68,15 +84,61 @@ func NewFromFile(filename string) (*Config, error) {
 	if err := env.ParseWithOptions(cfg, opts); err != nil {
 		return nil, err
 	}
+	cfg.applyAuthAliases()
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 	return cfg, nil
 }
 
+func (c *Config) applyAuthAliases() {
+	if c.AuthIssuer == "" {
+		c.AuthIssuer = c.AuthOAuthIssuer
+	}
+	if c.AuthClientID == "" {
+		c.AuthClientID = c.AuthOAuthClientID
+	}
+	if c.AuthMCPClientID == "" {
+		c.AuthMCPClientID = c.AuthOAuthMCPClientID
+	}
+	if c.AuthClientSecret == "" {
+		c.AuthClientSecret = c.AuthOAuthClientSecret
+	}
+	if c.AuthRedirectURL == "" {
+		c.AuthRedirectURL = c.AuthOAuthRedirectURL
+	}
+	if c.AuthAPISecret == "" {
+		c.AuthAPISecret = c.AuthOAuthAPISecret
+	}
+	if c.AuthMCPResourceURL == "" {
+		c.AuthMCPResourceURL = c.AuthOAuthResourceURL
+	}
+	if c.AuthStdioToken == "" {
+		c.AuthStdioToken = c.AuthOAuthStdioToken
+	}
+	if raw := strings.TrimSpace(c.AuthOAuthCookieSecureRaw); raw != "" {
+		if parsed, err := strconv.ParseBool(raw); err == nil {
+			c.AuthCookieSecure = parsed
+		}
+	}
+	if c.AuthOAuthTokenTTL > 0 {
+		c.AuthTokenTTL = c.AuthOAuthTokenTTL
+	}
+}
+
 // Validate rejects configurations that would otherwise fail much later during
 // database startup or the first MCP call.
 func (c *Config) Validate() error {
+	switch strings.ToLower(strings.TrimSpace(c.AuthMode)) {
+	case "", "none", "oauth", "oidc", "stdio":
+	default:
+		return fmt.Errorf("STASH_AUTH_MODE must be one of none, oauth, oidc, or stdio")
+	}
+	if raw := strings.TrimSpace(c.AuthOAuthCookieSecureRaw); raw != "" {
+		if _, err := strconv.ParseBool(raw); err != nil {
+			return fmt.Errorf("STASH_AUTH_OAUTH_COOKIE_SECURE must be true or false")
+		}
+	}
 	if c.VectorDim <= 0 {
 		return fmt.Errorf("STASH_VECTOR_DIM must be greater than zero")
 	}

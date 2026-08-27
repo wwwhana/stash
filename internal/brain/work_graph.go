@@ -14,10 +14,11 @@ import (
 )
 
 var (
-	ErrWorkItemNotFound = fmt.Errorf("brain: work item not found")
-	ErrWorktreeNotFound = fmt.Errorf("brain: worktree not found")
-	ErrWorkEdgeNotFound = fmt.Errorf("brain: work item edge not found")
-	ErrWorkItemCycle    = fmt.Errorf("brain: work item dependency would create a cycle")
+	ErrWorkItemNotFound    = fmt.Errorf("brain: work item not found")
+	ErrWorktreeNotFound    = fmt.Errorf("brain: worktree not found")
+	ErrWorkEdgeNotFound    = fmt.Errorf("brain: work item edge not found")
+	ErrWorkItemCycle       = fmt.Errorf("brain: work item dependency would create a cycle")
+	ErrWorkPlanManagedItem = fmt.Errorf("brain: work plan items must be changed with the work plan API")
 )
 
 const workItemColumns = `id, namespace_id, goal_id, parent_id, issue_key, issue_type, labels, reporter, title, description,
@@ -37,11 +38,12 @@ var workItemStatuses = map[string]struct{}{
 }
 
 var workItemTypes = map[string]struct{}{
-	"task":     {},
-	"bug":      {},
-	"feature":  {},
-	"chore":    {},
-	"question": {},
+	"task":      {},
+	"bug":       {},
+	"feature":   {},
+	"chore":     {},
+	"question":  {},
+	"component": {},
 }
 
 var worktreeStatuses = map[string]struct{}{
@@ -244,6 +246,63 @@ type WorkItemInput struct {
 	DueAt       *time.Time
 }
 
+type workItemRowWriter interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+func normalizeWorkItemInput(input WorkItemInput) (WorkItemInput, error) {
+	if input.IssueType == "" {
+		input.IssueType = "task"
+	}
+	labels, err := normalizeWorkItemLabels(input.Labels)
+	if err != nil {
+		return WorkItemInput{}, err
+	}
+	if err := validateWorkItemType(input.IssueType); err != nil {
+		return WorkItemInput{}, err
+	}
+	if err := validateContent(input.Title); err != nil {
+		return WorkItemInput{}, fmt.Errorf("brain: work item title: %w", err)
+	}
+	if len(input.Description) > maxContentLen {
+		return WorkItemInput{}, ErrContentTooLong
+	}
+	if err := validateWorkItemStatus(input.Status); err != nil {
+		return WorkItemInput{}, err
+	}
+	if err := validatePosition(input.Position); err != nil {
+		return WorkItemInput{}, err
+	}
+	input.Labels = labels
+	input.Reporter = strings.TrimSpace(input.Reporter)
+	input.Owner = strings.TrimSpace(input.Owner)
+	return input, nil
+}
+
+func (b *Brain) insertWorkItem(ctx context.Context, writer workItemRowWriter, namespaceID int64, input WorkItemInput) (*models.WorkItem, error) {
+	input, err := normalizeWorkItemInput(input)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateWorkReferences(ctx, b, namespaceID, input.GoalID, input.ParentID); err != nil {
+		return nil, err
+	}
+
+	return scanWorkItem(writer.QueryRow(ctx,
+		`WITH next_id AS (
+			SELECT nextval(pg_get_serial_sequence('work_items', 'id')) AS id
+		)
+		INSERT INTO work_items (id, namespace_id, goal_id, parent_id, issue_key, issue_type, labels, reporter, title, description, status, priority, position, owner, due_at, started_at, completed_at)
+		SELECT id, $1, $2, $3, 'W-' || lpad(id::text, 6, '0'), $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+		       CASE WHEN $9 = 'doing' THEN now() ELSE NULL END,
+		       CASE WHEN $9 = 'done' THEN now() ELSE NULL END
+		FROM next_id
+		RETURNING `+workItemColumns,
+		namespaceID, input.GoalID, input.ParentID, input.IssueType, input.Labels, input.Reporter,
+		input.Title, input.Description, input.Status, input.Priority, input.Position, input.Owner, input.DueAt,
+	))
+}
+
 // CreateWorkItem creates an operational task under an optional goal or work item.
 // It remains as a small compatibility wrapper for callers that do not use issue fields.
 func (b *Brain) CreateWorkItem(ctx context.Context, namespaceID int64, goalID, parentID *int64, title, description, status string, priority int, position float64, owner string, dueAt *time.Time) (*models.WorkItem, error) {
@@ -256,45 +315,18 @@ func (b *Brain) CreateWorkItem(ctx context.Context, namespaceID int64, goalID, p
 
 // CreateWorkItemWithDetails creates an issue/task with tracker metadata.
 func (b *Brain) CreateWorkItemWithDetails(ctx context.Context, namespaceID int64, input WorkItemInput) (*models.WorkItem, error) {
-	if input.IssueType == "" {
-		input.IssueType = "task"
+	if err := b.ensureOrdinaryWorkItem(ctx, input); err != nil {
+		return nil, err
 	}
-	labels, err := normalizeWorkItemLabels(input.Labels)
+	item, err := b.insertWorkItem(ctx, b.pool, namespaceID, input)
 	if err != nil {
 		return nil, err
 	}
-	if err := validateWorkItemType(input.IssueType); err != nil {
+	items, err := b.attachWorktreeIDs(ctx, []models.WorkItem{*item})
+	if err != nil {
 		return nil, err
 	}
-	if err := validateContent(input.Title); err != nil {
-		return nil, fmt.Errorf("brain: work item title: %w", err)
-	}
-	if len(input.Description) > maxContentLen {
-		return nil, ErrContentTooLong
-	}
-	if err := validateWorkItemStatus(input.Status); err != nil {
-		return nil, err
-	}
-	if err := validatePosition(input.Position); err != nil {
-		return nil, err
-	}
-	if err := validateWorkReferences(ctx, b, namespaceID, input.GoalID, input.ParentID); err != nil {
-		return nil, err
-	}
-
-	return scanWorkItem(b.pool.QueryRow(ctx,
-		`WITH next_id AS (
-			SELECT nextval(pg_get_serial_sequence('work_items', 'id')) AS id
-		)
-		INSERT INTO work_items (id, namespace_id, goal_id, parent_id, issue_key, issue_type, labels, reporter, title, description, status, priority, position, owner, due_at, started_at, completed_at)
-		SELECT id, $1, $2, $3, 'W-' || lpad(id::text, 6, '0'), $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-		       CASE WHEN $9 = 'doing' THEN now() ELSE NULL END,
-		       CASE WHEN $9 = 'done' THEN now() ELSE NULL END
-		FROM next_id
-		RETURNING `+workItemColumns,
-		namespaceID, input.GoalID, input.ParentID, input.IssueType, labels, strings.TrimSpace(input.Reporter),
-		input.Title, input.Description, input.Status, input.Priority, input.Position, input.Owner, input.DueAt,
-	))
+	return &items[0], nil
 }
 
 // ListWorkItems lists active work items for namespaces, optionally by status or worktree.
@@ -322,7 +354,9 @@ func (b *Brain) ListWorkItemsFiltered(ctx context.Context, namespaceSlugs []stri
 	label = strings.TrimSpace(label)
 	page = b.sanitizePage(page)
 
-	query := `SELECT ` + workItemColumns + ` FROM work_items WHERE namespace_id = ANY($1) AND deleted_at IS NULL`
+	query := `SELECT ` + workItemColumns + ` FROM work_items
+		WHERE namespace_id = ANY($1) AND deleted_at IS NULL
+		  AND NOT EXISTS (SELECT 1 FROM work_plan_items pi WHERE pi.work_item_id = work_items.id)`
 	args := []any{nsIDs}
 	arg := 2
 	if status != "" {
@@ -419,46 +453,16 @@ func (b *Brain) UpdateWorkItem(ctx context.Context, id int64, title, description
 
 // UpdateWorkItemWithDetails replaces issue fields and records lifecycle timestamps.
 func (b *Brain) UpdateWorkItemWithDetails(ctx context.Context, id int64, input WorkItemInput) (*models.WorkItem, error) {
-	if input.IssueType == "" {
-		input.IssueType = "task"
-	}
-	labels, err := normalizeWorkItemLabels(input.Labels)
+	managed, err := b.isWorkPlanItem(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if err := validateWorkItemType(input.IssueType); err != nil {
-		return nil, err
+	if managed {
+		return nil, ErrWorkPlanManagedItem
 	}
-	if err := validateContent(input.Title); err != nil {
-		return nil, fmt.Errorf("brain: work item title: %w", err)
-	}
-	if len(input.Description) > maxContentLen {
-		return nil, ErrContentTooLong
-	}
-	if err := validateWorkItemStatus(input.Status); err != nil {
-		return nil, err
-	}
-	if err := validatePosition(input.Position); err != nil {
-		return nil, err
-	}
-
-	item, err := scanWorkItem(b.pool.QueryRow(ctx,
-		`UPDATE work_items
-		 SET issue_type = $2, labels = $3, reporter = $4, title = $5, description = $6, status = $7, priority = $8, position = $9,
-		     owner = $10, due_at = $11,
-		     started_at = CASE WHEN $7 = 'doing' THEN COALESCE(started_at, now()) ELSE started_at END,
-		     completed_at = CASE WHEN $7 = 'done' THEN COALESCE(completed_at, now()) ELSE NULL END,
-		     updated_at = now()
-		 WHERE id = $1 AND deleted_at IS NULL
-		 RETURNING `+workItemColumns,
-		id, input.IssueType, labels, strings.TrimSpace(input.Reporter), input.Title, input.Description,
-		input.Status, input.Priority, input.Position, input.Owner, input.DueAt,
-	))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrWorkItemNotFound
-	}
+	item, err := b.updateWorkItem(ctx, b.pool, id, input)
 	if err != nil {
-		return nil, fmt.Errorf("update work item: %w", err)
+		return nil, err
 	}
 	items, err := b.attachWorktreeIDs(ctx, []models.WorkItem{*item})
 	if err != nil {
@@ -467,8 +471,46 @@ func (b *Brain) UpdateWorkItemWithDetails(ctx context.Context, id int64, input W
 	return &items[0], nil
 }
 
+func (b *Brain) updateWorkItem(ctx context.Context, writer workItemRowWriter, id int64, input WorkItemInput) (*models.WorkItem, error) {
+	input, err := normalizeWorkItemInput(input)
+	if err != nil {
+		return nil, err
+	}
+
+	item, err := scanWorkItem(writer.QueryRow(ctx,
+		`UPDATE work_items
+		 SET issue_type = $2, labels = $3, reporter = $4, title = $5, description = $6, status = $7, priority = $8, position = $9,
+		     owner = $10, due_at = $11,
+		     started_at = CASE WHEN $7 = 'doing' THEN COALESCE(started_at, now()) ELSE started_at END,
+		     completed_at = CASE WHEN $7 = 'done' THEN COALESCE(completed_at, now()) ELSE NULL END,
+		     updated_at = now()
+		 WHERE id = $1 AND deleted_at IS NULL
+		 RETURNING `+workItemColumns,
+		id, input.IssueType, input.Labels, input.Reporter, input.Title, input.Description,
+		input.Status, input.Priority, input.Position, input.Owner, input.DueAt,
+	))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrWorkItemNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("update work item: %w", err)
+	}
+	return item, nil
+}
+
 // DeleteWorkItem soft-deletes a work item and its active descendants atomically.
 func (b *Brain) DeleteWorkItem(ctx context.Context, id int64) error {
+	managed, err := b.isWorkPlanItem(ctx, id)
+	if err != nil {
+		return err
+	}
+	if managed {
+		return ErrWorkPlanManagedItem
+	}
+	return b.deleteWorkItem(ctx, id)
+}
+
+func (b *Brain) deleteWorkItem(ctx context.Context, id int64) error {
 	tx, err := b.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin delete work item: %w", err)
@@ -495,6 +537,33 @@ func (b *Brain) DeleteWorkItem(ctx context.Context, id int64) error {
 		return fmt.Errorf("commit delete work item: %w", err)
 	}
 	return nil
+}
+
+func (b *Brain) ensureOrdinaryWorkItem(ctx context.Context, input WorkItemInput) error {
+	if input.IssueType == "component" {
+		return ErrWorkPlanManagedItem
+	}
+	if input.ParentID == nil {
+		return nil
+	}
+	managed, err := b.isWorkPlanItem(ctx, *input.ParentID)
+	if err != nil {
+		return err
+	}
+	if managed {
+		return ErrWorkPlanManagedItem
+	}
+	return nil
+}
+
+func (b *Brain) isWorkPlanItem(ctx context.Context, id int64) (bool, error) {
+	var managed bool
+	if err := b.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM work_plan_items WHERE work_item_id = $1)`, id,
+	).Scan(&managed); err != nil {
+		return false, fmt.Errorf("check work plan item: %w", err)
+	}
+	return managed, nil
 }
 
 // CreateWorkItemComment appends a note to an active issue.

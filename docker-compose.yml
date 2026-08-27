@@ -15,22 +15,12 @@ services:
       retries: 5
     restart: unless-stopped
 
-  # Stash HTTP/MCP servers + background consolidation
+  # Stash server + background consolidation
   stash:
     build: .
-    command:
-      - "serve"
-      - "--http-host"
-      - "0.0.0.0"
-      - "--http-port"
-      - "9090"
-      - "--mcp-host"
-      - "0.0.0.0"
-      - "--mcp-port"
-      - "8080"
+    command: ["serve"]
     ports:
       - "8080:8080"
-      - "9090:9090"
     environment:
       # Required
       STASH_POSTGRES_DSN: ${STASH_POSTGRES_DSN:-postgresql://stash:stash_dev_password@postgres:5432/stash?sslmode=disable}
@@ -42,9 +32,10 @@ services:
       STASH_EMBEDDING_MODEL: ${STASH_EMBEDDING_MODEL:-text-embedding-3-small}
       STASH_REASONER_MODEL: ${STASH_REASONER_MODEL:-gpt-4o-mini}
       STASH_CONTEXT_TTL: 1h
-      STASH_HTTP_ADDR: ${STASH_HTTP_ADDR:-:9090}
+      STASH_HTTP_ADDR: ${STASH_HTTP_ADDR:-:8080}
       STASH_LOG_LEVEL: info
       STASH_LOG_FORMAT: text
+      # none is safe for the bundled local sample; use oauth for a remote MCP.
       STASH_AUTH_MODE: ${STASH_AUTH_MODE:-none}
       STASH_AUTH_ISSUER: ${STASH_AUTH_ISSUER:-}
       STASH_AUTH_CLIENT_ID: ${STASH_AUTH_CLIENT_ID:-}
@@ -55,6 +46,17 @@ services:
       STASH_AUTH_MCP_RESOURCE_URL: ${STASH_AUTH_MCP_RESOURCE_URL:-}
       STASH_AUTH_COOKIE_SECURE: ${STASH_AUTH_COOKIE_SECURE:-true}
       STASH_AUTH_TOKEN_TTL: ${STASH_AUTH_TOKEN_TTL:-720h}
+      STASH_AUTH_STDIO_TOKEN: ${STASH_AUTH_STDIO_TOKEN:-}
+      STASH_AUTH_OAUTH_ISSUER: ${STASH_AUTH_OAUTH_ISSUER:-}
+      STASH_AUTH_OAUTH_CLIENT_ID: ${STASH_AUTH_OAUTH_CLIENT_ID:-}
+      STASH_AUTH_OAUTH_MCP_CLIENT_ID: ${STASH_AUTH_OAUTH_MCP_CLIENT_ID:-}
+      STASH_AUTH_OAUTH_CLIENT_SECRET: ${STASH_AUTH_OAUTH_CLIENT_SECRET:-}
+      STASH_AUTH_OAUTH_REDIRECT_URL: ${STASH_AUTH_OAUTH_REDIRECT_URL:-}
+      STASH_AUTH_OAUTH_API_SECRET: ${STASH_AUTH_OAUTH_API_SECRET:-}
+      STASH_AUTH_OAUTH_RESOURCE_URL: ${STASH_AUTH_OAUTH_RESOURCE_URL:-}
+      STASH_AUTH_OAUTH_COOKIE_SECURE: ${STASH_AUTH_OAUTH_COOKIE_SECURE:-}
+      STASH_AUTH_OAUTH_TOKEN_TTL: ${STASH_AUTH_OAUTH_TOKEN_TTL:-}
+      STASH_AUTH_OAUTH_STDIO_TOKEN: ${STASH_AUTH_OAUTH_STDIO_TOKEN:-}
       # Optional consolidation configs
       STASH_CONSOLIDATION_BATCH_SIZE: 100
       STASH_CONSOLIDATION_SIMILARITY_THRESHOLD: 0.85

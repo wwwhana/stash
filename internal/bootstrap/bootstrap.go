@@ -56,6 +56,7 @@ func New(ctx context.Context) (*Context, error) {
 		MCPResourceURL: cfg.AuthMCPResourceURL,
 		CookieSecure:   cfg.AuthCookieSecure,
 		APITokenTTL:    cfg.AuthTokenTTL,
+		StdioToken:     cfg.AuthStdioToken,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("initialize authentication: %w", err)

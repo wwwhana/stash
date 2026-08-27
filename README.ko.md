@@ -76,18 +76,33 @@ claude mcp add stash http://localhost:8080/mcp
 }
 ```
 
-원격 MCP 서버를 OIDC로 보호할 때는 Streamable HTTP와 OAuth를 사용합니다:
+원격 MCP 서버를 OAuth로 보호할 때는 Streamable HTTP를 사용합니다:
 ```bash
 codex mcp add stash --url https://stash.example.com/mcp --oauth-client-id stash-codex
 codex mcp login stash
 ```
 
-`STASH_AUTH_MODE=oidc`와 발급자·클라이언트 설정을 지정하고,
-Codex에서 사용할 OAuth 클라이언트를 `STASH_AUTH_MCP_CLIENT_ID`에 넣습니다.
+`STASH_AUTH_MODE=oauth`, OIDC 발급자, 브라우저 클라이언트 설정,
+공개 `/mcp` 주소인 `STASH_AUTH_MCP_RESOURCE_URL`을 지정합니다. Stash가
+MCP 보호 리소스 정보와 OAuth 인가 코드·PKCE 흐름을 제공하고, 실제 사용자
+로그인은 설정한 OIDC 제공자(예: Authentik)가 처리합니다. 동적 공개 클라이언트
+등록은 `/oauth/register`에서 지원합니다.
+
+인증 프로필은 세 가지입니다.
+
+- `none`: HTTP 인증 없음. 격리된 로컬 실행에서만 사용합니다.
+- `oauth` (기존 `oidc`도 호환): Streamable HTTP와 SSE에 OAuth 2.1 Bearer
+  토큰을 사용합니다. 보호 리소스 정보, PKCE, 갱신 토큰 교체, 동적 클라이언트
+  등록을 지원합니다.
+- `stdio`: MCP OAuth 탐색을 사용하지 않습니다. 로컬 프로세스를 신뢰하거나
+  `STASH_AUTH_STDIO_TOKEN`으로 사용자 범위를 확인할 수 있습니다.
+
+HTTP MCP 요청은 `Authorization: Bearer <access-token>` 헤더를 보내야 합니다.
+화면에 로그인할 때 쓰는 세션 쿠키는 표준 MCP 클라이언트 인증 수단이 아닙니다.
 
 ## 운영 지표와 상태 확인
 
-`stash serve`를 실행하면 MCP와 함께 운영용 HTTP 포트(기본 `:9090`)가 열립니다. Prometheus 지표는 `http://localhost:9090/metrics`에서 확인하고, `/healthz`는 데이터베이스 연결을, `/readyz`는 준비 상태를 확인합니다. HTTP 요청, 인증 결과, MCP 도구 호출, 네임스페이스 범위 적용, 기억 통합 작업을 기록합니다. 요청·인증·도구·범위 지표의 라벨에는 사용자 ID와 원본 네임스페이스 이름을 넣지 않습니다. `mcp serve`와 `http serve`를 별도 프로세스로 실행하면 카운터도 나뉘므로, 전체 흐름을 한 번에 보려면 `stash serve`를 사용하세요.
+`stash serve`는 MCP, 관리 화면, OAuth 경로, 운영 지표, 상태 확인을 하나의 HTTP 포트(기본 `:8080`)에서 제공합니다. Prometheus 지표는 `http://localhost:8080/metrics`에서 확인하고, `/healthz`는 데이터베이스 연결을, `/readyz`는 준비 상태를 확인합니다. HTTP 요청, 인증 결과, MCP 도구 호출, 네임스페이스 범위 적용, 기억 통합 작업을 기록합니다. 요청·인증·도구·범위 지표의 라벨에는 사용자 ID와 원본 네임스페이스 이름을 넣지 않습니다.
 
 ### 3. agy (Antigravity)
 `~/.gemini/config/mcp_config.json`을 통해 설정합니다:
@@ -139,6 +154,8 @@ Stash는 AI 에이전트와 현실 세계 사이의 인지적 계층(Cognitive l
 
 작업 카드는 기억 데이터와 분리해 저장하고, 목표·작업·의존성·워크트리·작업 이벤트를 하나의 그래프로 연결할 수 있습니다. 이슈 종류(버그·기능·작업), 라벨, 담당자, 댓글도 함께 관리하므로 별도 서비스 없이 로컬 이슈 트래커로 사용할 수 있습니다. 같은 데이터가 상태별 칸반 보드와 의존성 그래프로 표시됩니다. 작업 카드는 관련 사실·실패·가설에도 연결할 수 있어, 에이전트가 작업을 이어받을 때 필요한 근거를 함께 불러옵니다.
 
+소유자가 읽는 작업 계획은 바뀌는 `PLAN.md` 대신 작업 계획 API에 저장합니다. 계획은 5~9개의 고정된 구성 요소로 만들고, 각 구성 요소에는 맡는 경로, 실제 작업, 선행 관계, 워크트리, 구현 전 결정 내용을 넣습니다. `get_work_plan`이 모두가 보는 현재 계획이며, `create_plan_component`, `update_plan_component`, `create_plan_task`, `update_plan_task`, 작업 상태 도구, `link_plan_components`, `record_plan_decision`으로 갱신합니다. `validate_work_plan`은 설정된 Reasoner 모델로 계획의 의미를 검사하고 최신 결과를 저장합니다. 임베딩 모델은 이때 사용하지 않습니다. 계획 내용이 바뀌면 `get_work_plan.validation.stale`이 이전 검사 결과임을 표시합니다. 일반 이슈 보드는 별도의 로컬 이슈용이며 계획에 속한 카드를 섞어 보여주지 않습니다.
+
 로컬 에이전트는 현재 저장소의 워크트리를 Stash에 동기화할 수 있습니다. 코드와 실제 변경 내용은 Git에 남고, Stash에는 경로·브랜치·커밋·상태·작업 기록이 저장됩니다.
 
 ```bash
@@ -149,7 +166,21 @@ stash issue list --namespaces / --status doing --label auth
 stash issue comment add W-000001 --body "재현 조건을 확인했습니다"
 ```
 
-에이전트 규칙 파일 예시는 [docs/AGENT.md](docs/AGENT.md)에서 복사할 수 있습니다. MCP 클라이언트에서는 `create_work_item`, `list_work_items`, `add_work_item_dependency`, `get_work_graph`, `add_work_item_comment`, `list_work_item_comments`, `link_work_item_memory`, `list_work_item_memory_links`, `list_worktrees`, `record_work_event` 도구를 사용합니다. `/`는 이미 만들어진 네임스페이스를 지정할 때만 사용하세요.
+영문 에이전트 규칙 예시는 [docs/AGENT.md](docs/AGENT.md)에서 복사할 수 있습니다. 작업 계획에는 `get_work_plan`, `validate_work_plan`, `create_plan_component`, `update_plan_component`, `create_plan_task`, `update_plan_task`, `start_plan_task`, `complete_plan_task`, `block_plan_task`, `unblock_plan_task`, `set_plan_component_paths`, `link_plan_components`, `record_plan_decision`을 사용합니다. `create_work_item`, `list_work_items`, `add_work_item_dependency`, `get_work_graph`, `add_work_item_comment`, `list_work_item_comments`, `link_work_item_memory`, `list_work_item_memory_links`, `list_worktrees`, `record_work_event`는 로컬 이슈 관리에 계속 사용할 수 있습니다. 처음 한 번 `init`을 호출하면 기본 작업 공간이 만들어집니다.
+
+### 작업 계획 스킬
+
+같은 MCP 작업 절차를 Codex와 Claude 플러그인으로 제공합니다. 먼저 `stash`라는 이름으로 Stash MCP 서버를 등록한 뒤 이 저장소에서 플러그인을 설치합니다.
+
+```bash
+claude plugin marketplace add wwwhana/stash
+claude plugin install stash-work-plan@stash-tools
+
+codex plugin marketplace add wwwhana/stash
+codex plugin add stash-work-plan@stash-tools
+```
+
+Claude에서는 `/stash-work-plan:stash-work-plan`, Codex에서는 `$stash-work-plan`으로 실행합니다.
 
 ## 라이선스
 

@@ -1,0 +1,11 @@
+interface:
+  display_name: "Stash Work Plan"
+  short_description: "Manage Stash living plans through MCP"
+  default_prompt: "Use $stash-work-plan to resume and update this project work plan."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "stash"
+      description: "Configured Stash MCP server with work-plan tools"
+policy:
+  allow_implicit_invocation: true

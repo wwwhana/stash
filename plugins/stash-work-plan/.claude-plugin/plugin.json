@@ -1,0 +1,14 @@
+{
+  "name": "stash-work-plan",
+  "version": "0.1.0",
+  "description": "Manage a shared component-oriented work plan through a configured Stash MCP server.",
+  "author": {
+    "name": "wwwhana",
+    "url": "https://github.com/wwwhana"
+  },
+  "homepage": "https://github.com/wwwhana/stash",
+  "repository": "https://github.com/wwwhana/stash",
+  "license": "Apache-2.0",
+  "keywords": ["stash", "mcp", "planning", "worktrees"],
+  "skills": "./skills/"
+}

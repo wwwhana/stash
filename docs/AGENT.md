@@ -1,86 +1,61 @@
-# Stash 에이전트 작업 규칙
+# Stash Work Plan Convention
 
-이 파일을 작업 저장소의 `AGENTS.md` 또는 에이전트 규칙 파일로 복사해 사용합니다. Stash는 코드 파일을 대신 보관하지 않습니다. 코드는 Git에 두고, Stash에는 이슈·작업 상태·의존성·워크트리·작업 기록과 그 근거를 저장합니다.
+Maintain the Stash work plan as the living plan. The project owner reads the Plan view, not an agent's private checklist, so write it for the owner. Stash is the source of current plan state; Git remains the source of code and diffs.
 
-## 세션 시작
+If the `stash-work-plan` skill is installed, load it before changing plan state. It contains the MCP workflow and the same convention described here.
 
-1. `init`을 호출합니다.
-2. `list_namespaces`로 사용할 네임스페이스가 있는지 확인합니다. 없으면 먼저 만듭니다.
-3. 프로젝트에 해당하는 정확한 네임스페이스로 `recall`을 호출합니다.
-4. `list_work_items`로 진행 중인 이슈와 막힌 이슈를 확인합니다.
-5. `list_worktrees`로 현재 연결된 워크트리와 마지막 상태를 확인합니다.
+## Component map
 
-## 작업 중
+- Plan nodes are **components of the system being built**, not phases, sprints, or a chronological to-do list. Create them with `create_plan_component`.
+- Keep the map at **5 to 9 components** regardless of repository size. Grow child tasks instead of adding cards. Split a component only when one agent could no longer own it for a session.
+- A component's `issue_key` is its stable identifier. Do not reuse it for a different component. Add or remove nodes instead of changing their identity.
+- Use `update_plan_component` to clarify a component's wording, completion condition, implementation note, or owned paths without changing its stable identity.
+- Use `delete_plan_component` or `delete_plan_task` to remove an obsolete node. Do not recycle it by changing its purpose.
+- Titles are verb-led, plain-language, and concrete enough for the owner to recognize completion. Prefer `Read alerts out loud` over `Audio pipeline`, and never use vague labels such as `Decide what matters`.
+- Put implementation wording in `technical_details`, not in the title. Put the owner-facing scope and done condition in `description`.
 
-- 새 버그·기능·작업은 `create_work_item`으로 만듭니다. `issue_type`, `labels`, `owner`, `reporter`를 함께 기록합니다.
-- 선행 작업이 있으면 `add_work_item_dependency`를 사용합니다. `from_item_id`가 `to_item_id`를 막는 방향입니다.
-- 작업을 시작·검토·완료할 때 `update_work_item`으로 상태를 바꿉니다. 보드의 상태는 `backlog`, `ready`, `doing`, `blocked`, `review`, `done`, `canceled` 중 하나를 사용합니다.
-- 판단 근거나 실패 원인은 `link_work_item_memory`으로 해당 이슈에 연결하고, `list_work_item_memory_links`로 연결된 근거를 확인합니다.
-- 결정·진행 상황·재현 조건은 `add_work_item_comment`와 `record_work_event`로 남깁니다.
+## Tasks and live state
 
-## Git 워크트리
+- Create executable child tasks with `create_plan_task` and its `component_id`. A component is the map; its tasks are the work.
+- Use `update_plan_task` when a task's outcome, completion condition, implementation note, or provenance needs clarification. It keeps the component, issue key, state, agents, and worktree links intact.
+- Map task state as follows: `ready` is not started, `doing` is in progress, `done` is complete, and `blocked` is stuck. Use `review` only when the owner explicitly needs a review state.
+- Call `start_plan_task` **before** implementation. It records `doing`, the task's `owner`, and immutable `started_by` data immediately.
+- Call `complete_plan_task` the moment the task is complete. It retains who started and completed the task. Call `block_plan_task` as soon as it is stuck, and `unblock_plan_task` when the blocker is removed.
+- Never batch plan updates at the end of a session. Every state change is an API write when it happens.
+- For an open task, set `provenance` to `agent` when an agent is declaring its imminent build intent, or `roadmap` when the task comes from durable planning material. Leave it empty only when neither is true.
 
-작업을 시작하기 전에 로컬 브리지가 워크트리를 동기화하게 합니다.
+## Dependencies, paths, and worktrees
 
-```bash
-stash worktree sync --repo . --namespace /projects/myapp --agent-id my-agent
-```
-
-반환된 워크트리 ID를 이슈에 `attach_worktree_to_item`으로 연결합니다. 코드와 diff는 Git에서 확인하고, Stash에서는 경로·브랜치·커밋·상태·작업 기록을 확인합니다. 작업이 끝나거나 워크트리가 사라지면 다시 동기화합니다.
-
-## 세션 종료
-
-1. 이슈 상태와 다음 작업을 `update_work_item`으로 저장합니다.
-2. 인수인계에 필요한 내용을 `add_work_item_comment`로 남깁니다.
-3. 오래 보관해야 할 사실은 `remember`로 저장하고, 작업 중인 짧은 초점은 `set_context`로 저장합니다.
-4. 다음 에이전트가 바로 이어서 작업할 수 있도록 연결된 이슈 키와 워크트리 경로를 함께 남깁니다.
-
-작업 그래프는 연결 리스트가 아닙니다. `blocks` 의존성은 방향 있는 그래프이며, 한 작업이 여러 작업을 막거나 여러 작업이 하나의 작업을 막을 수 있습니다. `relates_to`는 작업 사이의 일반적인 관련성을 표시합니다.
-
----
-
-# Stash Agent Rules
-
-Copy this file into the target repository as `AGENTS.md` or include it in the
-agent's project rules. Stash does not replace Git as the source of code. Git
-keeps the code and diffs; Stash keeps issues, work state, dependencies,
-worktrees, activity, and the evidence attached to them.
-
-## Session start
-
-1. Call `init`.
-2. Call `list_namespaces` and verify the namespace exists. Create it first if it does not.
-3. Call `recall` in the exact project namespace.
-4. Call `list_work_items` to see active and blocked issues.
-5. Call `list_worktrees` to see connected worktrees and their last status.
-
-## While working
-
-- Create bugs, features, and tasks with `create_work_item`; record `issue_type`, `labels`, `owner`, and `reporter`.
-- Connect prerequisites with `add_work_item_dependency`. `from_item_id` blocks `to_item_id`.
-- Use `update_work_item` when work starts, moves to review, or finishes. Use one of `backlog`, `ready`, `doing`, `blocked`, `review`, `done`, or `canceled`.
-- Attach evidence and lessons with `link_work_item_memory`; inspect linked evidence with `list_work_item_memory_links`.
-- Record decisions and progress with `add_work_item_comment` and `record_work_event`.
-
-## Git worktrees
-
-Sync local worktrees before starting work:
+- Connect components with `link_plan_components`. `needs` means the component must come after the related component; `links` means the two components are connected. The underlying `blocks` edge remains directed.
+- Put repository paths and glob patterns owned by a component in `owned_paths`. Keep them current with `set_plan_component_paths`; this tells the owner which component an agent is actually changing, including follow-up work on a completed component.
+- Sync local worktrees before work starts:
 
 ```bash
 stash worktree sync --repo . --namespace /projects/myapp --agent-id my-agent
 ```
 
-Attach the returned worktree ID with `attach_worktree_to_item`. Use Git for
-code and diffs; use Stash for the path, branch, commit, status, and activity.
-Sync again when work ends or a worktree disappears.
+Attach the returned worktree to the active task with `attach_worktree_to_item`. Sync again when work ends or a worktree disappears.
 
-## Session end
+## Decisions and evidence
 
-1. Save the issue status and next step with `update_work_item`.
-2. Leave handoff details with `add_work_item_comment`.
-3. Save durable facts with `remember` and short-lived focus with `set_context`.
-4. Include the issue key and worktree path so the next agent can continue immediately.
+- Record a plan-affecting decision with `record_plan_decision` **before** implementing it. Attach it to the affected component or task when possible.
+- Attach evidence and lessons with `link_work_item_memory`; inspect it with `list_work_item_memory_links`.
+- Use `add_work_item_comment` for handoff details, reproduction notes, and decisions that do not change the plan itself.
 
-The work graph is not a linked list. A `blocks` dependency is directed: one
-work item may block several items, and several items may block one item.
-`relates_to` records a general relationship between work items.
+## Semantic review
+
+- `get_work_plan` returns deterministic convention warnings without calling a model. Resolve those warnings directly.
+- Call `validate_work_plan` after meaningful component, task, dependency, or decision changes and before handing off the plan. It uses the configured Reasoner model, not the embedding model.
+- Treat model findings as review advice. Fix supported component findings with `update_plan_component` and task findings with `update_plan_task`, then run `validate_work_plan` again.
+- If `get_work_plan.validation.stale` is true, the saved review predates the current plan. Run it again before relying on the result.
+- A plan review does not replace builds, tests, or observing the product.
+
+## Session start and end
+
+1. Call `init` if the Stash namespace has not been initialized.
+2. Verify the exact project namespace exists, then call `recall` for it.
+3. Call `get_work_plan`, `list_work_items`, and `list_worktrees` before making a new plan card. Resume the existing graph instead of rebuilding a checklist.
+4. Run `validate_work_plan` when the plan meaning changed or its saved validation is stale.
+5. Before ending, update each touched task, record handoff details, and save durable facts with `remember` or short-lived focus with `set_context`.
+
+Use `create_work_item` for ad-hoc local bugs, questions, and tracker entries that do not belong in the component map. Use the plan API for the owner-facing plan; do not maintain a separate live `PLAN.md` alongside it.

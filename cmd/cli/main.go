@@ -34,31 +34,14 @@ func main() {
 		Commands: []*cli.Command{
 			{
 				Name:  "serve",
-				Usage: "Start all services (HTTP, MCP, consolidation)",
+				Usage: "Start MCP, web console, metrics, health checks, and consolidation",
 				Flags: []cli.Flag{
-					&cli.StringFlag{Name: "http-host", Value: "0.0.0.0", Usage: "HTTP server host"},
-					&cli.StringFlag{Name: "http-port", Value: "9090", Usage: "HTTP server port (metrics, health)"},
-					&cli.StringFlag{Name: "mcp-host", Value: "0.0.0.0", Usage: "MCP HTTP server host"},
-					&cli.StringFlag{Name: "mcp-port", Value: "8080", Usage: "MCP HTTP server port (streamable http on /mcp, sse on /sse)"},
+					&cli.StringFlag{Name: "host", Value: "0.0.0.0", Usage: "Server host"},
+					&cli.StringFlag{Name: "port", Value: "8080", Usage: "Server port"},
 					&cli.DurationFlag{Name: "consolidate-interval", Value: 5 * time.Minute, Usage: "Consolidation interval"},
 					&cli.StringSliceFlag{Name: "consolidate-namespaces", Usage: "Namespaces to consolidate (default: all)"},
 				},
 				Action: serveAllCmd,
-			},
-			{
-				Name:  "http",
-				Usage: "HTTP server commands",
-				Commands: []*cli.Command{
-					{
-						Name:   "serve",
-						Usage:  "Start HTTP server (metrics, health)",
-						Action: serveHTTP,
-						Flags: []cli.Flag{
-							&cli.StringFlag{Name: "host", Value: "0.0.0.0"},
-							&cli.StringFlag{Name: "port", Value: "9090"},
-						},
-					},
-				},
 			},
 			{
 				Name:   "env",
@@ -552,7 +535,7 @@ func main() {
 				Commands: []*cli.Command{
 					{
 						Name:   "serve",
-						Usage:  "Start MCP server over HTTP (streamable http on /mcp, sse on /sse)",
+						Usage:  "Start the HTTP server (MCP on /mcp, SSE on /sse, web console, metrics, and health checks)",
 						Action: mcpServeCmd,
 						Flags: []cli.Flag{
 							&cli.StringFlag{Name: "host", Value: "0.0.0.0"},

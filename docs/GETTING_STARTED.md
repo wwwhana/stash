@@ -61,7 +61,7 @@ Example prompts to your agent:
 
 ## 4. Background consolidation
 
-When started with `mcp serve --with-consolidation` (the Docker Compose default), Stash consolidates in the background. You can also trigger manually via the `consolidate` MCP tool or CLI:
+When started with `stash serve` (the Docker Compose default), Stash consolidates in the background. You can also trigger manually via the `consolidate` MCP tool or CLI:
 
 ```bash
 docker compose exec stash /stash consolidate run
@@ -76,7 +76,21 @@ If tools fail, check `.env`:
 | `STASH_OPENAI_API_KEY` | Embeddings + reasoner; optional for endpoints without authentication |
 | `STASH_OPENAI_BASE_URL` | API base URL |
 | `STASH_EMBEDDING_MODEL` | Must match `STASH_VECTOR_DIM` (1536 for `text-embedding-3-small`) |
-| `STASH_REASONER_MODEL` | Model used during consolidation |
+| `STASH_REASONER_MODEL` | Model used for consolidation and `validate_work_plan` |
+
+### HTTP MCP authentication
+
+Use `STASH_AUTH_MODE=oauth` for a remote Streamable HTTP or SSE server. Set
+`STASH_AUTH_ISSUER` to the OIDC provider's issuer, configure the browser client
+(`STASH_AUTH_CLIENT_ID`, `STASH_AUTH_CLIENT_SECRET`, and
+`STASH_AUTH_REDIRECT_URL`), and set `STASH_AUTH_MCP_RESOURCE_URL` to the public
+`/mcp` URL. Stash exposes the protected-resource and authorization-server
+metadata, then performs Authorization Code + PKCE and issues a resource-bound
+Bearer token. `/oauth/register` accepts native public-client registrations.
+
+For a local CLI process, use `STASH_AUTH_MODE=stdio`; STDIO does not use MCP
+OAuth discovery. `STASH_AUTH_MODE=none` disables HTTP authentication and is
+intended only for an isolated local instance.
 
 **Running fully local?** See [LOCAL_OLLAMA.md](LOCAL_OLLAMA.md) — Ollama on the host, no cloud API key.
 

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/alash3al/stash/internal/auth"
+	"github.com/alash3al/stash/internal/models"
 )
 
 func TestNamespaceOwnerKeyIsStableAndPathSafe(t *testing.T) {
@@ -34,6 +35,48 @@ func TestRemoteNamespacesAreIsolated(t *testing.T) {
 	want := []string{"/sso/" + owner + "/projects", "/sso/" + owner + "/team/work"}
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("namespaces = %#v, want %#v", got, want)
+	}
+}
+
+func TestRemoteNamespaceResponsesUseLogicalPaths(t *testing.T) {
+	ctx := context.WithValue(context.Background(), keyMode, "remote")
+	ctx = context.WithValue(ctx, keySSOUser, "oidc-subject-1")
+	owner := namespaceOwnerKey("oidc-subject-1")
+	got := logicalNamespaces(ctx, []models.Namespace{
+		{Slug: "/sso/" + owner, Name: "/sso/" + owner},
+		{Slug: "/sso/" + owner + "/projects", Name: "/sso/" + owner + "/projects"},
+		{Slug: "/sso/other-user", Name: "/sso/other-user"},
+		{Slug: "/sso/" + owner + "/named", Name: "내 작업"},
+	})
+
+	if len(got) != 3 {
+		t.Fatalf("logical namespaces = %#v, want three owned namespaces", got)
+	}
+	if got[0].Slug != "/" || got[0].Name != "/" {
+		t.Fatalf("root namespace = %#v, want logical root", got[0])
+	}
+	if got[1].Slug != "/projects" || got[1].Name != "/projects" {
+		t.Fatalf("parent namespace = %#v, want logical path", got[1])
+	}
+	if got[2].Slug != "/named" || got[2].Name != "내 작업" {
+		t.Fatalf("named namespace = %#v, want logical slug and custom name", got[2])
+	}
+}
+
+func TestLocalNamespaceResponsesKeepStoredPaths(t *testing.T) {
+	ctx := context.WithValue(context.Background(), keyMode, "local")
+	input := []models.Namespace{{Slug: "/sso/u_example/projects", Name: "/sso/u_example/projects"}}
+	got := logicalNamespaces(ctx, input)
+	if len(got) != 1 || got[0].Slug != input[0].Slug || got[0].Name != input[0].Name {
+		t.Fatalf("local namespaces = %#v, want stored path", got)
+	}
+}
+
+func TestRemoteNamespaceResponsesWithoutIdentityExposeNothing(t *testing.T) {
+	ctx := context.WithValue(context.Background(), keyMode, "remote")
+	got := logicalNamespaces(ctx, []models.Namespace{{Slug: "/sso/u_example/projects"}})
+	if len(got) != 0 {
+		t.Fatalf("remote namespaces without identity = %#v, want no namespaces", got)
 	}
 }
 

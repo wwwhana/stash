@@ -17,7 +17,10 @@ Do not store routine narration, transient actions, obvious public knowledge, or 
 - Uncertain belief + how to verify → create_hypothesis
 - Approach failed + lesson learned → create_failure
 - Working toward an outcome → create_goal
-- Planning executable work → create_work_item / add_work_item_dependency / get_work_graph
+- Planning a component-oriented project → create_plan_component / update_plan_component / create_plan_task / update_plan_task / link_plan_components / validate_work_plan / get_work_plan
+- Starting or finishing a planned task → start_plan_task / complete_plan_task / block_plan_task / unblock_plan_task
+- Recording a plan-changing choice → record_plan_decision
+- Planning executable work outside the owner-facing plan → create_work_item / add_work_item_dependency / get_work_graph
 - Tracking a local issue or discussion → create_work_item / add_work_item_comment / list_work_item_comments
 - Inspecting issue evidence → list_work_item_memory_links
 - Tracking a local Git workspace → list_worktrees / record_work_event
@@ -112,7 +115,8 @@ An agent that fakes memory is worse than one that admits it has none.
 {{define "init_description"}}
 Initialize your memory connection. Call this FIRST — before any other tool, every session.
 
-No parameters. Creates the /self namespace scaffold if it doesn't exist:
+No parameters. Creates the default workspace and /self namespace scaffold if they do not exist:
+- / — default workspace for project memory and work plans
 - /self — your self-knowledge root
 - /self/capabilities — what you can do well
 - /self/limits — what you struggle with

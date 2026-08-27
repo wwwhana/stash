@@ -67,11 +67,15 @@ func (w *responseObserver) statusCode() int {
 func routeLabel(path string) string {
 	switch path {
 	case "/", "/mcp", "/sse", "/message", "/metrics", "/healthz", "/readyz",
-		"/auth/login", "/auth/callback", "/auth/logout", "/auth/status", "/auth/token":
+		"/auth/login", "/auth/callback", "/auth/logout", "/auth/status", "/auth/token",
+		"/authorize", "/oauth/callback", "/oauth/token", "/oauth/register":
 		return path
 	}
 	if strings.HasPrefix(path, "/.well-known/oauth-protected-resource") {
 		return "/.well-known/oauth-protected-resource"
+	}
+	if strings.HasPrefix(path, "/.well-known/oauth-authorization-server") || strings.HasPrefix(path, "/.well-known/openid-configuration") {
+		return "/.well-known/oauth-authorization-server"
 	}
 	if strings.HasPrefix(path, "/auth/") {
 		return "/auth/*"

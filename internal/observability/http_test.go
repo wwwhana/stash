@@ -45,6 +45,12 @@ func TestRouteLabelKeepsUnknownPathsBounded(t *testing.T) {
 	if got := routeLabel("/users/secret"); got != "/other" {
 		t.Fatalf("route label = %q, want /other", got)
 	}
+	if got := routeLabel("/.well-known/oauth-authorization-server/path"); got != "/.well-known/oauth-authorization-server" {
+		t.Fatalf("OAuth metadata route label = %q", got)
+	}
+	if got := routeLabel("/oauth/token"); got != "/oauth/token" {
+		t.Fatalf("OAuth token route label = %q", got)
+	}
 }
 
 func metricHasLabels(metrics []*dto.MetricFamily, name string, labels map[string]string) bool {

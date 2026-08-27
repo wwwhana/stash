@@ -57,27 +57,55 @@ type StructuredCausalLink struct {
 // GoalProgressAssessment is the LLM output for one goal against a batch of facts.
 type GoalProgressAssessment struct {
 	GoalID     int64
-	Assessment string  // "progress", "suggested_complete", "contradicted", "irrelevant"
+	Assessment string // "progress", "suggested_complete", "contradicted", "irrelevant"
 	Note       string
 	Confidence float32
 }
 
 // FailurePatternResult covers repetition detection and pattern extraction.
 type FailurePatternResult struct {
-	Type        string  // "repetition" or "pattern"
-	FailureID   int64   // For repetition: the original failure ID
-	Evidence    string  // For repetition: what evidence suggests the repeat
-	PatternFact string  // For pattern: the extracted higher-order fact content
+	Type        string // "repetition" or "pattern"
+	FailureID   int64  // For repetition: the original failure ID
+	Evidence    string // For repetition: what evidence suggests the repeat
+	PatternFact string // For pattern: the extracted higher-order fact content
 	Confidence  float32
 }
 
 // HypothesisEvidenceResult is the LLM output for one hypothesis against a batch of facts.
 type HypothesisEvidenceResult struct {
 	HypothesisID  int64
-	Verdict       string  // "supports", "weakens", "contradicts", "irrelevant"
+	Verdict       string // "supports", "weakens", "contradicts", "irrelevant"
 	Confidence    float32
 	Reasoning     string
 	NewConfidence float32
+}
+
+// WorkPlanValidationFinding is one semantic planning issue found by a
+// reasoning model. It intentionally excludes deterministic convention checks,
+// which remain enforced by the work-plan API.
+type WorkPlanValidationFinding struct {
+	Code               string
+	Severity           string
+	ComponentID        int64
+	RelatedComponentID int64
+	TaskID             int64
+	Message            string
+	Suggestion         string
+	Confidence         float32
+}
+
+// WorkPlanValidationResult is the reasoning model's owner-facing assessment.
+type WorkPlanValidationResult struct {
+	Summary  string
+	Findings []WorkPlanValidationFinding
+}
+
+// WorkPlanValidator is an optional capability kept separate from Reasoner so
+// existing embedders, test doubles, and non-plan reasoning implementations do
+// not need to implement plan-specific behavior.
+type WorkPlanValidator interface {
+	ValidateWorkPlan(ctx context.Context, plan models.WorkPlan) (*WorkPlanValidationResult, error)
+	ModelName() string
 }
 
 // Reasoner synthesizes structured reasoning over text input.

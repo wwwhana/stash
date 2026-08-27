@@ -20,7 +20,7 @@ func TestWorkGraphInputValidation(t *testing.T) {
 	if err := validatePosition(0.5); err != nil {
 		t.Fatalf("finite position rejected: %v", err)
 	}
-	for _, issueType := range []string{"task", "bug", "feature", "chore", "question"} {
+	for _, issueType := range []string{"task", "bug", "feature", "chore", "question", "component"} {
 		if err := validateWorkItemType(issueType); err != nil {
 			t.Errorf("issue type %q rejected: %v", issueType, err)
 		}

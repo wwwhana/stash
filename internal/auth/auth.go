@@ -11,11 +11,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -23,12 +25,16 @@ import (
 )
 
 const (
-	stateCookieName    = "oauthstate"
-	nonceCookieName    = "oidc_nonce"
-	sessionCookieName  = "stash_session"
-	apiTokenPrefix     = "stash_api_"
-	sessionTokenPrefix = "stash_session_"
-	defaultTokenTTL    = 30 * 24 * time.Hour
+	stateCookieName      = "oauthstate"
+	nonceCookieName      = "oidc_nonce"
+	sessionCookieName    = "stash_session"
+	apiTokenPrefix       = "stash_api_"
+	oauthTokenPrefix     = "stash_oauth_"
+	refreshTokenPrefix   = "stash_refresh_"
+	sessionTokenPrefix   = "stash_session_"
+	defaultTokenTTL      = 30 * 24 * time.Hour
+	authorizationCodeTTL = 90 * time.Second
+	loginStateTTL        = 10 * time.Minute
 )
 
 // Config contains the settings needed by the HTTP authentication boundary.
@@ -43,14 +49,59 @@ type Config struct {
 	MCPResourceURL string
 	CookieSecure   bool
 	APITokenTTL    time.Duration
+	StdioToken     string
 }
 
 type Provider struct {
-	config         Config
-	oidcProvider   *oidc.Provider
-	oauth2Config   oauth2.Config
-	verifier       *oidc.IDTokenVerifier
-	accessVerifier *oidc.IDTokenVerifier
+	config                Config
+	oidcProvider          *oidc.Provider
+	oauth2Config          oauth2.Config
+	verifier              *oidc.IDTokenVerifier
+	accessVerifier        *oidc.IDTokenVerifier
+	introspectionEndpoint string
+	mu                    sync.Mutex
+	clients               map[string]oauthClient
+	pending               map[string]authorizationRequest
+	codes                 map[string]authorizationCode
+	refreshTokens         map[string]refreshToken
+}
+
+type oauthClient struct {
+	ID                      string
+	RedirectURIs            []string
+	TokenEndpointAuthMethod string
+	Secret                  string
+	Name                    string
+}
+
+type authorizationRequest struct {
+	ClientID        string
+	RedirectURI     string
+	State           string
+	CodeChallenge   string
+	ChallengeMethod string
+	Resource        string
+	Scope           string
+	ExpiresAt       time.Time
+}
+
+type authorizationCode struct {
+	Subject         string
+	ClientID        string
+	RedirectURI     string
+	CodeChallenge   string
+	ChallengeMethod string
+	Resource        string
+	Scope           string
+	ExpiresAt       time.Time
+}
+
+type refreshToken struct {
+	Subject   string
+	ClientID  string
+	Resource  string
+	Scope     string
+	ExpiresAt time.Time
 }
 
 // Init returns nil when authentication is explicitly disabled.
@@ -60,25 +111,45 @@ func Init(ctx context.Context, cfg Config) (*Provider, error) {
 		log.Println("Auth mode: none (HTTP authentication is disabled)")
 		return nil, nil
 	}
-	if mode != "oidc" {
+	if mode == "oidc" {
+		// Keep the old name as a configuration alias. HTTP MCP still uses the
+		// OAuth 2.1 resource-server behavior below.
+		mode = "oauth"
+		cfg.Mode = "oidc"
+	}
+	if mode == "stdio" {
+		log.Println("Auth mode: stdio (credentials come from the process environment)")
+		return &Provider{
+			config:        cfg,
+			clients:       make(map[string]oauthClient),
+			pending:       make(map[string]authorizationRequest),
+			codes:         make(map[string]authorizationCode),
+			refreshTokens: make(map[string]refreshToken),
+		}, nil
+	}
+	if mode != "oauth" {
 		return nil, fmt.Errorf("unsupported auth mode: %q", cfg.Mode)
 	}
 	if cfg.Issuer == "" {
-		return nil, errors.New("OIDC mode requires an issuer")
+		return nil, errors.New("OAuth mode requires an issuer")
 	}
 	if cfg.MCPClientID == "" && strings.TrimSpace(cfg.MCPResourceURL) == "" {
-		return nil, errors.New("OIDC mode requires STASH_AUTH_MCP_CLIENT_ID or STASH_AUTH_MCP_RESOURCE_URL")
+		return nil, errors.New("OAuth mode requires STASH_AUTH_MCP_CLIENT_ID or STASH_AUTH_MCP_RESOURCE_URL")
 	}
 	// The browser login is optional: an MCP resource server can operate without
-	// keeping a second confidential OAuth client. If any browser setting is
-	// supplied, require the complete set so a half-configured /auth/login path
-	// cannot fail later with a cryptic redirect or callback error.
-	webLoginConfigured := cfg.ClientID != "" || cfg.ClientSecret != "" || cfg.RedirectURL != ""
-	if webLoginConfigured && (cfg.ClientID == "" || cfg.ClientSecret == "" || cfg.RedirectURL == "") {
-		return nil, errors.New("browser OIDC login requires client ID, client secret, and redirect URL together")
+	// keeping a second confidential OAuth client. A client ID/secret pair may be
+	// supplied without a redirect URI for opaque-token introspection only. Once
+	// a redirect URI is supplied, require the complete browser-login set so a
+	// half-configured /auth/login path cannot fail later with a cryptic error.
+	if (cfg.ClientID == "") != (cfg.ClientSecret == "") {
+		return nil, errors.New("OAuth client ID and client secret must be supplied together")
 	}
-	if cfg.APISecret == "" {
-		return nil, errors.New("OIDC mode requires STASH_AUTH_API_SECRET")
+	webLoginConfigured := cfg.RedirectURL != ""
+	if webLoginConfigured && (cfg.ClientID == "" || cfg.ClientSecret == "") {
+		return nil, errors.New("browser OAuth login requires client ID, client secret, and redirect URL together")
+	}
+	if webLoginConfigured && cfg.APISecret == "" {
+		return nil, errors.New("browser OAuth login requires STASH_AUTH_API_SECRET for the session signer")
 	}
 	if cfg.APITokenTTL <= 0 {
 		cfg.APITokenTTL = defaultTokenTTL
@@ -106,14 +177,147 @@ func Init(ctx context.Context, cfg Config) (*Provider, error) {
 	// mandatory; accepting any valid token from the issuer would let a token
 	// issued for another application call this MCP server.
 	accessVerifier := provider.Verifier(&oidc.Config{SkipClientIDCheck: true})
-	log.Printf("Auth mode: oidc (issuer: %s)", cfg.Issuer)
+	introspectionEndpoint := discoverIntrospectionEndpoint(ctx, cfg.Issuer)
+	clients := make(map[string]oauthClient)
+	// A configured MCP client is a public client by default. Its redirect URI
+	// is checked in clientRedirectAllowed; dynamic registrations are stored
+	// in the same table.
+	if clientID := strings.TrimSpace(cfg.MCPClientID); clientID != "" {
+		clients[clientID] = oauthClient{ID: clientID, TokenEndpointAuthMethod: "none"}
+	}
+	log.Printf("Auth mode: oauth (issuer: %s)", cfg.Issuer)
 	return &Provider{
-		config:         cfg,
-		oidcProvider:   provider,
-		oauth2Config:   oauth2Config,
-		verifier:       verifier,
-		accessVerifier: accessVerifier,
+		config:                cfg,
+		oidcProvider:          provider,
+		oauth2Config:          oauth2Config,
+		verifier:              verifier,
+		accessVerifier:        accessVerifier,
+		introspectionEndpoint: introspectionEndpoint,
+		clients:               clients,
+		pending:               make(map[string]authorizationRequest),
+		codes:                 make(map[string]authorizationCode),
+		refreshTokens:         make(map[string]refreshToken),
 	}, nil
+}
+
+// Mode reports the configured authentication profile. An OIDC configuration
+// is kept as "oidc" for status and compatibility, but its HTTP behavior is
+// the OAuth profile required by MCP.
+func (p *Provider) Mode() string {
+	if p == nil {
+		return "none"
+	}
+	mode := strings.ToLower(strings.TrimSpace(p.config.Mode))
+	if mode == "" {
+		// A non-nil provider is an authentication boundary. Treat a manually
+		// constructed provider with missing configuration as protected so it
+		// fails closed in tests and embedding applications.
+		return "oauth"
+	}
+	return mode
+}
+
+func (p *Provider) oauthMode() bool {
+	return p != nil && (p.Mode() == "oauth" || p.Mode() == "oidc")
+}
+
+// HTTPAuthEnabled reports whether the HTTP MCP transports require a bearer
+// credential. STDIO credentials never turn into HTTP authentication.
+func (p *Provider) HTTPAuthEnabled() bool {
+	if p == nil {
+		return false
+	}
+	mode := p.Mode()
+	return mode != "none" && mode != "stdio"
+}
+
+// StdioCredential returns the optional credential configured for the STDIO
+// profile. It is intentionally not exposed in status responses or logs.
+func (p *Provider) StdioCredential() string {
+	if p == nil {
+		return ""
+	}
+	return strings.TrimSpace(p.config.StdioToken)
+}
+
+func (p *Provider) localAuthorizationServer() bool {
+	return p.oauthMode() && p.oauth2Config.ClientID != "" && p.verifier != nil && p.config.APISecret != ""
+}
+
+// HandleAuthorize is the MCP OAuth authorization endpoint. Stash acts as a
+// small OAuth resource-owner broker here: Authentik performs the actual user
+// login, while Stash keeps the MCP client's redirect and PKCE transaction.
+func (p *Provider) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if !p.localAuthorizationServer() {
+		http.Error(w, "OAuth authorization endpoint is not configured", http.StatusNotImplemented)
+		return
+	}
+
+	query := r.URL.Query()
+	clientID := strings.TrimSpace(query.Get("client_id"))
+	redirectURI := strings.TrimSpace(query.Get("redirect_uri"))
+	state := query.Get("state")
+	if clientID == "" {
+		oauthError(w, redirectURI, state, "invalid_request", "client_id is required", false)
+		return
+	}
+	if !validRedirectURI(redirectURI) || !p.clientRedirectAllowed(clientID, redirectURI) {
+		http.Error(w, "invalid redirect_uri", http.StatusBadRequest)
+		return
+	}
+	if query.Get("response_type") != "code" {
+		oauthError(w, redirectURI, state, "unsupported_response_type", "response_type must be code", true)
+		return
+	}
+	challenge := strings.TrimSpace(query.Get("code_challenge"))
+	challengeMethod := strings.ToUpper(strings.TrimSpace(query.Get("code_challenge_method")))
+	if challenge == "" || challengeMethod != "S256" {
+		oauthError(w, redirectURI, state, "invalid_request", "PKCE S256 is required", true)
+		return
+	}
+
+	rawResource := strings.TrimSpace(query.Get("resource"))
+	if rawResource == "" {
+		oauthError(w, redirectURI, state, "invalid_request", "resource is required", true)
+		return
+	}
+	resource := normalizeResourceURL(rawResource)
+	if !p.resourceAllowed(resource, r) {
+		oauthError(w, redirectURI, state, "invalid_target", "resource is not this MCP server", true)
+		return
+	}
+	scope := normalizeScope(query.Get("scope"))
+	internalState, nonce, err := setOAuthCookies(w, p.config.CookieSecure)
+	if err != nil {
+		http.Error(w, "could not start authorization", http.StatusInternalServerError)
+		return
+	}
+
+	p.mu.Lock()
+	p.ensureOAuthMapsLocked()
+	p.pruneOAuthStateLocked(time.Now())
+	p.pending[internalState] = authorizationRequest{
+		ClientID:        clientID,
+		RedirectURI:     redirectURI,
+		State:           state,
+		CodeChallenge:   challenge,
+		ChallengeMethod: challengeMethod,
+		Resource:        resource,
+		Scope:           scope,
+		ExpiresAt:       time.Now().Add(loginStateTTL),
+	}
+	p.mu.Unlock()
+
+	authURL := p.oauth2Config.AuthCodeURL(internalState,
+		oauth2.SetAuthURLParam("nonce", nonce),
+		oauth2.SetAuthURLParam("resource", resource),
+		oauth2.SetAuthURLParam("scope", scope),
+	)
+	http.Redirect(w, r, authURL, http.StatusFound)
 }
 
 func (p *Provider) HandleLogin(w http.ResponseWriter, r *http.Request) {
@@ -154,71 +358,146 @@ func (p *Provider) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	providedState := r.FormValue("state")
+	p.mu.Lock()
+	p.ensureOAuthMapsLocked()
+	pending, isOAuthRequest := p.pending[providedState]
+	p.mu.Unlock()
+	subject, expiresAt, err := p.completeOIDCLogin(r, providedState, w)
+	if err != nil {
+		if isOAuthRequest && loginStateMatches(r, providedState) {
+			p.mu.Lock()
+			delete(p.pending, providedState)
+			p.mu.Unlock()
+			oauthCode := "server_error"
+			if strings.HasPrefix(err.message, "login was denied:") {
+				oauthCode = "access_denied"
+			}
+			oauthError(w, pending.RedirectURI, pending.State, oauthCode, err.message, true)
+			return
+		}
+		http.Error(w, err.Error(), err.status)
+		return
+	}
+
+	p.mu.Lock()
+	p.ensureOAuthMapsLocked()
+	p.pruneOAuthStateLocked(time.Now())
+	pending, isOAuthRequest = p.pending[providedState]
+	if isOAuthRequest {
+		delete(p.pending, providedState)
+	}
+	p.mu.Unlock()
+
+	if isOAuthRequest {
+		code, err := randomToken(32)
+		if err != nil {
+			http.Error(w, "could not create authorization code", http.StatusInternalServerError)
+			return
+		}
+		p.mu.Lock()
+		p.ensureOAuthMapsLocked()
+		p.codes[code] = authorizationCode{
+			Subject:         subject,
+			ClientID:        pending.ClientID,
+			RedirectURI:     pending.RedirectURI,
+			CodeChallenge:   pending.CodeChallenge,
+			ChallengeMethod: pending.ChallengeMethod,
+			Resource:        pending.Resource,
+			Scope:           pending.Scope,
+			ExpiresAt:       time.Now().Add(authorizationCodeTTL),
+		}
+		p.mu.Unlock()
+		p.setSessionCookie(w, subject, expiresAt)
+		values := url.Values{"code": {code}}
+		if pending.State != "" {
+			values.Set("state", pending.State)
+		}
+		location, _ := url.Parse(pending.RedirectURI)
+		location.RawQuery = mergeQuery(location.RawQuery, values)
+		http.Redirect(w, r, location.String(), http.StatusFound)
+		return
+	}
+
+	p.setSessionCookie(w, subject, expiresAt)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+type authHTTPError struct {
+	status  int
+	message string
+}
+
+func (e authHTTPError) Error() string { return e.message }
+
+func (p *Provider) completeOIDCLogin(r *http.Request, providedState string, w http.ResponseWriter) (string, time.Time, *authHTTPError) {
 	stateCookie, err := r.Cookie(stateCookieName)
 	if err != nil || stateCookie.Value == "" {
-		http.Error(w, "login state is missing", http.StatusBadRequest)
-		return
+		return "", time.Time{}, &authHTTPError{http.StatusBadRequest, "login state is missing"}
 	}
 	nonceCookie, err := r.Cookie(nonceCookieName)
 	if err != nil || nonceCookie.Value == "" {
-		http.Error(w, "login nonce is missing", http.StatusBadRequest)
-		return
+		return "", time.Time{}, &authHTTPError{http.StatusBadRequest, "login nonce is missing"}
 	}
 	clearOAuthCookies(w, p.config.CookieSecure)
-
-	providedState := r.FormValue("state")
 	if len(providedState) != len(stateCookie.Value) || subtle.ConstantTimeCompare([]byte(providedState), []byte(stateCookie.Value)) != 1 {
-		http.Error(w, "invalid login state", http.StatusBadRequest)
-		return
+		return "", time.Time{}, &authHTTPError{http.StatusBadRequest, "invalid login state"}
+	}
+	if upstreamError := strings.TrimSpace(r.FormValue("error")); upstreamError != "" {
+		return "", time.Time{}, &authHTTPError{http.StatusBadRequest, "login was denied: " + upstreamError}
 	}
 	code := r.FormValue("code")
 	if code == "" {
-		http.Error(w, "authorization code is missing", http.StatusBadRequest)
-		return
+		return "", time.Time{}, &authHTTPError{http.StatusBadRequest, "authorization code is missing"}
 	}
 
 	token, err := p.oauth2Config.Exchange(r.Context(), code)
 	if err != nil {
-		http.Error(w, "could not complete login", http.StatusBadGateway)
-		return
+		return "", time.Time{}, &authHTTPError{http.StatusBadGateway, "could not complete login"}
 	}
 	rawIDToken, ok := token.Extra("id_token").(string)
 	if !ok || rawIDToken == "" {
-		http.Error(w, "identity token is missing", http.StatusBadGateway)
-		return
+		return "", time.Time{}, &authHTTPError{http.StatusBadGateway, "identity token is missing"}
 	}
 
 	idToken, err := p.verifier.Verify(r.Context(), rawIDToken)
 	if err != nil {
-		http.Error(w, "identity token is invalid", http.StatusUnauthorized)
-		return
+		return "", time.Time{}, &authHTTPError{http.StatusUnauthorized, "identity token is invalid"}
 	}
 	if idToken.Nonce == "" || len(idToken.Nonce) != len(nonceCookie.Value) || subtle.ConstantTimeCompare([]byte(idToken.Nonce), []byte(nonceCookie.Value)) != 1 {
-		http.Error(w, "invalid login nonce", http.StatusUnauthorized)
-		return
+		return "", time.Time{}, &authHTTPError{http.StatusUnauthorized, "invalid login nonce"}
 	}
 
-	var claims struct {
-		Sub string `json:"sub"`
+	subject, err := subjectFromToken(idToken)
+	if err != nil {
+		return "", time.Time{}, &authHTTPError{http.StatusUnauthorized, "identity token has no stable subject"}
 	}
-	if err := idToken.Claims(&claims); err != nil || claims.Sub == "" {
-		http.Error(w, "identity token has no stable subject", http.StatusUnauthorized)
-		return
-	}
-
 	expiresAt := idToken.Expiry
 	if expiresAt.IsZero() || !expiresAt.After(time.Now()) {
-		http.Error(w, "identity token is expired", http.StatusUnauthorized)
+		return "", time.Time{}, &authHTTPError{http.StatusUnauthorized, "identity token is expired"}
+	}
+	return subject, expiresAt, nil
+}
+
+func loginStateMatches(r *http.Request, providedState string) bool {
+	cookie, err := r.Cookie(stateCookieName)
+	if err != nil || cookie.Value == "" || len(cookie.Value) != len(providedState) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(providedState)) == 1
+}
+
+func (p *Provider) setSessionCookie(w http.ResponseWriter, subject string, expiresAt time.Time) {
+	if p.config.APISecret == "" {
+		return
+	}
+	session, err := generateSessionToken(subject, p.config.APISecret, expiresAt)
+	if err != nil {
 		return
 	}
 	maxAge := int(time.Until(expiresAt).Seconds())
 	if maxAge < 1 {
 		maxAge = 1
-	}
-	session, err := generateSessionToken(claims.Sub, p.config.APISecret, expiresAt)
-	if err != nil {
-		http.Error(w, "could not create login session", http.StatusInternalServerError)
-		return
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
@@ -230,7 +509,154 @@ func (p *Provider) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 		SameSite: http.SameSiteLaxMode,
 	})
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (p *Provider) clientRedirectAllowed(clientID, redirectURI string) bool {
+	p.mu.Lock()
+	client, registered := p.clients[clientID]
+	p.mu.Unlock()
+	if registered {
+		for _, candidate := range client.RedirectURIs {
+			if candidate == redirectURI {
+				return true
+			}
+		}
+		if len(client.RedirectURIs) == 0 && clientID == strings.TrimSpace(p.config.MCPClientID) && isLoopbackRedirect(redirectURI) {
+			return true
+		}
+		return false
+	}
+
+	// A statically configured MCP client may use a loopback callback. This is
+	// the normal native-client shape used by Codex and other local MCP clients.
+	if clientID == strings.TrimSpace(p.config.MCPClientID) && isLoopbackRedirect(redirectURI) {
+		return true
+	}
+	if clientID == strings.TrimSpace(p.config.ClientID) && redirectURI == strings.TrimSpace(p.config.RedirectURL) {
+		return true
+	}
+	return false
+}
+
+func validRedirectURI(raw string) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Fragment != "" || parsed.Host == "" {
+		return false
+	}
+	if parsed.Scheme == "https" {
+		return true
+	}
+	return isLoopbackRedirect(raw)
+}
+
+func isLoopbackRedirect(raw string) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme != "http" || parsed.User != nil || parsed.Hostname() == "" {
+		return false
+	}
+	switch strings.ToLower(parsed.Hostname()) {
+	case "localhost", "127.0.0.1", "::1":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeResourceURL(raw string) string {
+	return strings.TrimRight(strings.TrimSpace(raw), "/")
+}
+
+func (p *Provider) configuredResourceURL(r *http.Request) string {
+	if configured := normalizeResourceURL(p.config.MCPResourceURL); configured != "" {
+		return configured
+	}
+	return requestBaseURL(r) + "/mcp"
+}
+
+func (p *Provider) resourceAllowed(resource string, r *http.Request) bool {
+	resource = normalizeResourceURL(resource)
+	if resource == "" {
+		return false
+	}
+	wanted := normalizeResourceURL(p.configuredResourceURL(r))
+	return resource == wanted
+}
+
+func normalizeScope(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return "openid profile email"
+	}
+	seen := make(map[string]struct{})
+	var scopes []string
+	for _, scope := range strings.Fields(raw) {
+		if _, ok := seen[scope]; ok {
+			continue
+		}
+		seen[scope] = struct{}{}
+		scopes = append(scopes, scope)
+	}
+	return strings.Join(scopes, " ")
+}
+
+func mergeQuery(existing string, values url.Values) string {
+	query, _ := url.ParseQuery(existing)
+	for key, list := range values {
+		for _, value := range list {
+			query.Add(key, value)
+		}
+	}
+	return query.Encode()
+}
+
+func oauthError(w http.ResponseWriter, redirectURI, state, code, description string, redirectAllowed bool) {
+	if redirectAllowed && validRedirectURI(redirectURI) {
+		location, err := url.Parse(redirectURI)
+		if err == nil {
+			values := url.Values{"error": {code}, "error_description": {description}}
+			if state != "" {
+				values.Set("state", state)
+			}
+			location.RawQuery = mergeQuery(location.RawQuery, values)
+			http.Redirect(w, &http.Request{}, location.String(), http.StatusFound)
+			return
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadRequest)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": code, "error_description": description})
+}
+
+func (p *Provider) pruneOAuthStateLocked(now time.Time) {
+	for key, pending := range p.pending {
+		if !pending.ExpiresAt.After(now) {
+			delete(p.pending, key)
+		}
+	}
+	for key, code := range p.codes {
+		if !code.ExpiresAt.After(now) {
+			delete(p.codes, key)
+		}
+	}
+	for key, token := range p.refreshTokens {
+		if !token.ExpiresAt.After(now) {
+			delete(p.refreshTokens, key)
+		}
+	}
+}
+
+func (p *Provider) ensureOAuthMapsLocked() {
+	if p.clients == nil {
+		p.clients = make(map[string]oauthClient)
+	}
+	if p.pending == nil {
+		p.pending = make(map[string]authorizationRequest)
+	}
+	if p.codes == nil {
+		p.codes = make(map[string]authorizationCode)
+	}
+	if p.refreshTokens == nil {
+		p.refreshTokens = make(map[string]refreshToken)
+	}
 }
 
 func (p *Provider) HandleLogout(w http.ResponseWriter, r *http.Request) {
@@ -263,7 +689,7 @@ func (p *Provider) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	status := map[string]any{"auth_mode": "none", "authenticated": false}
 	if p != nil {
-		status["auth_mode"] = "oidc"
+		status["auth_mode"] = p.Mode()
 		if user, err := p.VerifyRequest(r); err == nil && user != "" {
 			status["authenticated"] = true
 			status["user"] = user
@@ -272,9 +698,38 @@ func (p *Provider) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(status)
 }
 
+// HandleAuthorizationServerMetadata serves RFC 8414 metadata for the local
+// OAuth broker. When no browser client is configured, the configured issuer
+// remains the external authorization server and clients discover it directly.
+func (p *Provider) HandleAuthorizationServerMetadata(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if !p.localAuthorizationServer() {
+		http.NotFound(w, r)
+		return
+	}
+	issuer := p.localIssuerURL(r)
+	response := map[string]any{
+		"issuer":                                issuer,
+		"authorization_endpoint":                issuer + "/authorize",
+		"token_endpoint":                        issuer + "/oauth/token",
+		"registration_endpoint":                 issuer + "/oauth/register",
+		"scopes_supported":                      []string{"openid", "profile", "email"},
+		"response_types_supported":              []string{"code"},
+		"grant_types_supported":                 []string{"authorization_code", "refresh_token"},
+		"code_challenge_methods_supported":      []string{"S256"},
+		"token_endpoint_auth_methods_supported": []string{"none", "client_secret_post", "client_secret_basic"},
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(response)
+}
+
 // HandleProtectedResourceMetadata serves RFC 9728 metadata for Codex and
-// other MCP OAuth clients. Authentik remains the authorization server; Stash
-// only describes the protected MCP resource here.
+// other MCP OAuth clients. It points either to Stash's local OAuth broker or
+// to the configured external authorization server.
 func (p *Provider) HandleProtectedResourceMetadata(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -287,13 +742,30 @@ func (p *Provider) HandleProtectedResourceMetadata(w http.ResponseWriter, r *htt
 
 	response := map[string]any{
 		"resource":              p.resourceURLForMetadata(r),
-		"authorization_servers": []string{p.config.Issuer},
+		"authorization_servers": []string{p.authorizationServerURL(r)},
 		"scopes_supported":      []string{"openid", "profile", "email"},
 		"resource_name":         "Stash Memory MCP",
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(response)
+}
+
+func (p *Provider) authorizationServerURL(r *http.Request) string {
+	if p.localAuthorizationServer() {
+		return p.localIssuerURL(r)
+	}
+	return strings.TrimSpace(p.config.Issuer)
+}
+
+func (p *Provider) localIssuerURL(r *http.Request) string {
+	base := requestBaseURL(r)
+	if configured := strings.TrimSpace(p.config.MCPResourceURL); configured != "" {
+		if parsed, err := url.Parse(configured); err == nil && parsed.Scheme != "" && parsed.Host != "" {
+			base = parsed.Scheme + "://" + parsed.Host
+		}
+	}
+	return strings.TrimRight(base, "/")
 }
 
 // MCPUnauthorized writes the RFC 6750 challenge that points an OAuth client
@@ -316,6 +788,9 @@ func (p *Provider) VerifyRequest(r *http.Request) (string, error) {
 	if p == nil {
 		return "", errors.New("authentication is disabled")
 	}
+	if p.Mode() == "stdio" {
+		return "", errors.New("stdio credentials cannot authenticate an HTTP request")
+	}
 
 	rawToken := bearerToken(r)
 	bearer := rawToken != ""
@@ -331,6 +806,9 @@ func (p *Provider) VerifyRequest(r *http.Request) (string, error) {
 	if strings.HasPrefix(rawToken, sessionTokenPrefix) {
 		return parseSessionToken(rawToken, p.config.APISecret)
 	}
+	if strings.HasPrefix(rawToken, oauthTokenPrefix) {
+		return parseOAuthAccessToken(rawToken, p.config.APISecret, p.configuredResourceURL(r))
+	}
 	if strings.HasPrefix(rawToken, apiTokenPrefix) {
 		return parseStashToken(rawToken, p.config.APISecret)
 	}
@@ -340,18 +818,133 @@ func (p *Provider) VerifyRequest(r *http.Request) (string, error) {
 	return p.verifyOIDCAccessToken(r, rawToken)
 }
 
+// VerifyBearerToken validates a bearer credential supplied to the STDIO
+// adapter through STASH_AUTH_STDIO_TOKEN. It deliberately accepts only tokens
+// that Stash can validate locally; STDIO has no HTTP request metadata for an
+// external issuer discovery flow.
+func (p *Provider) VerifyBearerToken(ctx context.Context, rawToken string) (string, error) {
+	if p == nil {
+		return "", errors.New("authentication is disabled")
+	}
+	rawToken = strings.TrimSpace(rawToken)
+	if rawToken == "" {
+		return "", errors.New("missing authentication token")
+	}
+	if strings.HasPrefix(rawToken, oauthTokenPrefix) {
+		return parseOAuthAccessToken(rawToken, p.config.APISecret, normalizeResourceURL(p.config.MCPResourceURL))
+	}
+	if strings.HasPrefix(rawToken, apiTokenPrefix) {
+		return parseStashToken(rawToken, p.config.APISecret)
+	}
+	if strings.HasPrefix(rawToken, sessionTokenPrefix) {
+		return parseSessionToken(rawToken, p.config.APISecret)
+	}
+	if p.oauthMode() {
+		return p.verifyOIDCAccessTokenContext(ctx, rawToken)
+	}
+	return "", errors.New("unsupported STDIO credential")
+}
+
 func (p *Provider) verifyOIDCAccessToken(r *http.Request, rawToken string) (string, error) {
+	return p.verifyOIDCAccessTokenContext(r.Context(), rawToken)
+}
+
+func (p *Provider) verifyOIDCAccessTokenContext(ctx context.Context, rawToken string) (string, error) {
 	if p.accessVerifier == nil {
 		return "", errors.New("OIDC access-token verifier is unavailable")
 	}
-	accessToken, err := p.accessVerifier.Verify(r.Context(), rawToken)
+	accessToken, err := p.accessVerifier.Verify(ctx, rawToken)
 	if err != nil {
+		if subject, introspectionErr := p.introspectAccessToken(ctx, rawToken); introspectionErr == nil {
+			return subject, nil
+		}
 		return "", fmt.Errorf("invalid OIDC access token: %w", err)
 	}
 	if !p.accessTokenAudienceAllowed(accessToken.Audience) {
 		return "", fmt.Errorf("OIDC access token has unexpected audience %q", accessToken.Audience)
 	}
 	return subjectFromToken(accessToken)
+}
+
+func discoverIntrospectionEndpoint(ctx context.Context, issuer string) string {
+	issuer = strings.TrimRight(strings.TrimSpace(issuer), "/")
+	if issuer == "" {
+		return ""
+	}
+	discoveryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(discoveryCtx, http.MethodGet, issuer+"/.well-known/openid-configuration", nil)
+	if err != nil {
+		return ""
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return ""
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return ""
+	}
+	var metadata struct {
+		IntrospectionEndpoint string `json:"introspection_endpoint"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 256<<10)).Decode(&metadata); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(metadata.IntrospectionEndpoint)
+}
+
+func (p *Provider) introspectAccessToken(ctx context.Context, rawToken string) (string, error) {
+	if p.introspectionEndpoint == "" || p.config.ClientID == "" || p.config.ClientSecret == "" {
+		return "", errors.New("OIDC token introspection is not configured")
+	}
+	form := url.Values{"token": {rawToken}, "token_type_hint": {"access_token"}}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, p.introspectionEndpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", err
+	}
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.SetBasicAuth(p.config.ClientID, p.config.ClientSecret)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return "", err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("introspection returned HTTP %d", response.StatusCode)
+	}
+	var result struct {
+		Active bool            `json:"active"`
+		Sub    string          `json:"sub"`
+		Exp    int64           `json:"exp"`
+		Aud    json.RawMessage `json:"aud"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 256<<10)).Decode(&result); err != nil {
+		return "", err
+	}
+	if !result.Active || result.Sub == "" || (result.Exp > 0 && result.Exp <= time.Now().Unix()) {
+		return "", errors.New("inactive OIDC access token")
+	}
+	audience, err := decodeAudience(result.Aud)
+	if err != nil || !p.accessTokenAudienceAllowed(audience) {
+		return "", errors.New("OIDC access token has unexpected audience")
+	}
+	return result.Sub, nil
+}
+
+func decodeAudience(raw json.RawMessage) ([]string, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	var one string
+	if err := json.Unmarshal(raw, &one); err == nil {
+		return []string{one}, nil
+	}
+	var many []string
+	if err := json.Unmarshal(raw, &many); err != nil {
+		return nil, err
+	}
+	return many, nil
 }
 
 func (p *Provider) accessTokenAudienceAllowed(audience []string) bool {
@@ -462,6 +1055,324 @@ func (p *Provider) HandleGenerateToken(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"token": token})
 }
 
+// HandleOAuthToken implements the authorization_code and refresh_token grants
+// used by HTTP MCP clients. The access token is opaque, but is signed by Stash
+// and carries the MCP resource in its protected payload.
+func (p *Provider) HandleOAuthToken(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeOAuthError(w, http.StatusMethodNotAllowed, "invalid_request", "token endpoint requires POST")
+		return
+	}
+	if !p.localAuthorizationServer() {
+		writeOAuthError(w, http.StatusNotImplemented, "temporarily_unavailable", "local OAuth token endpoint is not configured")
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "could not parse form body")
+		return
+	}
+	grantType := strings.TrimSpace(r.Form.Get("grant_type"))
+	clientID, clientSecret, fromBasic := oauthClientCredentials(r)
+	if clientID == "" {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_client", "client_id is required")
+		return
+	}
+	client, ok := p.client(clientID)
+	if !ok {
+		writeOAuthError(w, http.StatusUnauthorized, "invalid_client", "unknown client_id")
+		return
+	}
+	if !oauthClientAuthenticated(client, clientSecret, fromBasic) {
+		writeOAuthError(w, http.StatusUnauthorized, "invalid_client", "client authentication failed")
+		return
+	}
+
+	switch grantType {
+	case "authorization_code":
+		p.exchangeAuthorizationCode(w, r, clientID)
+	case "refresh_token":
+		p.exchangeRefreshToken(w, r, clientID)
+	default:
+		writeOAuthError(w, http.StatusBadRequest, "unsupported_grant_type", "grant_type must be authorization_code or refresh_token")
+	}
+}
+
+func (p *Provider) exchangeAuthorizationCode(w http.ResponseWriter, r *http.Request, clientID string) {
+	codeValue := strings.TrimSpace(r.Form.Get("code"))
+	redirectURI := strings.TrimSpace(r.Form.Get("redirect_uri"))
+	verifier := strings.TrimSpace(r.Form.Get("code_verifier"))
+	if codeValue == "" || redirectURI == "" || verifier == "" {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "code, redirect_uri, and code_verifier are required")
+		return
+	}
+
+	p.mu.Lock()
+	p.ensureOAuthMapsLocked()
+	p.pruneOAuthStateLocked(time.Now())
+	code, ok := p.codes[codeValue]
+	if ok {
+		delete(p.codes, codeValue)
+	}
+	p.mu.Unlock()
+	if !ok || !code.ExpiresAt.After(time.Now()) {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "authorization code is invalid or expired")
+		return
+	}
+	if code.ClientID != clientID || code.RedirectURI != redirectURI {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "authorization code does not match the client")
+		return
+	}
+	if code.ChallengeMethod != "S256" || !pkceMatches(code.CodeChallenge, verifier) {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "code_verifier does not match the authorization request")
+		return
+	}
+	resource := normalizeResourceURL(r.Form.Get("resource"))
+	if resource == "" || resource != normalizeResourceURL(code.Resource) || !p.resourceAllowed(resource, r) {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_target", "resource does not match the authorization request")
+		return
+	}
+	p.issueOAuthTokens(w, code.Subject, clientID, resource, code.Scope)
+}
+
+func (p *Provider) exchangeRefreshToken(w http.ResponseWriter, r *http.Request, clientID string) {
+	provided := strings.TrimSpace(r.Form.Get("refresh_token"))
+	if provided == "" {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "refresh_token is required")
+		return
+	}
+	p.mu.Lock()
+	p.ensureOAuthMapsLocked()
+	p.pruneOAuthStateLocked(time.Now())
+	refresh, ok := p.refreshTokens[provided]
+	p.mu.Unlock()
+	if !ok || refresh.ClientID != clientID || !refresh.ExpiresAt.After(time.Now()) {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "refresh_token is invalid or expired")
+		return
+	}
+	resource := normalizeResourceURL(r.Form.Get("resource"))
+	if resource == "" || resource != normalizeResourceURL(refresh.Resource) || !p.resourceAllowed(resource, r) {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_target", "resource does not match the refresh token")
+		return
+	}
+	p.mu.Lock()
+	if _, stillValid := p.refreshTokens[provided]; !stillValid {
+		p.mu.Unlock()
+		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "refresh_token is invalid or expired")
+		return
+	}
+	// Public clients get refresh-token rotation: the old token cannot be
+	// replayed after this request.
+	delete(p.refreshTokens, provided)
+	p.mu.Unlock()
+	p.issueOAuthTokens(w, refresh.Subject, clientID, resource, refresh.Scope)
+}
+
+func (p *Provider) issueOAuthTokens(w http.ResponseWriter, subject, clientID, resource, scope string) {
+	ttl := p.config.APITokenTTL
+	if ttl <= 0 {
+		ttl = defaultTokenTTL
+	}
+	access, err := generateOAuthAccessToken(subject, p.config.APISecret, resource, scope, ttl)
+	if err != nil {
+		writeOAuthError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "access token generation is unavailable")
+		return
+	}
+	rawRefresh, err := randomToken(48)
+	if err != nil {
+		writeOAuthError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "refresh token generation is unavailable")
+		return
+	}
+	refresh := refreshTokenPrefix + rawRefresh
+	p.mu.Lock()
+	p.ensureOAuthMapsLocked()
+	p.pruneOAuthStateLocked(time.Now())
+	p.refreshTokens[refresh] = refreshToken{
+		Subject:   subject,
+		ClientID:  clientID,
+		Resource:  resource,
+		Scope:     scope,
+		ExpiresAt: time.Now().Add(ttl),
+	}
+	p.mu.Unlock()
+
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"access_token":  access,
+		"token_type":    "Bearer",
+		"expires_in":    int(ttl.Seconds()),
+		"refresh_token": refresh,
+		"scope":         scope,
+	})
+}
+
+// HandleOAuthRegister implements the RFC 7591 client-registration subset used
+// by MCP clients. Redirect URIs are retained in memory until the process
+// restarts; clients can register again after a restart.
+func (p *Provider) HandleOAuthRegister(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeOAuthError(w, http.StatusMethodNotAllowed, "invalid_request", "registration endpoint requires POST")
+		return
+	}
+	if !p.localAuthorizationServer() {
+		http.NotFound(w, r)
+		return
+	}
+	defer r.Body.Close()
+	var request struct {
+		RedirectURIs            []string `json:"redirect_uris"`
+		ClientName              string   `json:"client_name"`
+		TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method"`
+		GrantTypes              []string `json:"grant_types"`
+		ResponseTypes           []string `json:"response_types"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
+	if err := decoder.Decode(&request); err != nil {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_client_metadata", "registration body is invalid")
+		return
+	}
+	if len(request.RedirectURIs) == 0 {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_client_metadata", "redirect_uris is required")
+		return
+	}
+	for _, redirectURI := range request.RedirectURIs {
+		if !validRedirectURI(redirectURI) {
+			writeOAuthError(w, http.StatusBadRequest, "invalid_redirect_uri", "redirect_uris must use HTTPS or loopback HTTP")
+			return
+		}
+	}
+	if request.TokenEndpointAuthMethod != "" && request.TokenEndpointAuthMethod != "none" && request.TokenEndpointAuthMethod != "client_secret_post" && request.TokenEndpointAuthMethod != "client_secret_basic" {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_client_metadata", "unsupported token endpoint authentication method")
+		return
+	}
+	for _, grantType := range request.GrantTypes {
+		if grantType != "authorization_code" && grantType != "refresh_token" {
+			writeOAuthError(w, http.StatusBadRequest, "invalid_client_metadata", "only authorization_code and refresh_token are supported")
+			return
+		}
+	}
+	for _, responseType := range request.ResponseTypes {
+		if responseType != "code" {
+			writeOAuthError(w, http.StatusBadRequest, "invalid_client_metadata", "only code response type is supported")
+			return
+		}
+	}
+	clientID, err := randomToken(24)
+	if err != nil {
+		writeOAuthError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "client registration is unavailable")
+		return
+	}
+	clientID = "stash_" + clientID
+	method := request.TokenEndpointAuthMethod
+	secret := ""
+	if method == "" {
+		method = "none"
+	}
+	if method != "none" {
+		rawSecret, err := randomToken(32)
+		if err != nil {
+			writeOAuthError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "client registration is unavailable")
+			return
+		}
+		secret = rawSecret
+	}
+	client := oauthClient{
+		ID:                      clientID,
+		RedirectURIs:            append([]string(nil), request.RedirectURIs...),
+		TokenEndpointAuthMethod: method,
+		Secret:                  secret,
+		Name:                    request.ClientName,
+	}
+	p.mu.Lock()
+	p.ensureOAuthMapsLocked()
+	if len(p.clients) >= 1000 {
+		p.mu.Unlock()
+		writeOAuthError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "client registration limit reached")
+		return
+	}
+	p.clients[clientID] = client
+	p.mu.Unlock()
+
+	if len(request.GrantTypes) == 0 {
+		request.GrantTypes = []string{"authorization_code", "refresh_token"}
+	}
+	if len(request.ResponseTypes) == 0 {
+		request.ResponseTypes = []string{"code"}
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	response := map[string]any{
+		"client_id":                  clientID,
+		"client_id_issued_at":        time.Now().Unix(),
+		"client_name":                request.ClientName,
+		"redirect_uris":              request.RedirectURIs,
+		"grant_types":                request.GrantTypes,
+		"response_types":             request.ResponseTypes,
+		"token_endpoint_auth_method": method,
+	}
+	if secret != "" {
+		// RFC 7591 returns the secret only at registration time.
+		response["client_secret"] = secret
+	}
+	_ = json.NewEncoder(w).Encode(response)
+}
+
+func (p *Provider) client(clientID string) (oauthClient, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if client, ok := p.clients[clientID]; ok {
+		return client, true
+	}
+	if clientID == strings.TrimSpace(p.config.MCPClientID) {
+		return oauthClient{ID: clientID, TokenEndpointAuthMethod: "none"}, true
+	}
+	return oauthClient{}, false
+}
+
+func (p *Provider) clientExists(clientID string) bool {
+	_, ok := p.client(clientID)
+	return ok
+}
+
+func oauthClientCredentials(r *http.Request) (clientID, clientSecret string, fromBasic bool) {
+	if id, secret, ok := r.BasicAuth(); ok {
+		return id, secret, true
+	}
+	return strings.TrimSpace(r.Form.Get("client_id")), strings.TrimSpace(r.Form.Get("client_secret")), false
+}
+
+func oauthClientAuthenticated(client oauthClient, secret string, fromBasic bool) bool {
+	switch client.TokenEndpointAuthMethod {
+	case "", "none":
+		return !fromBasic && secret == ""
+	case "client_secret_post":
+		if fromBasic || secret == "" || client.Secret == "" {
+			return false
+		}
+	case "client_secret_basic":
+		if !fromBasic || secret == "" || client.Secret == "" {
+			return false
+		}
+	default:
+		return false
+	}
+	return len(secret) == len(client.Secret) && subtle.ConstantTimeCompare([]byte(secret), []byte(client.Secret)) == 1
+}
+
+func pkceMatches(challenge, verifier string) bool {
+	sum := sha256.Sum256([]byte(verifier))
+	computed := base64.RawURLEncoding.EncodeToString(sum[:])
+	return len(challenge) == len(computed) && subtle.ConstantTimeCompare([]byte(challenge), []byte(computed)) == 1
+}
+
+func writeOAuthError(w http.ResponseWriter, status int, code, description string) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": code, "error_description": description})
+}
+
 func bearerToken(r *http.Request) string {
 	parts := strings.Fields(r.Header.Get("Authorization"))
 	if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
@@ -479,13 +1390,13 @@ func setOAuthCookies(w http.ResponseWriter, secure bool) (string, string, error)
 	if err != nil {
 		return "", "", err
 	}
-	expires := time.Now().Add(10 * time.Minute)
+	expires := time.Now().Add(loginStateTTL)
 	for name, value := range map[string]string{stateCookieName: state, nonceCookieName: nonce} {
 		http.SetCookie(w, &http.Cookie{
 			Name:     name,
 			Value:    value,
 			Expires:  expires,
-			MaxAge:   600,
+			MaxAge:   int(loginStateTTL.Seconds()),
 			HttpOnly: true,
 			Secure:   secure,
 			Path:     "/",
@@ -540,6 +1451,33 @@ func generateStashToken(user, secret string, ttl time.Duration) (string, error) 
 	return apiTokenPrefix + payload + "." + signature, nil
 }
 
+func generateOAuthAccessToken(user, secret, resource, scope string, ttl time.Duration) (string, error) {
+	if user == "" {
+		return "", errors.New("user is required")
+	}
+	if secret == "" {
+		return "", errors.New("API secret is required")
+	}
+	if normalizeResourceURL(resource) == "" {
+		return "", errors.New("resource is required")
+	}
+	if ttl <= 0 {
+		ttl = defaultTokenTTL
+	}
+	nonce, err := randomToken(24)
+	if err != nil {
+		return "", err
+	}
+	payload := strings.Join([]string{
+		base64.RawURLEncoding.EncodeToString([]byte(user)),
+		strconv.FormatInt(time.Now().Add(ttl).Unix(), 10),
+		base64.RawURLEncoding.EncodeToString([]byte(normalizeResourceURL(resource))),
+		base64.RawURLEncoding.EncodeToString([]byte(scope)),
+		nonce,
+	}, ".")
+	return oauthTokenPrefix + payload + "." + sign(payload, secret), nil
+}
+
 func generateSessionToken(user, secret string, expiresAt time.Time) (string, error) {
 	if user == "" {
 		return "", errors.New("user is required")
@@ -581,6 +1519,47 @@ func parseSessionToken(token, secret string) (string, error) {
 	expiresAt, err := strconv.ParseInt(parts[1], 10, 64)
 	if err != nil || expiresAt <= time.Now().Unix() {
 		return "", errors.New("session token expired")
+	}
+	return string(decodedUser), nil
+}
+
+func parseOAuthAccessToken(token, secret, expectedResource string) (string, error) {
+	if secret == "" {
+		return "", errors.New("API secret is not configured")
+	}
+	if !strings.HasPrefix(token, oauthTokenPrefix) {
+		return "", errors.New("invalid OAuth access token prefix")
+	}
+	parts := strings.Split(strings.TrimPrefix(token, oauthTokenPrefix), ".")
+	if len(parts) != 6 {
+		return "", errors.New("invalid OAuth access token format")
+	}
+	payload := strings.Join(parts[:5], ".")
+	expected, err := hex.DecodeString(sign(payload, secret))
+	if err != nil {
+		return "", errors.New("invalid OAuth access token signature")
+	}
+	provided, err := hex.DecodeString(parts[5])
+	if err != nil || subtle.ConstantTimeCompare(provided, expected) != 1 {
+		return "", errors.New("invalid OAuth access token signature")
+	}
+	decodedUser, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil || len(decodedUser) == 0 {
+		return "", errors.New("invalid OAuth access token user")
+	}
+	expiresAt, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil || expiresAt <= time.Now().Unix() {
+		return "", errors.New("OAuth access token expired")
+	}
+	resourceBytes, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil || normalizeResourceURL(string(resourceBytes)) == "" {
+		return "", errors.New("invalid OAuth access token resource")
+	}
+	if expectedResource = normalizeResourceURL(expectedResource); expectedResource != "" && normalizeResourceURL(string(resourceBytes)) != expectedResource {
+		return "", errors.New("OAuth access token has unexpected resource")
+	}
+	if _, err := base64.RawURLEncoding.DecodeString(parts[3]); err != nil {
+		return "", errors.New("invalid OAuth access token scope")
 	}
 	return string(decodedUser), nil
 }

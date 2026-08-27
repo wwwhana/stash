@@ -1,0 +1,20 @@
+{
+  "name": "stash-tools",
+  "interface": {
+    "displayName": "Stash Tools"
+  },
+  "plugins": [
+    {
+      "name": "stash-work-plan",
+      "source": {
+        "source": "local",
+        "path": "./plugins/stash-work-plan"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

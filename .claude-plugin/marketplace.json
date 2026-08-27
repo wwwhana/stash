@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "stash-tools",
+  "version": "0.1.0",
+  "description": "Skills for using Stash as shared agent memory and project work state.",
+  "owner": {
+    "name": "wwwhana",
+    "url": "https://github.com/wwwhana"
+  },
+  "plugins": [
+    {
+      "name": "stash-work-plan",
+      "displayName": "Stash Work Plan",
+      "source": "./plugins/stash-work-plan",
+      "description": "Manage a shared component-oriented work plan through a configured Stash MCP server.",
+      "version": "0.1.0",
+      "author": {
+        "name": "wwwhana",
+        "url": "https://github.com/wwwhana"
+      },
+      "category": "productivity",
+      "tags": ["mcp", "planning", "worktrees"]
+    }
+  ]
+}
