@@ -29,6 +29,14 @@ type ReindexResult struct {
 // the background retry worker instead of leaving an old-model vector in place.
 func (b *Brain) Reindex(ctx context.Context, dryRun bool, progress func(table string, done, total int)) (ReindexResult, error) {
 	var res ReindexResult
+	if !dryRun {
+		// The brain receives the cached embedder. Drop disposable entries before
+		// recomputing so a same-model reindex cannot silently reuse an old vector
+		// after the embedding input pipeline changes.
+		if _, err := b.pool.Exec(ctx, "DELETE FROM embedding_cache"); err != nil {
+			return res, fmt.Errorf("clear embedding cache: %w", err)
+		}
+	}
 
 	for _, table := range []string{"episodes", "facts"} {
 		var total int
@@ -50,17 +58,17 @@ func (b *Brain) Reindex(ctx context.Context, dryRun bool, progress func(table st
 
 		// Clear the old vector before starting. If a provider request fails,
 		// recall must not silently use a vector from the previous model.
-		reason := fmt.Sprintf("manual reindex requested for model %q; waiting for a fresh vector", b.embedder.Model())
 		if _, err := b.pool.Exec(ctx, fmt.Sprintf(`
 			UPDATE %s
 			SET embedding = NULL,
 			    embedding_model = $1,
 			    embedding_attempts = 0,
-			    embedding_last_error = $2,
+			    embedding_last_error = NULL,
 			    embedding_retry_at = now(),
+			    embedding_lease_until = NULL,
 			    embedding_updated_at = now()
 			WHERE deleted_at IS NULL
-		`, table), b.embedder.Model(), reason); err != nil {
+		`, table), b.embedder.Model()); err != nil {
 			return res, fmt.Errorf("queue %s reindex: %w", table, err)
 		}
 
@@ -109,6 +117,7 @@ func (b *Brain) Reindex(ctx context.Context, dryRun bool, progress func(table st
 					    embedding_model = $2,
 					    embedding_last_error = NULL,
 					    embedding_retry_at = NULL,
+					    embedding_lease_until = NULL,
 					    embedding_updated_at = now()
 					WHERE id = $3`, table),
 				pgvector.NewVector(vec), b.embedder.Model(), r.id,

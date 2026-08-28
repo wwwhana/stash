@@ -110,7 +110,6 @@ func prepareEmbeddingStorage(ctx context.Context, sqlDB *sql.DB, expectedModel s
 	}
 
 	if needsReindex {
-		reason := fmt.Sprintf("embedding configuration changed to model %q (%d dimensions); queued for reindex", expectedModel, expectedDim)
 		for _, table := range []string{"episodes", "facts"} {
 			if !reindexTables[table] {
 				continue
@@ -120,11 +119,12 @@ func prepareEmbeddingStorage(ctx context.Context, sqlDB *sql.DB, expectedModel s
 				SET embedding = NULL,
 				    embedding_model = $1,
 				    embedding_attempts = 0,
-				    embedding_last_error = $2,
+				    embedding_last_error = NULL,
 				    embedding_retry_at = now(),
+				    embedding_lease_until = NULL,
 				    embedding_updated_at = now()
 				WHERE deleted_at IS NULL
-			`, table), expectedModel, reason)
+			`, table), expectedModel)
 			if err != nil {
 				return report, fmt.Errorf("queue %s reindex: %w", table, err)
 			}

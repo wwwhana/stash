@@ -110,7 +110,32 @@ func observeMCPTool(logger *slog.Logger, timeout time.Duration) server.ToolHandl
 			} else if err != nil || (result != nil && result.IsError) {
 				outcome = "error"
 			}
-			observability.RecordMCPToolCall(request.Params.Name, outcome, time.Since(started))
+			elapsed := time.Since(started)
+			observability.RecordMCPToolCall(request.Params.Name, outcome, elapsed)
+			if logger != nil {
+				args := []any{
+					"tool", request.Params.Name,
+					"outcome", outcome,
+					"duration_ms", float64(elapsed) / float64(time.Millisecond),
+				}
+				if requestID := observability.RequestID(toolCtx); requestID != "" {
+					args = append(args, "request_id", requestID)
+				}
+				if err != nil {
+					errorText := err.Error()
+					if len(errorText) > 2000 {
+						errorText = errorText[:2000]
+					}
+					args = append(args, "error", errorText)
+				} else if outcome == "error" {
+					args = append(args, "error", "tool returned an error result")
+				}
+				if outcome == "ok" {
+					logger.Info("mcp tool call", args...)
+				} else {
+					logger.Warn("mcp tool call failed", args...)
+				}
+			}
 			return result, err
 		}
 	}
@@ -986,6 +1011,8 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 
 	registerWorkGraphTools(mcpServer, bc)
 	registerWorkPlanTools(mcpServer, bc)
+	registerWorkExecutionTools(mcpServer, bc)
+	registerStashSkills(mcpServer)
 	return mcpServer
 }
 
@@ -1105,11 +1132,15 @@ func newStashHTTPHandler(bc *bootstrap.Context) http.Handler {
 	//   POST/GET/DELETE /mcp       → Streamable HTTP (권장 기본값)
 	//   GET             /sse       → SSE 스트림
 	//   POST            /message   → SSE 세션의 클라이언트 → 서버 메시지 채널
-	streamableServer := server.NewStreamableHTTPServer(mcpServer, server.WithHTTPContextFunc(httpContextFunc))
+	sessionResolver := server.NewDefaultSessionIdManagerResolver(&server.StatelessGeneratingSessionIdManager{})
+	streamableServer := server.NewStreamableHTTPServer(mcpServer,
+		server.WithHTTPContextFunc(httpContextFunc),
+		server.WithSessionIdManagerResolver(sessionResolver),
+	)
 	sseServer := server.NewSSEServer(mcpServer, server.WithSSEContextFunc(httpContextFunc))
 
 	mux := http.NewServeMux()
-	mux.Handle("/mcp", authenticatedHTTP(bc.Auth, streamableServer))
+	mux.Handle("/mcp", authenticatedHTTP(bc.Auth, newStashSkillsHTTPTransport(streamableServer, sessionResolver)))
 	mux.Handle("/sse", authenticatedHTTP(bc.Auth, sseServer.SSEHandler()))
 	mux.Handle("/message", authenticatedHTTP(bc.Auth, sseServer.MessageHandler()))
 	mux.HandleFunc("/.well-known/oauth-protected-resource", bc.Auth.HandleProtectedResourceMetadata)
@@ -1128,6 +1159,7 @@ func newStashHTTPHandler(bc *bootstrap.Context) http.Handler {
 	mux.HandleFunc("/auth/status", bc.Auth.HandleStatus)
 	mux.HandleFunc("/auth/token", bc.Auth.HandleGenerateToken)
 	registerOperationalRoutes(mux, bc)
+	registerAdminRoutes(mux, bc)
 	mux.Handle("/", web.GetUIHandler())
 
 	return observability.InstrumentHTTP(bc.Logger, mux)
@@ -1186,6 +1218,7 @@ func runEmbeddingRetryTicker(ctx context.Context, bc *bootstrap.Context) {
 				"indexed", result.Indexed,
 				"failed", result.Failed,
 				"pending", result.Pending,
+				"error", result.Error,
 			)
 			return
 		}
@@ -1200,11 +1233,14 @@ func runEmbeddingRetryTicker(ctx context.Context, bc *bootstrap.Context) {
 	run()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	wake := bc.Brain.EmbeddingRetryWake()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			run()
+		case <-wake:
 			run()
 		}
 	}

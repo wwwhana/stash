@@ -1,7 +1,7 @@
 {
   "name": "stash-work-plan",
   "version": "0.1.0",
-  "description": "Manage a shared component-oriented work plan through a configured Stash MCP server.",
+  "description": "Resume and execute shared component-oriented work through a configured Stash MCP server.",
   "author": {
     "name": "wwwhana",
     "url": "https://github.com/wwwhana"
@@ -13,15 +13,15 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "Stash Work Plan",
-    "shortDescription": "Keep agent work and decisions in Stash.",
-    "longDescription": "Resume and maintain a shared Stash work plan, coordinate tasks and worktrees, record decisions, and review plan meaning with the configured Reasoner model.",
+    "shortDescription": "Resume leased agent work safely in Stash.",
+    "longDescription": "Resume and maintain a shared Stash work plan, claim work with leases, checkpoint observed results, verify completion evidence, and hand off unfinished tasks.",
     "developerName": "wwwhana",
     "category": "Productivity",
     "capabilities": ["Interactive", "Write"],
     "websiteURL": "https://github.com/wwwhana/stash",
     "defaultPrompt": [
-      "Resume this project's Stash plan and start the next task.",
-      "Review the Stash plan and fix supported findings."
+      "Resume this project's next available Stash work item and continue from its checkpoint.",
+      "Resume a Stash work item by ID, verify its evidence, and finish or hand it off."
     ],
     "brandColor": "#4F46E5"
   }

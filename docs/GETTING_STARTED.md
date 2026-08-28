@@ -15,6 +15,11 @@ You should see the MCP server listening on port **8080**. The SSE endpoint is:
 http://localhost:8080/sse
 ```
 
+At the default `STASH_LOG_LEVEL=info`, `docker compose logs stash` also shows
+completed MCP/API and model-provider calls. Use `STASH_LOG_LEVEL=debug` for
+ordinary web requests; failed calls are shown at `warn`. Request bodies,
+authorization headers, cookies, and query strings are not logged.
+
 Quick check (expects HTTP 200 or SSE handshake):
 
 ```bash
@@ -82,6 +87,8 @@ If tools fail, check `.env`:
 | `STASH_EMBEDDING_RETRY_MAX_INTERVAL` | Maximum exponential backoff (default `1h`) |
 | `STASH_EMBEDDING_RETRY_BATCH_SIZE` | Maximum pending rows considered per pass (default `100`) |
 | `STASH_EMBEDDING_CONTEXT_TOKENS` | Embedding model input window; `0` uses adaptive splitting after a provider context error |
+| `STASH_ADMIN_SUBJECTS` | Comma-separated OIDC subjects allowed to open embedding maintenance |
+| `STASH_ADMIN_TOKEN` | Optional separate token for embedding maintenance (`X-Stash-Admin-Token`) |
 | `STASH_REASONER_MODEL` | Model used for consolidation and `validate_work_plan` |
 | `STASH_REASONER_CONTEXT_TOKENS` | Full reasoning-model context window; `0` uses adaptive splitting after a provider context error |
 | `STASH_REASONER_RESERVED_TOKENS` | Tokens kept for instructions and the JSON answer (default `4096`) |
@@ -101,6 +108,15 @@ Bearer token. `/oauth/register` accepts native public-client registrations.
 For a local CLI process, use `STASH_AUTH_MODE=stdio`; STDIO does not use MCP
 OAuth discovery. `STASH_AUTH_MODE=none` disables HTTP authentication and is
 intended only for an isolated local instance.
+
+### Embedding maintenance
+
+The web console can expose an **Embedding maintenance** page when
+`STASH_ADMIN_SUBJECTS` or `STASH_ADMIN_TOKEN` is configured. It shows pending
+rows, rows ready now, the latest provider error, model, and vector dimension.
+**Retry pending** wakes scheduled failures without interrupting active work.
+**Reindex all** clears stored vectors and the disposable cache, then queues
+every live episode and fact while preserving their original content.
 
 **Running fully local?** See [LOCAL_OLLAMA.md](LOCAL_OLLAMA.md) — Ollama on the host, no cloud API key.
 

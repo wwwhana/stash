@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/alash3al/stash/internal/observability"
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
 )
@@ -53,6 +55,13 @@ func NewOpenAI(baseURL, apiKey, model string, dims int) (*OpenAI, error) {
 // a dead model server must leave the memory row pending instead of holding a
 // request forever.
 func NewOpenAIWithTimeout(baseURL, apiKey, model string, dims int, requestTimeout time.Duration) (*OpenAI, error) {
+	return NewOpenAIWithTimeoutAndLogger(baseURL, apiKey, model, dims, requestTimeout, nil)
+}
+
+// NewOpenAIWithTimeoutAndLogger creates an OpenAI-compatible embedder and
+// records each provider request when logger is non-nil. Payloads and
+// credentials are never included in those records.
+func NewOpenAIWithTimeoutAndLogger(baseURL, apiKey, model string, dims int, requestTimeout time.Duration, logger *slog.Logger) (*OpenAI, error) {
 	if model == "" {
 		return nil, errors.New("embedder: model is required")
 	}
@@ -63,12 +72,16 @@ func NewOpenAIWithTimeout(baseURL, apiKey, model string, dims int, requestTimeou
 		return nil, errors.New("embedder: request timeout must be greater than zero")
 	}
 
+	transport := http.RoundTripper(http.DefaultTransport)
+	if logger != nil {
+		transport = observability.NewLoggingRoundTripper(logger, transport, "embedding", model)
+	}
 	options := []option.RequestOption{
 		option.WithBaseURL(baseURL),
 		option.WithRequestTimeout(requestTimeout),
 		// Keep a transport-level deadline as well. Some compatible transports do
 		// not propagate the SDK's per-attempt context while waiting for headers.
-		option.WithHTTPClient(&http.Client{Timeout: requestTimeout}),
+		option.WithHTTPClient(&http.Client{Timeout: requestTimeout, Transport: transport}),
 	}
 	if strings.TrimSpace(apiKey) != "" {
 		options = append(options, option.WithAPIKey(apiKey))

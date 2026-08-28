@@ -102,15 +102,17 @@ HTTP MCP 요청은 `Authorization: Bearer <access-token>` 헤더를 보내야 �
 
 ## 운영 지표와 상태 확인
 
-`stash serve`는 MCP, 관리 화면, OAuth 경로, 운영 지표, 상태 확인을 하나의 HTTP 포트(기본 `:8080`)에서 제공합니다. Prometheus 지표는 `http://localhost:8080/metrics`에서 확인하고, `/healthz`는 데이터베이스 연결을, `/readyz`는 준비 상태를 확인합니다. HTTP 요청, 인증 결과, MCP 도구 호출, 네임스페이스 범위 적용, 기억 통합 작업, 임베딩 재시도 대기 건수를 기록합니다. 요청·인증·도구·범위 지표의 라벨에는 사용자 ID와 실제 네임스페이스 이름을 넣지 않습니다.
+`stash serve`는 MCP, 관리 화면, OAuth 경로, 운영 지표, 상태 확인을 하나의 HTTP 포트(기본 `:8080`)에서 제공합니다. Prometheus 지표는 `http://localhost:8080/metrics`에서 확인하고, `/healthz`는 데이터베이스 연결을, `/readyz`는 준비 상태를 확인합니다. HTTP 요청, 인증 결과, MCP 도구 호출, 외부 제공자 호출, 네임스페이스 범위 적용, 기억 통합 작업, 임베딩 재시도 대기 건수를 기록합니다. 요청·인증·도구·제공자·범위 지표의 라벨에는 사용자 ID와 실제 네임스페이스 이름을 넣지 않습니다.
 
 임베딩 API가 짧은 요청 재시도 후에도 실패하면 원문은 인덱싱 대기 상태로 저장됩니다. PostgreSQL 연결은 정상이지만 벡터 값만 저장하지 못한 경우에도 원문을 보존합니다. 서버는 성공할 때까지 횟수 제한 없이 다시 처리하며, 재시도 간격은 설정한 최댓값까지만 늘어납니다. `STASH_EMBEDDING_RETRY_INTERVAL`, `STASH_EMBEDDING_RETRY_MAX_INTERVAL`, `STASH_EMBEDDING_RETRY_BATCH_SIZE`로 주기와 한 번에 처리할 수를 설정합니다.
+
+`STASH_ADMIN_SUBJECTS`(쉼표로 구분한 OIDC subject)나 `STASH_ADMIN_TOKEN`을 설정하면 관리 화면에 **임베딩 관리** 메뉴가 나타납니다. 대기 건수, 현재 모델과 차원, 최근 제공자 오류를 확인할 수 있습니다. **대기 항목 즉시 재시도**는 지금 처리 중인 항목을 건드리지 않고 예약된 실패 건을 즉시 깨웁니다. **전체 다시 계산**은 저장된 벡터와 임시 캐시를 비운 뒤 살아 있는 모든 에피소드와 팩트를 다시 등록하며 원문은 유지합니다.
 
 MCP 도구 결과에는 기본 32KB 안전 상한이 있습니다. 이 값은 전송을 보호하기 위한 값이며 모델의 컨텍스트 한도가 아닙니다. 목록이 상한을 넘으면 `items`, `has_more`, `next_offset`으로 나누므로 같은 도구에 `offset=next_offset`을 보내 이어서 읽을 수 있습니다. 목록이 아닌 큰 결과는 클라이언트의 입력 한도를 넘기기 전에 생략 안내를 반환합니다. 상한은 `STASH_MCP_MAX_RESPONSE_BYTES`로 바꿀 수 있습니다.
 
 리즌 모델과 임베딩 모델의 입력 한도는 MCP 응답 상한과 별도로 설정합니다. 리즌 모델의 전체 컨텍스트 크기를 `STASH_REASONER_CONTEXT_TOKENS`에, 지시문과 JSON 답변을 위해 남겨 둘 공간을 `STASH_REASONER_RESERVED_TOKENS`에 넣습니다. 임베딩 모델의 입력 한도는 `STASH_EMBEDDING_CONTEXT_TOKENS`에 넣습니다. Stash는 이 토큰 예산을 보수적인 UTF-8 바이트 예산으로 바꾸고, 문단을 먼저 나눈 뒤 마침표 같은 문장 끝을 우선해 자료를 나눠 호출합니다. 자연스러운 경계가 없을 때만 글자 중간을 나눕니다. 긴 임베딩 입력은 여러 묶음의 벡터를 합쳐 하나로 저장합니다. MCP는 모델의 토크나이저나 현재 대화에 남은 토큰을 알려주지 않으므로 값을 `0`으로 두면 제공자가 알려 준 한도를 읽어 자동으로 맞추고, 한도를 알 수 없을 때도 컨텍스트 초과 후 더 작게 나눠 다시 시도합니다. 컨텍스트가 44,544토큰인 리즌 모델이라면 `STASH_REASONER_CONTEXT_TOKENS=44544`, `STASH_REASONER_RESERVED_TOKENS=4096` 이상으로 시작하면 됩니다.
 
-HTTP 접근 기록은 `STASH_LOG_LEVEL=debug`일 때만 출력하며 쿼리 문자열, 인증 헤더, 쿠키는 기록하지 않습니다.
+`info`에서는 MCP/API 호출과 OpenAI 호환 제공자 호출이 콘솔에 남습니다. `STASH_LOG_LEVEL=debug`로 올리면 일반 관리 화면 요청도 볼 수 있고, 실패한 요청은 `warn`으로 표시됩니다. 로그에는 메서드, 제한된 경로, 상태, 걸린 시간, 호출 구성 요소·모델, 가능한 경우 요청 ID를 넣으며 쿼리 문자열, 인증 헤더, 쿠키, 요청 본문은 기록하지 않습니다.
 
 제공자 요청과 MCP 도구 호출은 기본 2분 안에 끝나야 합니다. 모델 서버가 느리거나 큰 계획을 검토하는 환경에서는 `STASH_OPENAI_REQUEST_TIMEOUT`과 `STASH_MCP_TOOL_TIMEOUT`을 같은 값 또는 도구 제한을 더 크게 설정하세요. 제한 시간이 지나면 요청은 오류로 끝나고, 임베딩은 원문을 보존한 채 다음 재시도 대상으로 남습니다.
 
@@ -166,7 +168,11 @@ Stash는 AI 에이전트와 현실 세계 사이의 인지적 계층(Cognitive l
 
 작업 카드는 기억 데이터와 분리해 저장하고, 목표·작업·의존성·워크트리·작업 이벤트를 하나의 그래프로 연결할 수 있습니다. 이슈 종류(버그·기능·작업), 라벨, 담당자, 댓글도 함께 관리하므로 별도 서비스 없이 로컬 이슈 트래커로 사용할 수 있습니다. 같은 데이터가 상태별 칸반 보드와 의존성 그래프로 표시됩니다. 작업 카드는 관련 사실·실패·가설에도 연결할 수 있어, 에이전트가 작업을 이어받을 때 필요한 근거를 함께 불러옵니다.
 
+웹 콘솔의 작업 그래프는 `/projects/<프로젝트명>` 네임스페이스를 프로젝트 목록으로 보여줍니다. 프로젝트를 고르면 그 프로젝트와 하위 네임스페이스만 그래프에 표시하고, `모든 프로젝트`를 고르면 `/projects` 아래 작업을 한 그래프로 표시합니다. MCP에서는 `get_work_graph`에 `project: "/projects/myapp"`를 넘겨 한 프로젝트만 조회할 수 있습니다.
+
 소유자가 읽는 작업 계획은 바뀌는 `PLAN.md` 대신 작업 계획 API에 저장합니다. 계획은 5~9개의 고정된 구성 요소로 만들고, 각 구성 요소에는 맡는 경로, 실제 작업, 선행 관계, 워크트리, 구현 전 결정 내용을 넣습니다. `get_work_plan`이 모두가 보는 현재 계획이며, `create_plan_component`, `update_plan_component`, `create_plan_task`, `update_plan_task`, 작업 상태 도구, `link_plan_components`, `record_plan_decision`으로 갱신합니다. `validate_work_plan`은 설정된 Reasoner 모델로 계획의 의미를 검사하고 최신 결과를 저장합니다. 임베딩 모델은 이때 사용하지 않습니다. 계획 내용이 바뀌면 `get_work_plan.validation.stale`이 이전 검사 결과임을 표시합니다. 일반 이슈 보드는 별도의 로컬 이슈용이며 계획에 속한 카드를 섞어 보여주지 않습니다.
+
+실제 작업에는 이어받을 수 있는 실행 기록을 남깁니다. `prepare_work`가 확인 가능한 완료 조건과 다음 행동 하나를 저장하고, `start_work`가 기한이 있는 작업권 하나를 발급합니다. 중간 기록, 에이전트가 제출한 근거, 조건 확인, 인계, 완료는 같은 작업 키로 다시 요청해도 중복 저장되지 않습니다. 새 에이전트는 이전 대화 없이 작업 ID만으로 `resume_work`를 호출해 최근 기록, 다음 행동, 완료 조건과 근거, 막는 작업, 워크트리, 연결된 기억을 읽고 이어갈 수 있습니다. 필수 조건마다 근거가 연결되고 막는 작업이 모두 끝나기 전에는 `finish_work`가 완료를 거부합니다.
 
 로컬 에이전트는 현재 저장소의 워크트리를 Stash에 동기화할 수 있습니다. 코드와 실제 변경 내용은 Git에 남고, Stash에는 경로·브랜치·커밋·상태·작업 기록이 저장됩니다.
 
@@ -178,7 +184,7 @@ stash issue list --namespaces / --status doing --label auth
 stash issue comment add W-000001 --body "재현 조건을 확인했습니다"
 ```
 
-영문 에이전트 규칙 예시는 [docs/AGENT.md](docs/AGENT.md)에서 복사할 수 있습니다. 작업 계획에는 `get_work_plan`, `validate_work_plan`, `create_plan_component`, `update_plan_component`, `create_plan_task`, `update_plan_task`, `start_plan_task`, `complete_plan_task`, `block_plan_task`, `unblock_plan_task`, `set_plan_component_paths`, `link_plan_components`, `record_plan_decision`을 사용합니다. `create_work_item`, `list_work_items`, `add_work_item_dependency`, `get_work_graph`, `add_work_item_comment`, `list_work_item_comments`, `link_work_item_memory`, `list_work_item_memory_links`, `list_worktrees`, `record_work_event`는 로컬 이슈 관리에 계속 사용할 수 있습니다. 처음 한 번 `init`을 호출하면 기본 작업 공간이 만들어집니다.
+영문 에이전트 규칙 예시는 [docs/AGENT.md](docs/AGENT.md)에서 복사할 수 있습니다. 작업 계획과 실행에는 `get_work_plan`, `validate_work_plan`, 구성 요소·작업·결정 도구와 `prepare_work`, `start_work`, `resume_work`, `checkpoint_work`, `submit_work_evidence`, `verify_work_condition`, `renew_work_lease`, `handoff_work`, `finish_work`, `remember_work`를 사용합니다. 일반 작업 카드, 의존 관계, 그래프, 댓글, 기억 연결, 워크트리, 작업 이벤트 도구는 로컬 이슈 관리에 계속 사용할 수 있습니다. 처음 한 번 `init`을 호출하면 기본 작업 공간이 만들어집니다.
 
 ### 작업 계획 스킬
 
@@ -193,6 +199,8 @@ codex plugin add stash-work-plan@stash-tools
 ```
 
 Claude에서는 `/stash-work-plan:stash-work-plan`, Codex에서는 `$stash-work-plan`으로 실행합니다.
+
+Streamable HTTP `/mcp`에서는 SEP-2640 초안의 `io.modelcontextprotocol/skills` 확장으로 내장 `stash-work` 규칙도 제공합니다. 초안을 지원하는 클라이언트는 `skills/list`로 찾을 수 있고, 아직 지원하지 않는 클라이언트는 위 Codex·Claude 플러그인을 사용하면 됩니다. 실제 사용자 정의 메서드를 받을 수 있는 `/mcp`에서만 이 확장을 알립니다.
 
 ## 라이선스
 

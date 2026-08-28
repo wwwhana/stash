@@ -112,6 +112,9 @@ type Brain struct {
 	// Alternate which durable embedding queue receives an odd batch slot. This
 	// keeps a batch size of one from permanently starving facts or episodes.
 	embeddingRetryPass atomic.Uint64
+	// embeddingRetryWake lets an administrator run a pending pass immediately
+	// instead of waiting for the next interval tick.
+	embeddingRetryWake chan struct{}
 }
 
 func (b *Brain) sanitizePage(page Pagination) Pagination {
@@ -142,11 +145,12 @@ func New(pool *pgxpool.Pool, e embedder.Embedder, r reasoner.Reasoner, q *querie
 		}
 	}
 	return &Brain{
-		pool:     pool,
-		embedder: e,
-		reasoner: r,
-		queries:  q,
-		config:   cfg,
+		pool:               pool,
+		embedder:           e,
+		reasoner:           r,
+		queries:            q,
+		config:             cfg,
+		embeddingRetryWake: make(chan struct{}, 1),
 	}, nil
 }
 

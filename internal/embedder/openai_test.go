@@ -1,10 +1,13 @@
 package embedder
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -41,5 +44,28 @@ func TestOpenAIRequestTimeoutStopsUnavailableProvider(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed > time.Second {
 		t.Fatalf("Embed took %s, want it to stop promptly", elapsed)
+	}
+}
+
+func TestOpenAIProviderCallIsLogged(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"object":"embedding","embedding":[0.1,0.2,0.3],"index":0}],"model":"local-embedding","usage":{"prompt_tokens":1,"total_tokens":1}}`))
+	}))
+	defer server.Close()
+
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	client, err := NewOpenAIWithTimeoutAndLogger(server.URL+"/v1", "", "local-embedding", 3, time.Second, logger)
+	if err != nil {
+		t.Fatalf("NewOpenAIWithTimeoutAndLogger: %v", err)
+	}
+	if _, err := client.Embed(context.Background(), "hello"); err != nil {
+		t.Fatalf("Embed: %v", err)
+	}
+	for _, want := range []string{"msg=\"provider api call\"", "component=embedding", "model=local-embedding", "path=/v1/embeddings", "status=200"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Fatalf("provider log %q does not contain %q", logs.String(), want)
+		}
 	}
 }

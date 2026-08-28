@@ -231,6 +231,7 @@ type WorkEvent struct {
 	NamespaceID int64           `db:"namespace_id" json:"namespace_id"`
 	WorktreeID  *int64          `db:"worktree_id" json:"worktree_id,omitempty"`
 	WorkItemID  *int64          `db:"work_item_id" json:"work_item_id,omitempty"`
+	AttemptID   *int64          `db:"attempt_id" json:"attempt_id,omitempty"`
 	EventType   string          `db:"event_type" json:"event_type"`
 	EventKey    *string         `db:"event_key" json:"event_key,omitempty"`
 	Payload     json.RawMessage `db:"payload" json:"payload"`

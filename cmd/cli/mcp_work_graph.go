@@ -33,6 +33,13 @@ func parseOptionalTime(request mcp.CallToolRequest, key string) (*time.Time, err
 	return &parsed, nil
 }
 
+func workGraphNamespaceQuery(request mcp.CallToolRequest) string {
+	if project := strings.TrimSpace(request.GetString("project", "")); project != "" {
+		return project
+	}
+	return request.GetString("namespaces", "/")
+}
+
 func optionalID(request mcp.CallToolRequest, key string) (*int64, error) {
 	args := request.GetArguments()
 	raw, ok := args[key]
@@ -439,11 +446,13 @@ func registerWorkGraphTools(mcpServer *server.MCPServer, bc *bootstrap.Context) 
 	})
 
 	mcpServer.AddTool(mcp.NewTool("get_work_graph",
-		mcp.WithDescription("Return task nodes, dependency edges, and registered worktrees for a graph view."),
+		mcp.WithDescription("Return task nodes, dependency edges, and registered worktrees for a graph view. Set project to an exact project namespace such as /projects/myapp to isolate one project."),
 		mcp.WithString("namespaces", mcp.Description("Comma-separated namespace paths")),
+		mcp.WithString("project", mcp.Description("Optional exact project namespace path; when set, it takes precedence over namespaces")),
 		mcp.WithBoolean("include_done", mcp.Description("Include done and canceled nodes"), mcp.DefaultBool(false)),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		namespaces, err := resolveNamespaces(ctx, request.GetString("namespaces", "/"))
+		namespaceQuery := workGraphNamespaceQuery(request)
+		namespaces, err := resolveNamespaces(ctx, namespaceQuery)
 		if err != nil {
 			return nil, err
 		}

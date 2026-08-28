@@ -74,7 +74,7 @@ func New(ctx context.Context) (*Context, error) {
 		)
 	}
 
-	emb, err := buildEmbedder(cfg)
+	emb, err := buildEmbedder(cfg, logger)
 	if err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("build embedder: %w", err)
@@ -86,7 +86,7 @@ func New(ctx context.Context) (*Context, error) {
 	// Wrap embedder with pgx-backed cache
 	cachedEmb := embedder.NewCached(limitedEmb, pool)
 
-	reas, err := buildReasoner(cfg)
+	reas, err := buildReasoner(cfg, logger)
 	if err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("build reasoner: %w", err)
@@ -186,21 +186,23 @@ func buildLogger(cfg *config.Config) *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stdout, opts))
 }
 
-func buildEmbedder(cfg *config.Config) (embedder.Embedder, error) {
-	return embedder.NewOpenAIWithTimeout(
+func buildEmbedder(cfg *config.Config, logger *slog.Logger) (embedder.Embedder, error) {
+	return embedder.NewOpenAIWithTimeoutAndLogger(
 		cfg.OpenAIBaseURL,
 		cfg.OpenAIAPIKey,
 		cfg.EmbeddingModel,
 		cfg.VectorDim,
 		cfg.OpenAIRequestTimeout,
+		logger,
 	)
 }
 
-func buildReasoner(cfg *config.Config) (reasoner.Reasoner, error) {
-	return reasoner.NewOpenAIWithTimeout(
+func buildReasoner(cfg *config.Config, logger *slog.Logger) (reasoner.Reasoner, error) {
+	return reasoner.NewOpenAIWithTimeoutAndLogger(
 		cfg.OpenAIBaseURL,
 		cfg.OpenAIAPIKey,
 		cfg.ReasonerModel,
 		cfg.OpenAIRequestTimeout,
+		logger,
 	)
 }

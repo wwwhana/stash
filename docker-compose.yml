@@ -68,6 +68,10 @@ services:
       STASH_AUTH_OAUTH_COOKIE_SECURE: ${STASH_AUTH_OAUTH_COOKIE_SECURE:-}
       STASH_AUTH_OAUTH_TOKEN_TTL: ${STASH_AUTH_OAUTH_TOKEN_TTL:-}
       STASH_AUTH_OAUTH_STDIO_TOKEN: ${STASH_AUTH_OAUTH_STDIO_TOKEN:-}
+      # Optional: expose embedding maintenance to configured OIDC subjects or
+      # to a separate X-Stash-Admin-Token credential.
+      STASH_ADMIN_SUBJECTS: ${STASH_ADMIN_SUBJECTS:-}
+      STASH_ADMIN_TOKEN: ${STASH_ADMIN_TOKEN:-}
       # Optional consolidation configs
       STASH_CONSOLIDATION_BATCH_SIZE: 100
       STASH_CONSOLIDATION_SIMILARITY_THRESHOLD: 0.85

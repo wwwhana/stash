@@ -74,6 +74,28 @@ func TestInstrumentHTTPSuppressesAccessLogAboveDebugLevel(t *testing.T) {
 	}
 }
 
+func TestInstrumentHTTPLogsAPIAccessAtInfoAndPropagatesRequestID(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	handler := InstrumentHTTP(logger, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := RequestID(r.Context()); got != "request-123" {
+			t.Fatalf("request ID in context = %q, want request-123", got)
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+
+	request := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	request.Header.Set("X-Request-ID", "request-123")
+	handler.ServeHTTP(httptest.NewRecorder(), request)
+
+	logText := logs.String()
+	for _, want := range []string{"msg=\"http access\"", "api=true", "method=POST", "path=/mcp", "status=202", "request_id=request-123"} {
+		if !strings.Contains(logText, want) {
+			t.Fatalf("API access log %q does not contain %q", logText, want)
+		}
+	}
+}
+
 func TestRouteLabelKeepsUnknownPathsBounded(t *testing.T) {
 	if got := routeLabel("/auth/callback/attacker-controlled"); got != "/auth/*" {
 		t.Fatalf("route label = %q, want /auth/*", got)

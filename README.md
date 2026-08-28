@@ -152,9 +152,11 @@ Point any MCP-compatible client at the SSE URL: `http://localhost:8080/sse`
 
 ## Metrics and Health
 
-`stash serve` uses one HTTP port for MCP, the web console, OAuth endpoints, metrics, and status checks (default `:8080`). Prometheus metrics are available at `http://localhost:8080/metrics`; `/healthz` checks the database connection and `/readyz` checks readiness. The metrics cover HTTP requests, authentication outcomes, MCP tool calls, namespace-scope decisions, consolidation activity, and pending embedding retries. Request, authentication, tool, and scope metrics use bounded labels and do not include user IDs or raw namespace names.
+`stash serve` uses one HTTP port for MCP, the web console, OAuth endpoints, metrics, and status checks (default `:8080`). Prometheus metrics are available at `http://localhost:8080/metrics`; `/healthz` checks the database connection and `/readyz` checks readiness. The metrics cover HTTP requests, authentication outcomes, MCP tool calls, outbound provider calls, namespace-scope decisions, consolidation activity, and pending embedding retries. Request, authentication, tool, provider, and scope metrics use bounded labels and do not include user IDs or raw namespace names.
 
 If the embedding endpoint still fails after the SDK's short request retries, Stash saves the raw memory with a pending index state. It also preserves the raw memory when PostgreSQL is reachable but the vector value cannot be stored. The background worker retries without an attempt limit; exponential backoff stops growing at the configured maximum. Configure it with `STASH_EMBEDDING_RETRY_INTERVAL`, `STASH_EMBEDDING_RETRY_MAX_INTERVAL`, and `STASH_EMBEDDING_RETRY_BATCH_SIZE`.
+
+The web console can expose an **Embedding maintenance** page when `STASH_ADMIN_SUBJECTS` (comma-separated OIDC subjects) or `STASH_ADMIN_TOKEN` is configured. It shows pending work, the current model and dimension, and the latest provider error. **Retry pending** wakes scheduled failures without interrupting active work. **Reindex all** clears stored vectors and the disposable cache, then queues every live episode and fact while preserving the original content.
 
 MCP tool results keep a 32 KiB safety cap by default (this is a transport safeguard, not a model context size). Oversized list pages are split into `items`, `has_more`, and `next_offset`; call the same tool with `offset=next_offset` to continue. Oversized non-list results return a small notice before they can exhaust the client context. Change the cap with `STASH_MCP_MAX_RESPONSE_BYTES`.
 
@@ -164,7 +166,7 @@ Provider requests and MCP tool handlers have a two-minute default deadline. Set 
 
 When `STASH_EMBEDDING_MODEL` or `STASH_VECTOR_DIM` changes, Stash detects the change at startup. It resizes the pgvector columns when needed, clears old vectors and the embedding cache, and queues every live episode and fact for indexing with the new model. The original content is preserved; the background worker recomputes vectors and retries provider failures. Use `stash reindex --dry-run` to inspect a manual reindex, or `stash reindex` when you want to start one immediately without changing the model setting.
 
-Set `STASH_LOG_LEVEL=debug` to emit HTTP access records. Access records omit query strings, authorization headers, and cookies.
+At `info`, Stash logs completed MCP/API calls and OpenAI-compatible provider calls. Set `STASH_LOG_LEVEL=debug` to include ordinary web access records; failed requests are promoted to `warn`. Logs include the method, bounded path, status, duration, component/model, and request ID when available, but never query strings, authorization headers, cookies, or request bodies.
 
 ### Auto-Save &amp; Seamless Handoff
 
@@ -180,7 +182,11 @@ A 9-stage consolidation pipeline turns raw observations into structured knowledg
 
 Work cards live separately from memory data and connect goals, tasks, dependencies, worktrees, and activity events in one graph. Issue types (bug, feature, task), labels, assignees, and comments are included, so the same data can serve as a local issue tracker without another service. The same data can be shown as a Kanban board grouped by status or as a dependency graph. Work cards can also link to facts, failures, and hypotheses so an agent can pick up the evidence it needs in a later session.
 
+The web console's Work Graph lists `/projects/<name>` namespaces as project scopes. Selecting a project limits the graph to that project and its descendants; `All projects` shows work under `/projects` together. MCP clients can pass `project: "/projects/myapp"` to `get_work_graph` to retrieve one project explicitly.
+
 For an owner-facing living plan, use the Work Plan API instead of a changing `PLAN.md`. Its 5–9 stable component cards own repository paths and hold executable child tasks, directed prerequisites, worktree links, and decisions made before implementation. `get_work_plan` is the shared current plan; `create_plan_component`, `update_plan_component`, `create_plan_task`, `update_plan_task`, task-state tools, `link_plan_components`, and `record_plan_decision` update it. `validate_work_plan` runs an explicit semantic review with the configured Reasoner model and stores the latest result; it does not use the embedding model. When plan content changes, `get_work_plan.validation.stale` marks the saved review as outdated. The ordinary issue board remains for ad-hoc local issues and does not mix in plan-managed cards.
+
+Tracked work has a resumable execution record. `prepare_work` stores observable completion conditions and one next action; `start_work` grants one time-limited lease; checkpoints, agent-submitted evidence, verification, handoff, and completion are committed with stable action keys. A fresh agent can call `resume_work` with only the work item ID and recover the latest checkpoint, next action, conditions, evidence, blockers, worktree, and linked memory without needing the previous chat. `finish_work` is rejected until every required condition has linked evidence and every blocking item is finished.
 
 An agent-side bridge can sync the repository's local Git worktrees into Stash. Git remains the source for code and diffs; Stash stores paths, branches, commits, status, and work history.
 
@@ -192,7 +198,7 @@ stash issue list --namespaces / --status doing --label auth
 stash issue comment add W-000001 --body "Reproduction confirmed"
 ```
 
-An agent rules sample is available at [docs/AGENT.md](docs/AGENT.md). MCP clients can use `get_work_plan`, `validate_work_plan`, `create_plan_component`, `update_plan_component`, `create_plan_task`, `update_plan_task`, `start_plan_task`, `complete_plan_task`, `block_plan_task`, `unblock_plan_task`, `set_plan_component_paths`, `link_plan_components`, and `record_plan_decision` for a living plan; `create_work_item`, `list_work_items`, `add_work_item_dependency`, `get_work_graph`, `add_work_item_comment`, `list_work_item_comments`, `link_work_item_memory`, `list_work_item_memory_links`, `list_worktrees`, and `record_work_event` remain available for local issue tracking. Call `init` once to create the default workspace before syncing or creating work data.
+An agent rules sample is available at [docs/AGENT.md](docs/AGENT.md). MCP clients can use `get_work_plan`, `validate_work_plan`, the component/task/decision tools, and `prepare_work`, `start_work`, `resume_work`, `checkpoint_work`, `submit_work_evidence`, `verify_work_condition`, `renew_work_lease`, `handoff_work`, `finish_work`, and `remember_work` for durable execution. `create_work_item`, `list_work_items`, `add_work_item_dependency`, `get_work_graph`, comments, memory links, worktrees, and work events remain available for local issue tracking. Call `init` once to create the default workspace before syncing or creating work data.
 
 ### Work plan skill
 
@@ -207,6 +213,8 @@ codex plugin add stash-work-plan@stash-tools
 ```
 
 Claude exposes the plugin skill as `/stash-work-plan:stash-work-plan`; Codex exposes it as `$stash-work-plan`.
+
+The Streamable HTTP endpoint also serves the built-in `stash-work` instructions through the experimental `io.modelcontextprotocol/skills` extension described by draft SEP-2640. Clients that implement the draft can discover it with `skills/list`; other clients can keep using the Codex or Claude plugin above. The extension is advertised only on `/mcp`, where its custom methods are reachable.
 
 ## License
 

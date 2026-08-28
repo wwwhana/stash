@@ -21,6 +21,189 @@ type EmbeddingRetryResult struct {
 	Indexed   int64 `json:"indexed"`
 	Failed    int64 `json:"failed"`
 	Pending   int64 `json:"pending"`
+	// Error contains the first bounded failure in this pass. The per-row
+	// embedding_last_error column remains the detailed durable record; this
+	// summary makes an aggregate warning actionable without a database query.
+	Error string `json:"error,omitempty"`
+}
+
+// EmbeddingMaintenanceStatus is the operator-facing state of the durable
+// embedding queue. It intentionally excludes memory content.
+type EmbeddingMaintenanceStatus struct {
+	Model           string `json:"model"`
+	Dimensions      int    `json:"dimensions"`
+	EpisodesTotal   int64  `json:"episodes_total"`
+	FactsTotal      int64  `json:"facts_total"`
+	EpisodesPending int64  `json:"episodes_pending"`
+	FactsPending    int64  `json:"facts_pending"`
+	Pending         int64  `json:"pending"`
+	Due             int64  `json:"due"`
+	Failed          int64  `json:"failed"`
+	LatestError     string `json:"latest_error,omitempty"`
+}
+
+// EmbeddingRetryWake returns the notification channel used by the background
+// worker. A nil channel is safe for Brain values built directly in tests.
+func (b *Brain) EmbeddingRetryWake() <-chan struct{} {
+	if b == nil {
+		return nil
+	}
+	return b.embeddingRetryWake
+}
+
+// WakeEmbeddingRetries asks the background worker to run a pass immediately.
+// It is deliberately non-blocking so an admin request cannot wait on a worker
+// that is already processing a batch.
+func (b *Brain) WakeEmbeddingRetries() {
+	if b == nil || b.embeddingRetryWake == nil {
+		return
+	}
+	select {
+	case b.embeddingRetryWake <- struct{}{}:
+	default:
+	}
+}
+
+// EmbeddingMaintenanceStatus returns queue counts and the most recent bounded
+// provider error without exposing memory content.
+func (b *Brain) EmbeddingMaintenanceStatus(ctx context.Context) (EmbeddingMaintenanceStatus, error) {
+	if err := b.ensureEmbeddingMaintenanceReady(); err != nil {
+		return EmbeddingMaintenanceStatus{}, err
+	}
+	status := EmbeddingMaintenanceStatus{Model: b.embedder.Model(), Dimensions: b.embedder.Dims()}
+	for _, table := range []string{"episodes", "facts"} {
+		var total, pending, due, failed int64
+		query := fmt.Sprintf(`
+			SELECT count(*) FILTER (WHERE deleted_at IS NULL),
+			       count(*) FILTER (WHERE embedding IS NULL AND deleted_at IS NULL),
+			       count(*) FILTER (
+			           WHERE embedding IS NULL AND deleted_at IS NULL
+			             AND (embedding_retry_at IS NULL OR embedding_retry_at <= now())
+			             AND (embedding_lease_until IS NULL OR embedding_lease_until <= now())
+			       ),
+			       count(*) FILTER (
+			           WHERE embedding IS NULL AND deleted_at IS NULL
+			             AND embedding_attempts > 0 AND embedding_last_error IS NOT NULL
+			       )
+			FROM %s
+		`, table)
+		if err := b.pool.QueryRow(ctx, query).Scan(&total, &pending, &due, &failed); err != nil {
+			return status, fmt.Errorf("read %s embedding status: %w", table, err)
+		}
+		if table == "episodes" {
+			status.EpisodesTotal, status.EpisodesPending = total, pending
+		} else {
+			status.FactsTotal, status.FactsPending = total, pending
+		}
+		status.Pending += pending
+		status.Due += due
+		status.Failed += failed
+	}
+
+	if err := b.pool.QueryRow(ctx, `
+		SELECT coalesce((
+			SELECT embedding_last_error
+			FROM (
+				SELECT embedding_last_error, embedding_updated_at
+				FROM episodes
+				WHERE embedding IS NULL AND deleted_at IS NULL AND embedding_attempts > 0 AND embedding_last_error IS NOT NULL
+				UNION ALL
+				SELECT embedding_last_error, embedding_updated_at
+				FROM facts
+				WHERE embedding IS NULL AND deleted_at IS NULL AND embedding_attempts > 0 AND embedding_last_error IS NOT NULL
+			) errors
+			ORDER BY embedding_updated_at DESC NULLS LAST
+			LIMIT 1
+		), '')
+	`).Scan(&status.LatestError); err != nil {
+		return status, fmt.Errorf("read latest embedding error: %w", err)
+	}
+	status.LatestError = embeddingErrorTextString(status.LatestError)
+	return status, nil
+}
+
+// ForceRetryPendingEmbeddings makes scheduled, unleased failures eligible now.
+// A worker currently holding a lease is left alone to avoid duplicate provider
+// calls. The background worker is woken separately by the caller.
+func (b *Brain) ForceRetryPendingEmbeddings(ctx context.Context) (int64, error) {
+	if err := b.ensureEmbeddingMaintenanceReady(); err != nil {
+		return 0, err
+	}
+	tx, err := b.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("begin embedding retry wake: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var woken int64
+	for _, table := range []string{"episodes", "facts"} {
+		result, err := tx.Exec(ctx, fmt.Sprintf(`
+			UPDATE %s
+			SET embedding_retry_at = now(), embedding_updated_at = now()
+			WHERE embedding IS NULL
+			  AND deleted_at IS NULL
+			  AND (embedding_lease_until IS NULL OR embedding_lease_until <= now())
+		`, table))
+		if err != nil {
+			return woken, fmt.Errorf("wake %s embeddings: %w", table, err)
+		}
+		woken += result.RowsAffected()
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return woken, fmt.Errorf("commit embedding retry wake: %w", err)
+	}
+	return woken, nil
+}
+
+// QueueEmbeddingReindex clears vectors and schedules every live source row for
+// a fresh vector. Source content remains untouched; this is the explicit admin
+// action for a model or input-pipeline change.
+func (b *Brain) QueueEmbeddingReindex(ctx context.Context) (int64, error) {
+	if err := b.ensureEmbeddingMaintenanceReady(); err != nil {
+		return 0, err
+	}
+	tx, err := b.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("begin embedding reindex: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var queued int64
+	for _, table := range []string{"episodes", "facts"} {
+		result, err := tx.Exec(ctx, fmt.Sprintf(`
+			UPDATE %s
+			SET embedding = NULL,
+			    embedding_model = $1,
+			    embedding_attempts = 0,
+			    embedding_last_error = NULL,
+			    embedding_retry_at = now(),
+			    embedding_lease_until = NULL,
+			    embedding_updated_at = now()
+			WHERE deleted_at IS NULL
+		`, table), b.embedder.Model())
+		if err != nil {
+			return queued, fmt.Errorf("queue %s reindex: %w", table, err)
+		}
+		queued += result.RowsAffected()
+	}
+	if _, err := tx.Exec(ctx, "DELETE FROM embedding_cache"); err != nil {
+		return queued, fmt.Errorf("clear embedding cache: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return queued, fmt.Errorf("commit embedding reindex: %w", err)
+	}
+	return queued, nil
+}
+
+func embeddingErrorTextString(value string) string {
+	return embeddingErrorText(fmt.Errorf("%s", value))
+}
+
+func (b *Brain) ensureEmbeddingMaintenanceReady() error {
+	if b == nil || b.pool == nil || b.embedder == nil {
+		return fmt.Errorf("embedding maintenance is not initialized")
+	}
+	return nil
 }
 
 type pendingEmbedding struct {
@@ -88,6 +271,9 @@ func (b *Brain) RetryPendingEmbeddings(ctx context.Context, batchSize int) (Embe
 
 			vec, err := b.embedder.Embed(ctx, item.Content)
 			if err != nil {
+				if result.Error == "" {
+					result.Error = embeddingErrorText(err)
+				}
 				next := time.Now().UTC().Add(embeddingRetryDelay(
 					b.config.EmbeddingRetryInterval,
 					b.config.EmbeddingRetryMaxInterval,
@@ -102,6 +288,9 @@ func (b *Brain) RetryPendingEmbeddings(ctx context.Context, batchSize int) (Embe
 
 			updated, err := b.finishEmbedding(ctx, table, item.ID, vec)
 			if err != nil {
+				if result.Error == "" {
+					result.Error = embeddingErrorText(err)
+				}
 				next := time.Now().UTC().Add(embeddingRetryDelay(
 					b.config.EmbeddingRetryInterval,
 					b.config.EmbeddingRetryMaxInterval,
@@ -148,18 +337,20 @@ func (b *Brain) claimPendingEmbeddings(ctx context.Context, table string, limit 
 	}
 	leaseUntil := time.Now().UTC().Add(embeddingClaimLease)
 	query := fmt.Sprintf(`
-		WITH candidates AS (
-			SELECT id
-			FROM %s
-			WHERE embedding IS NULL
-			  AND deleted_at IS NULL
-			  AND (embedding_retry_at IS NULL OR embedding_retry_at <= now())
-			ORDER BY COALESCE(embedding_retry_at, created_at), id
+			WITH candidates AS (
+				SELECT id
+				FROM %s
+				WHERE embedding IS NULL
+				  AND deleted_at IS NULL
+				  AND (embedding_retry_at IS NULL OR embedding_retry_at <= now())
+				  AND (embedding_lease_until IS NULL OR embedding_lease_until <= now())
+				ORDER BY COALESCE(embedding_retry_at, created_at), id
 			LIMIT $1
 			FOR UPDATE SKIP LOCKED
 		)
 		UPDATE %s AS target
 		SET embedding_retry_at = $2,
+			embedding_lease_until = $2,
 			embedding_attempts = target.embedding_attempts + 1,
 			embedding_updated_at = now()
 		FROM candidates
@@ -197,6 +388,7 @@ func (b *Brain) finishEmbedding(ctx context.Context, table string, id int64, vec
 			embedding_model = $2,
 			embedding_last_error = NULL,
 			embedding_retry_at = NULL,
+			embedding_lease_until = NULL,
 			embedding_updated_at = now()
 		WHERE id = $3 AND embedding IS NULL
 	`, table)
@@ -215,6 +407,7 @@ func (b *Brain) recordEmbeddingFailure(ctx context.Context, table string, id int
 		UPDATE %s
 		SET embedding_last_error = $1,
 			embedding_retry_at = $2,
+			embedding_lease_until = NULL,
 			embedding_updated_at = now()
 		WHERE id = $3 AND embedding IS NULL
 	`, table)

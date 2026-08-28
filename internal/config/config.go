@@ -59,6 +59,11 @@ type Config struct {
 	AuthCookieSecure   bool          `env:"STASH_AUTH_COOKIE_SECURE" envDefault:"true"`
 	AuthTokenTTL       time.Duration `env:"STASH_AUTH_TOKEN_TTL" envDefault:"720h"`
 	AuthStdioToken     string        `env:"STASH_AUTH_STDIO_TOKEN" envDefault:""`
+	// Admin maintenance accepts either an authenticated OIDC subject listed
+	// here or the separate static token below. Keep this independent from the
+	// MCP API secret so a maintenance credential cannot sign user sessions.
+	AdminSubjects string `env:"STASH_ADMIN_SUBJECTS" envDefault:""`
+	AdminToken    string `env:"STASH_ADMIN_TOKEN" envDefault:""`
 
 	// OAuth-prefixed aliases make the profile explicit while preserving the
 	// original STASH_AUTH_* names used by existing deployments.

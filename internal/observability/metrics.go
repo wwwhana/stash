@@ -97,6 +97,19 @@ var (
 			Buckets: prometheus.DefBuckets,
 		}, []string{"tool"},
 	)
+	providerAPICalls = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "stash_provider_api_calls_total",
+			Help: "Calls made to configured OpenAI-compatible providers",
+		}, []string{"component", "result"},
+	)
+	providerAPIDuration = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "stash_provider_api_call_duration_seconds",
+			Help:    "Duration of configured OpenAI-compatible provider calls",
+			Buckets: prometheus.DefBuckets,
+		}, []string{"component"},
+	)
 	namespaceScopes = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "stash_namespace_scope_resolutions_total",
@@ -108,6 +121,12 @@ var (
 			Name: "stash_namespace_authorizations_total",
 			Help: "Namespace authorization checks by result",
 		}, []string{"result"},
+	)
+	workExecutionTransitions = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "stash_work_execution_transitions_total",
+			Help: "Tracked work execution transitions by action and result",
+		}, []string{"action", "result"},
 	)
 )
 
@@ -168,6 +187,14 @@ func RecordMCPToolCall(tool, result string, elapsed time.Duration) {
 	mcpToolDuration.WithLabelValues(tool).Observe(elapsed.Seconds())
 }
 
+// RecordProviderAPICall records a completed outbound provider request without
+// including the provider URL, model, or any user content in metric labels.
+func RecordProviderAPICall(component, result string, elapsed time.Duration) {
+	component = stableLabel(component, "unknown")
+	providerAPICalls.WithLabelValues(component, stableLabel(result, "unknown")).Inc()
+	providerAPIDuration.WithLabelValues(component).Observe(elapsed.Seconds())
+}
+
 // RecordNamespaceScope records whether a request was resolved to the local
 // unscoped store or to a verified user's namespace.
 func RecordNamespaceScope(mode, scope string) {
@@ -177,6 +204,12 @@ func RecordNamespaceScope(mode, scope string) {
 // RecordNamespaceAuthorization records object-level namespace checks.
 func RecordNamespaceAuthorization(result string) {
 	namespaceAuthorizations.WithLabelValues(stableLabel(result, "unknown")).Inc()
+}
+
+// RecordWorkExecution records durable work-attempt transitions. Labels are
+// limited to the server's fixed action and result vocabulary.
+func RecordWorkExecution(action, result string) {
+	workExecutionTransitions.WithLabelValues(stableLabel(action, "unknown"), stableLabel(result, "unknown")).Inc()
 }
 
 func stableLabel(value, fallback string) string {

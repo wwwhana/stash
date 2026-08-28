@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 	"unicode"
 
 	"github.com/alash3al/stash/internal/models"
+	"github.com/alash3al/stash/internal/observability"
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
 )
@@ -51,6 +53,13 @@ func NewOpenAI(baseURL, apiKey, model string) (*OpenAI, error) {
 // Without this bound a provider that accepts a connection but never returns
 // can hold an MCP tool and every caller waiting behind it indefinitely.
 func NewOpenAIWithTimeout(baseURL, apiKey, model string, requestTimeout time.Duration) (*OpenAI, error) {
+	return NewOpenAIWithTimeoutAndLogger(baseURL, apiKey, model, requestTimeout, nil)
+}
+
+// NewOpenAIWithTimeoutAndLogger creates a reasoner and records each provider
+// request when logger is non-nil. Prompts, responses, and credentials are
+// deliberately excluded from logs.
+func NewOpenAIWithTimeoutAndLogger(baseURL, apiKey, model string, requestTimeout time.Duration, logger *slog.Logger) (*OpenAI, error) {
 	if model == "" {
 		return nil, errors.New("reasoner: model is required")
 	}
@@ -58,12 +67,16 @@ func NewOpenAIWithTimeout(baseURL, apiKey, model string, requestTimeout time.Dur
 		return nil, errors.New("reasoner: request timeout must be greater than zero")
 	}
 
+	transport := http.RoundTripper(http.DefaultTransport)
+	if logger != nil {
+		transport = observability.NewLoggingRoundTripper(logger, transport, "reasoner", model)
+	}
 	options := []option.RequestOption{
 		option.WithBaseURL(baseURL),
 		option.WithRequestTimeout(requestTimeout),
 		// Keep a transport-level deadline as well. Some compatible transports do
 		// not propagate the SDK's per-attempt context while waiting for headers.
-		option.WithHTTPClient(&http.Client{Timeout: requestTimeout}),
+		option.WithHTTPClient(&http.Client{Timeout: requestTimeout, Transport: transport}),
 	}
 	if strings.TrimSpace(apiKey) != "" {
 		options = append(options, option.WithAPIKey(apiKey))

@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +12,7 @@ import (
 	"time"
 
 	"github.com/alash3al/stash/internal/bootstrap"
+	"github.com/alash3al/stash/internal/observability"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -102,5 +105,31 @@ func TestObserveMCPToolStopsStalledHandler(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed > time.Second {
 		t.Fatalf("stalled tool took %s, want it to stop promptly", elapsed)
+	}
+}
+
+func TestObserveMCPToolLogsCallAndErrorWithoutArguments(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	middleware := observeMCPTool(logger, time.Second)
+	handler := middleware(func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return nil, errors.New("provider unavailable")
+	})
+	request := mcp.CallToolRequest{}
+	request.Params.Name = "recall"
+	ctx := observability.WithRequestID(context.Background(), "request-123")
+	_, err := handler(ctx, request)
+	if err == nil {
+		t.Fatal("tool succeeded, want error")
+	}
+
+	logText := logs.String()
+	for _, want := range []string{"level=WARN", "msg=\"mcp tool call failed\"", "tool=recall", "outcome=error", "request_id=request-123", "error=\"provider unavailable\""} {
+		if !strings.Contains(logText, want) {
+			t.Fatalf("MCP tool log %q does not contain %q", logText, want)
+		}
+	}
+	if strings.Contains(logText, "arguments") {
+		t.Fatalf("MCP tool log should not include arguments: %s", logText)
 	}
 }

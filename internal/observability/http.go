@@ -1,6 +1,7 @@
 package observability
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"log/slog"
@@ -10,9 +11,10 @@ import (
 )
 
 // InstrumentHTTP records stable, low-cardinality HTTP request metrics while
-// preserving the interfaces used by streaming handlers. Access records are
-// emitted at debug level so normal production logs stay quiet until an
-// operator explicitly sets STASH_LOG_LEVEL=debug.
+// preserving the interfaces used by streaming handlers. API access records
+// are visible at info level, while ordinary web requests remain debug-only.
+// Failed requests are promoted to warn. Query strings, cookies, and headers
+// are never written to the log.
 func InstrumentHTTP(logger *slog.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
@@ -23,17 +25,26 @@ func InstrumentHTTP(logger *slog.Logger, next http.Handler) http.Handler {
 		}
 		if requestID != "" {
 			observed.Header().Set("X-Request-ID", requestID)
+			r = r.WithContext(WithRequestID(r.Context(), requestID))
 		}
 		defer func() {
 			elapsed := time.Since(started)
 			route := routeLabel(r.URL.Path)
 			RecordHTTP(route, r.Method, observed.statusCode(), elapsed)
 			if logger != nil {
-				logger.Debug("http access",
+				level := slog.LevelDebug
+				if isAPIRoute(r.URL.Path) {
+					level = slog.LevelInfo
+				}
+				if observed.statusCode() >= http.StatusBadRequest {
+					level = slog.LevelWarn
+				}
+				logger.LogAttrs(r.Context(), level, "http access",
 					slog.String("request_id", requestID),
 					slog.String("method", r.Method),
 					slog.String("path", accessLogPath(r.URL.Path)),
 					slog.String("route", route),
+					slog.Bool("api", isAPIRoute(r.URL.Path)),
 					slog.Int("status", observed.statusCode()),
 					slog.Int64("bytes", observed.bytes),
 					slog.Float64("duration_ms", float64(elapsed)/float64(time.Millisecond)),
@@ -123,11 +134,45 @@ func newRequestID() string {
 	return hex.EncodeToString(raw[:])
 }
 
+type requestIDContextKey struct{}
+
+// WithRequestID attaches the bounded request identifier to a context so
+// nested MCP and provider calls can be correlated without copying headers.
+func WithRequestID(ctx context.Context, requestID string) context.Context {
+	if ctx == nil || requestID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, requestIDContextKey{}, requestID)
+}
+
+// RequestID returns the identifier assigned by InstrumentHTTP, if any.
+func RequestID(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	requestID, _ := ctx.Value(requestIDContextKey{}).(string)
+	return requestID
+}
+
+func isAPIRoute(path string) bool {
+	switch path {
+	case "/mcp", "/sse", "/message",
+		"/auth/login", "/auth/callback", "/auth/logout", "/auth/status", "/auth/token",
+		"/authorize", "/oauth/callback", "/oauth/token", "/oauth/register",
+		"/admin/maintenance/embeddings", "/admin/maintenance/embeddings/retry",
+		"/admin/maintenance/embeddings/reindex":
+		return true
+	}
+	return strings.HasPrefix(path, "/.well-known/") || strings.HasPrefix(path, "/auth/")
+}
+
 func routeLabel(path string) string {
 	switch path {
 	case "/", "/mcp", "/sse", "/message", "/metrics", "/healthz", "/readyz",
 		"/auth/login", "/auth/callback", "/auth/logout", "/auth/status", "/auth/token",
-		"/authorize", "/oauth/callback", "/oauth/token", "/oauth/register":
+		"/authorize", "/oauth/callback", "/oauth/token", "/oauth/register",
+		"/admin/maintenance/embeddings", "/admin/maintenance/embeddings/retry",
+		"/admin/maintenance/embeddings/reindex":
 		return path
 	}
 	if strings.HasPrefix(path, "/.well-known/oauth-protected-resource") {

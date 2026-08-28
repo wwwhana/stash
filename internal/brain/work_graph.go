@@ -63,6 +63,16 @@ var workMemoryTypes = map[string]struct{}{
 	"goal":       {},
 }
 
+var workMemoryRelations = map[string]struct{}{
+	"context":    {},
+	"constraint": {},
+	"decision":   {},
+	"evidence":   {},
+	"failure":    {},
+	"result":     {},
+	"supersedes": {},
+}
+
 func validateWorkItemStatus(status string) error {
 	if _, ok := workItemStatuses[status]; !ok {
 		return fmt.Errorf("brain: invalid work item status %q", status)
@@ -1001,12 +1011,12 @@ func (b *Brain) RecordWorkEvent(ctx context.Context, namespaceID int64, worktree
 
 	var event models.WorkEvent
 	err := b.pool.QueryRow(ctx,
-		`INSERT INTO work_events (namespace_id, worktree_id, work_item_id, event_type, event_key, payload, occurred_at)
-		 VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7)
+		`INSERT INTO work_events (namespace_id, worktree_id, work_item_id, attempt_id, event_type, event_key, payload, occurred_at)
+		 VALUES ($1, $2, $3, NULL, $4, NULLIF($5, ''), $6, $7)
 		 ON CONFLICT (worktree_id, event_key) WHERE event_key IS NOT NULL DO UPDATE SET id = work_events.id
-		 RETURNING id, namespace_id, worktree_id, work_item_id, event_type, event_key, payload, occurred_at, created_at`,
+		 RETURNING id, namespace_id, worktree_id, work_item_id, attempt_id, event_type, event_key, payload, occurred_at, created_at`,
 		namespaceID, worktreeID, workItemID, eventType, strings.TrimSpace(eventKey), payload, *occurredAt,
-	).Scan(&event.ID, &event.NamespaceID, &event.WorktreeID, &event.WorkItemID, &event.EventType, &event.EventKey, &event.Payload, &event.OccurredAt, &event.CreatedAt)
+	).Scan(&event.ID, &event.NamespaceID, &event.WorktreeID, &event.WorkItemID, &event.AttemptID, &event.EventType, &event.EventKey, &event.Payload, &event.OccurredAt, &event.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("record work event: %w", err)
 	}
@@ -1020,7 +1030,7 @@ func (b *Brain) ListWorkEvents(ctx context.Context, namespaceSlugs []string, wor
 		return nil, err
 	}
 	page = b.sanitizePage(page)
-	query := `SELECT id, namespace_id, worktree_id, work_item_id, event_type, event_key, payload, occurred_at, created_at FROM work_events WHERE namespace_id = ANY($1)`
+	query := `SELECT id, namespace_id, worktree_id, work_item_id, attempt_id, event_type, event_key, payload, occurred_at, created_at FROM work_events WHERE namespace_id = ANY($1)`
 	args := []any{nsIDs}
 	arg := 2
 	if worktreeID != nil {
@@ -1043,7 +1053,7 @@ func (b *Brain) ListWorkEvents(ctx context.Context, namespaceSlugs []string, wor
 	events := make([]models.WorkEvent, 0)
 	for rows.Next() {
 		var event models.WorkEvent
-		if err := rows.Scan(&event.ID, &event.NamespaceID, &event.WorktreeID, &event.WorkItemID, &event.EventType, &event.EventKey, &event.Payload, &event.OccurredAt, &event.CreatedAt); err != nil {
+		if err := rows.Scan(&event.ID, &event.NamespaceID, &event.WorktreeID, &event.WorkItemID, &event.AttemptID, &event.EventType, &event.EventKey, &event.Payload, &event.OccurredAt, &event.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan work event: %w", err)
 		}
 		events = append(events, event)
@@ -1059,8 +1069,9 @@ func (b *Brain) LinkWorkItemMemory(ctx context.Context, workItemID int64, memory
 	if _, ok := workMemoryTypes[memoryType]; !ok {
 		return nil, fmt.Errorf("brain: invalid work memory type %q", memoryType)
 	}
-	if err := validateContent(relation); err != nil {
-		return nil, fmt.Errorf("brain: memory link relation: %w", err)
+	relation = strings.TrimSpace(relation)
+	if _, ok := workMemoryRelations[relation]; !ok {
+		return nil, fmt.Errorf("brain: invalid work memory relation %q", relation)
 	}
 	var namespaceID int64
 	if err := b.pool.QueryRow(ctx, `SELECT namespace_id FROM work_items WHERE id = $1 AND deleted_at IS NULL`, workItemID).Scan(&namespaceID); err != nil {
