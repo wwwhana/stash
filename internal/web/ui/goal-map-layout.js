@@ -5,22 +5,26 @@
 }(typeof globalThis !== 'undefined' ? globalThis : this, function () {
     'use strict';
 
-    const PADDING_X = 24;
-    const PADDING_TOP = 58;
-    const PADDING_BOTTOM = 24;
-    const COLUMN_GAP = 52;
-    const ROW_GAP = 18;
-    const RESOURCE_WIDTH = 190;
-    const RESOURCE_HEIGHT = 80;
-    const MEMORY_WIDTH = 190;
-    const MEMORY_HEIGHT = 74;
+    const MIN_CANVAS_WIDTH = 920;
+    const MIN_CANVAS_HEIGHT = 720;
+    const CANVAS_PADDING = 84;
+    const RING_NODE_GAP = 34;
+    const FIRST_GOAL_RADIUS = 238;
+    const WORK_RING_GAP = 214;
+    const CONTEXT_RING_GAP = 200;
+    const ROOT_WIDTH = 244;
+    const ROOT_HEIGHT = 110;
+    const GOAL_WIDTH = 208;
+    const GOAL_HEIGHT = 90;
     const WORK_WIDTH = 194;
     const WORK_HEIGHT = 98;
-    const GOAL_WIDTH = 220;
-    const GOAL_HEIGHT = 96;
+    const RESOURCE_WIDTH = 182;
+    const RESOURCE_HEIGHT = 76;
+    const MEMORY_WIDTH = 182;
+    const MEMORY_HEIGHT = 72;
 
     function emptyLayout() {
-        return { width: 0, height: 0, canvasStyle: '', nodes: [], edges: [], columns: [], counts: { resource: 0, memory: 0, work: 0, goal: 0 } };
+        return { width: 0, height: 0, canvasStyle: '', nodes: [], edges: [], rings: [], focusKey: '', counts: { resource: 0, memory: 0, work: 0, goal: 0 } };
     }
 
     function key(value) {
@@ -39,12 +43,80 @@
         return nodeLabel(left).localeCompare(nodeLabel(right), 'ko');
     }
 
+    function boundaryPoint(node, toward) {
+        const dx = toward.x - node.x;
+        const dy = toward.y - node.y;
+        if (!dx && !dy) return { x: node.x, y: node.y };
+        const horizontal = dx ? (node.width / 2) / Math.abs(dx) : Number.POSITIVE_INFINITY;
+        const vertical = dy ? (node.height / 2) / Math.abs(dy) : Number.POSITIVE_INFINITY;
+        const scale = Math.min(horizontal, vertical);
+        return { x: node.x + dx * scale, y: node.y + dy * scale };
+    }
+
     function edgePath(source, target, index) {
-        const sourceX = source.x + (target.x >= source.x ? source.width / 2 : -source.width / 2);
-        const targetX = target.x + (target.x >= source.x ? -target.width / 2 : target.width / 2);
-        const control = Math.max(38, Math.abs(targetX - sourceX) * 0.42) + (index % 3) * 6;
-        const direction = targetX >= sourceX ? 1 : -1;
-        return `M ${sourceX} ${source.y} C ${sourceX + direction * control} ${source.y}, ${targetX - direction * control} ${target.y}, ${targetX} ${target.y}`;
+        const start = boundaryPoint(source, target);
+        const end = boundaryPoint(target, source);
+        const dx = end.x - start.x;
+        const dy = end.y - start.y;
+        const length = Math.max(1, Math.hypot(dx, dy));
+        const bend = Math.min(38, 12 + (index % 4) * 7) * (index % 2 ? 1 : -1);
+        const controlX = (start.x + end.x) / 2 - (dy / length) * bend;
+        const controlY = (start.y + end.y) / 2 + (dx / length) * bend;
+        return `M ${start.x} ${start.y} Q ${controlX} ${controlY} ${end.x} ${end.y}`;
+    }
+
+    function dimensions(kind, focus) {
+        if (focus) return { width: ROOT_WIDTH, height: ROOT_HEIGHT };
+        if (kind === 'goal') return { width: GOAL_WIDTH, height: GOAL_HEIGHT };
+        if (kind === 'work') return { width: WORK_WIDTH, height: WORK_HEIGHT };
+        if (kind === 'resource') return { width: RESOURCE_WIDTH, height: RESOURCE_HEIGHT };
+        return { width: MEMORY_WIDTH, height: MEMORY_HEIGHT };
+    }
+
+    function entryKey(kind, item) {
+        if (kind === 'goal') return `goal:${item.id}`;
+        if (kind === 'work') return `work:${item.id}`;
+        return String(item.key);
+    }
+
+    function wrapEntries(kind, items) {
+        return items.map(item => ({ kind, key: entryKey(kind, item), item })).sort(compareText);
+    }
+
+    function requiredRadius(entries) {
+        if (!entries.length) return 0;
+        const widest = entries.reduce((value, entry) => Math.max(value, dimensions(entry.kind, false).width), 0);
+        return (entries.length * (widest + RING_NODE_GAP)) / (Math.PI * 2);
+    }
+
+    function startAngle(count) {
+        if (count === 1) return 0;
+        if (count === 2) return 0;
+        return -Math.PI / 2 + Math.PI / count;
+    }
+
+    function assignAngles(entries, angleByKey) {
+        const first = startAngle(entries.length);
+        entries.forEach((entry, index) => {
+            entry.angle = first + (Math.PI * 2 * index) / entries.length;
+            angleByKey.set(entry.key, entry.angle);
+        });
+    }
+
+    function connectionAngle(entry, rawEdges, angleByKey) {
+        const edge = rawEdges.find(candidate => key(candidate && candidate.from) === entry.key && angleByKey.has(key(candidate && candidate.to)));
+        return edge ? angleByKey.get(key(edge.to)) : null;
+    }
+
+    function sortByConnection(entries, rawEdges, angleByKey) {
+        return entries.sort((left, right) => {
+            const leftAngle = connectionAngle(left, rawEdges, angleByKey);
+            const rightAngle = connectionAngle(right, rawEdges, angleByKey);
+            if (leftAngle !== null && rightAngle !== null && leftAngle !== rightAngle) return leftAngle - rightAngle;
+            if (leftAngle !== null) return -1;
+            if (rightAngle !== null) return 1;
+            return compareText(left, right);
+        });
     }
 
     function relationStyle(relation) {
@@ -69,6 +141,123 @@
         })[relation] || relation;
     }
 
+    function includesText(values, query) {
+        if (!query) return true;
+        return values.some(value => String(value || '').toLocaleLowerCase('ko').includes(query));
+    }
+
+    function filterGoalMap(rawMap, rawFilters) {
+        const goalMap = rawMap && typeof rawMap === 'object' ? rawMap : {};
+        const filters = rawFilters && typeof rawFilters === 'object' ? rawFilters : {};
+        const kinds = filters.kinds && typeof filters.kinds === 'object' ? filters.kinds : {};
+        const query = String(filters.query || '').trim().toLocaleLowerCase('ko');
+        const status = String(filters.status || '').trim();
+        const agent = String(filters.agent || '').trim();
+        const memoryType = String(filters.memoryType || '').trim();
+        const tree = goalMap.goal_tree && typeof goalMap.goal_tree === 'object' ? goalMap.goal_tree : {};
+
+        const workMatches = (item, withQuery) => {
+            if (status && item.status !== status) return false;
+            const owner = String(item.agent_id || item.owner || '').trim();
+            if (agent && owner !== agent) return false;
+            return !withQuery || includesText([
+                item.issue_key, item.title, item.status, owner, item.latest_result,
+                item.next_action, ...(Array.isArray(item.required_capabilities) ? item.required_capabilities : [])
+            ], query);
+        };
+        const entries = [];
+        if (kinds.goal !== false) {
+            for (const item of Array.isArray(tree.goals) ? tree.goals : []) {
+                entries.push({ key: `goal:${item.id}`, kind: 'goal', item, matchesQuery: includesText([item.content, item.status], query) });
+            }
+        }
+        if (kinds.work !== false) {
+            for (const item of Array.isArray(goalMap.work_items) ? goalMap.work_items : []) {
+                if (!workMatches(item, false)) continue;
+                entries.push({ key: `work:${item.id}`, kind: 'work', item, matchesQuery: workMatches(item, true) });
+            }
+        }
+        if (kinds.resource !== false) {
+            for (const item of Array.isArray(goalMap.resources) ? goalMap.resources : []) {
+                entries.push({
+                    key: String(item.key), kind: 'resource', item,
+                    matchesQuery: includesText([item.title, item.summary, item.source, item.kind, item.external_id, item.uri], query)
+                });
+            }
+        }
+        if (kinds.memory !== false) {
+            for (const item of Array.isArray(goalMap.memories) ? goalMap.memories : []) {
+                if (memoryType && item.memory_type !== memoryType) continue;
+                entries.push({
+                    key: String(item.key), kind: 'memory', item,
+                    matchesQuery: includesText([item.content, item.memory_type, item.status], query)
+                });
+            }
+        }
+
+        const entryByKey = new Map(entries.map(entry => [entry.key, entry]));
+        const allEdges = (Array.isArray(goalMap.edges) ? goalMap.edges : []).filter(edge => (
+            entryByKey.has(String(edge && edge.from)) && entryByKey.has(String(edge && edge.to))
+        ));
+        const activeRelationFilter = Boolean(query || status || agent || memoryType);
+        const seedKeys = new Set();
+        if (!activeRelationFilter) {
+            entries.forEach(entry => seedKeys.add(entry.key));
+        } else if (query) {
+            entries.filter(entry => entry.matchesQuery).forEach(entry => seedKeys.add(entry.key));
+        } else {
+            if (status || agent) entries.filter(entry => entry.kind === 'work').forEach(entry => seedKeys.add(entry.key));
+            if (memoryType) entries.filter(entry => entry.kind === 'memory').forEach(entry => seedKeys.add(entry.key));
+        }
+
+        const visibleKeys = new Set(seedKeys);
+        if (activeRelationFilter && seedKeys.size) {
+            const outgoing = new Map();
+            for (const edge of allEdges) {
+                const from = String(edge.from);
+                if (!outgoing.has(from)) outgoing.set(from, []);
+                outgoing.get(from).push(String(edge.to));
+            }
+            const queue = Array.from(seedKeys);
+            while (queue.length) {
+                const current = queue.shift();
+                for (const next of outgoing.get(current) || []) {
+                    if (visibleKeys.has(next)) continue;
+                    visibleKeys.add(next);
+                    queue.push(next);
+                }
+            }
+            for (const edge of allEdges) {
+                if (seedKeys.has(String(edge.to))) visibleKeys.add(String(edge.from));
+            }
+        }
+
+        const visibleEntries = entries.filter(entry => visibleKeys.has(entry.key));
+        const contextItem = entry => seedKeys.has(entry.key) || !activeRelationFilter
+            ? entry.item
+            : { ...entry.item, __filter_context: true };
+        const goals = visibleEntries.filter(entry => entry.kind === 'goal').map(contextItem);
+        const workItems = visibleEntries.filter(entry => entry.kind === 'work').map(contextItem);
+        const resources = visibleEntries.filter(entry => entry.kind === 'resource').map(contextItem);
+        const memories = visibleEntries.filter(entry => entry.kind === 'memory').map(contextItem);
+        const edges = allEdges.filter(edge => (
+            visibleKeys.has(String(edge.from)) && visibleKeys.has(String(edge.to))
+        ));
+        const unassignedWork = kinds.work === false
+            ? []
+            : (Array.isArray(goalMap.unassigned_work) ? goalMap.unassigned_work : []).filter(item => workMatches(item, Boolean(query)));
+
+        return {
+            ...goalMap,
+            goal_tree: { ...tree, goals },
+            work_items: workItems,
+            resources,
+            memories,
+            edges,
+            unassigned_work: unassignedWork
+        };
+    }
+
     function buildGoalMapLayout(rawMap) {
         const goalMap = rawMap && typeof rawMap === 'object' ? rawMap : {};
         const goalTree = goalMap.goal_tree && typeof goalMap.goal_tree === 'object' ? goalMap.goal_tree : {};
@@ -78,47 +267,93 @@
         const memories = (Array.isArray(goalMap.memories) ? goalMap.memories : []).filter(memory => memory && memory.key);
         if (!goals.length && !workItems.length && !resources.length && !memories.length) return emptyLayout();
 
-        const maxDepth = goals.reduce((value, goal) => Math.max(value, Number(goal.depth) || 0), 0);
-        const columnSpecs = [];
-        if (resources.length) columnSpecs.push({ key: 'resource', kind: 'resource', label: '연결 자료', width: RESOURCE_WIDTH, items: resources });
-        if (memories.length) columnSpecs.push({ key: 'memory', kind: 'memory', label: '기억', width: MEMORY_WIDTH, items: memories });
-        if (workItems.length) columnSpecs.push({ key: 'work', kind: 'work', label: '작업', width: WORK_WIDTH, items: workItems });
-        for (let depth = maxDepth; depth >= 0; depth -= 1) {
-            const items = goals.filter(goal => (Number(goal.depth) || 0) === depth);
-            if (!items.length) continue;
-            columnSpecs.push({
-                key: `goal-${depth}`, kind: 'goal', depth, width: GOAL_WIDTH, items,
-                label: depth === 0 ? '공통 목표' : (depth === maxDepth ? '세부 목표' : `${depth}단계 목표`)
+        const rawEdges = Array.isArray(goalMap.edges) ? goalMap.edges : [];
+        const rootGoal = goals.find(goal => Number(goal.id) === Number(goalTree.root_goal_id)) || null;
+        const focusKey = rootGoal ? `goal:${rootGoal.id}` : '';
+        const angleByKey = new Map();
+        const ringSpecs = [];
+        let previousRadius = 0;
+
+        const childGoals = goals.filter(goal => !rootGoal || Number(goal.id) !== Number(rootGoal.id));
+        if (childGoals.length) {
+            const goalByID = new Map(goals.map(goal => [Number(goal.id), goal]));
+            const hierarchyPath = goal => {
+                const parts = [];
+                const visited = new Set();
+                let current = goal;
+                while (current && !visited.has(Number(current.id))) {
+                    visited.add(Number(current.id));
+                    parts.unshift(String(current.content || current.id));
+                    current = goalByID.get(Number(current.parent_id));
+                    if (rootGoal && current && Number(current.id) === Number(rootGoal.id)) break;
+                }
+                return parts.join('\u0000');
+            };
+            const entries = wrapEntries('goal', childGoals).sort((left, right) => hierarchyPath(left.item).localeCompare(hierarchyPath(right.item), 'ko'));
+            assignAngles(entries, angleByKey);
+            const radius = Math.max(FIRST_GOAL_RADIUS, requiredRadius(entries));
+            ringSpecs.push({ key: 'goal', label: '하위 목표', tone: 'goal', count: entries.length, radius, entries });
+            previousRadius = radius;
+        }
+
+        if (workItems.length) {
+            const entries = sortByConnection(wrapEntries('work', workItems), rawEdges, angleByKey);
+            assignAngles(entries, angleByKey);
+            const minimum = previousRadius ? previousRadius + WORK_RING_GAP : FIRST_GOAL_RADIUS;
+            const radius = Math.max(minimum, requiredRadius(entries));
+            ringSpecs.push({ key: 'work', label: '연결 작업', tone: 'work', count: entries.length, radius, entries });
+            previousRadius = radius;
+        }
+
+        const contextEntries = [
+            ...wrapEntries('memory', memories),
+            ...wrapEntries('resource', resources)
+        ];
+        if (contextEntries.length) {
+            sortByConnection(contextEntries, rawEdges, angleByKey);
+            assignAngles(contextEntries, angleByKey);
+            const minimum = previousRadius ? previousRadius + CONTEXT_RING_GAP : FIRST_GOAL_RADIUS;
+            const radius = Math.max(minimum, requiredRadius(contextEntries));
+            ringSpecs.push({ key: 'context', label: '사실·기억·자료', tone: 'context', count: contextEntries.length, radius, entries: contextEntries });
+            previousRadius = radius;
+        }
+
+        const outerRadius = ringSpecs.reduce((value, ring) => Math.max(value, ring.radius), 0);
+        const halfNodeWidth = Math.max(ROOT_WIDTH, GOAL_WIDTH, WORK_WIDTH, RESOURCE_WIDTH, MEMORY_WIDTH) / 2;
+        const halfNodeHeight = Math.max(ROOT_HEIGHT, GOAL_HEIGHT, WORK_HEIGHT, RESOURCE_HEIGHT, MEMORY_HEIGHT) / 2;
+        const width = Math.max(MIN_CANVAS_WIDTH, Math.ceil((outerRadius + halfNodeWidth + CANVAS_PADDING) * 2));
+        const height = Math.max(MIN_CANVAS_HEIGHT, Math.ceil((outerRadius + halfNodeHeight + CANVAS_PADDING) * 2));
+        const centerX = width / 2;
+        const centerY = height / 2;
+        const nodes = [];
+
+        if (rootGoal) {
+            const size = dimensions('goal', true);
+            nodes.push({
+                kind: 'goal', key: focusKey, item: rootGoal, focus: true,
+                x: centerX, y: centerY, width: size.width, height: size.height,
+                style: `left:${centerX - size.width / 2}px;top:${centerY - size.height / 2}px;width:${size.width}px;height:${size.height}px`
             });
         }
 
-        let cursorX = PADDING_X;
-        const columns = [];
-        const nodes = [];
-        for (const spec of columnSpecs) {
-            const heightForKind = spec.kind === 'goal' ? GOAL_HEIGHT : (spec.kind === 'work' ? WORK_HEIGHT : (spec.kind === 'resource' ? RESOURCE_HEIGHT : MEMORY_HEIGHT));
-            const wrapped = spec.items.map(item => ({
-                kind: spec.kind,
-                key: spec.kind === 'goal' ? `goal:${item.id}` : (spec.kind === 'work' ? `work:${item.id}` : String(item.key)),
-                item
-            })).sort(compareText);
-            const columnX = cursorX + spec.width / 2;
-            wrapped.forEach((entry, index) => {
-                const y = PADDING_TOP + heightForKind / 2 + index * (heightForKind + ROW_GAP);
+        const rings = ringSpecs.map(ring => {
+            for (const entry of ring.entries) {
+                const size = dimensions(entry.kind, false);
+                const x = centerX + Math.cos(entry.angle) * ring.radius;
+                const y = centerY + Math.sin(entry.angle) * ring.radius;
                 nodes.push({
-                    ...entry, x: columnX, y, width: spec.width, height: heightForKind,
-                    style: `left:${columnX - spec.width / 2}px;top:${y - heightForKind / 2}px;width:${spec.width}px;height:${heightForKind}px`
+                    ...entry, ringKey: ring.key, x, y, width: size.width, height: size.height,
+                    style: `left:${x - size.width / 2}px;top:${y - size.height / 2}px;width:${size.width}px;height:${size.height}px`
                 });
-            });
-            columns.push({
-                key: spec.key, label: spec.label, count: wrapped.length,
-                style: `left:${cursorX}px;width:${spec.width}px`
-            });
-            cursorX += spec.width + COLUMN_GAP;
-        }
+            }
+            return {
+                key: ring.key, label: ring.label, tone: ring.tone, count: ring.count, radius: ring.radius,
+                style: `left:${centerX - ring.radius}px;top:${centerY - ring.radius}px;width:${ring.radius * 2}px;height:${ring.radius * 2}px`
+            };
+        });
 
         const nodeByKey = new Map(nodes.map(node => [node.key, node]));
-        const edges = (Array.isArray(goalMap.edges) ? goalMap.edges : []).map((edge, index) => {
+        const edges = rawEdges.map((edge, index) => {
             const source = nodeByKey.get(key(edge && edge.from));
             const target = nodeByKey.get(key(edge && edge.to));
             if (!source || !target) return null;
@@ -131,15 +366,11 @@
             };
         }).filter(Boolean);
 
-        const rowCount = Math.max(1, ...columnSpecs.map(spec => spec.items.length));
-        const rowHeight = Math.max(RESOURCE_HEIGHT, MEMORY_HEIGHT, WORK_HEIGHT, GOAL_HEIGHT);
-        const height = PADDING_TOP + rowCount * rowHeight + Math.max(0, rowCount - 1) * ROW_GAP + PADDING_BOTTOM;
-        const width = Math.max(360, cursorX - COLUMN_GAP + PADDING_X);
         return {
-            width, height, canvasStyle: `width:${width}px;height:${height}px`, nodes, edges, columns,
+            width, height, canvasStyle: `width:${width}px;height:${height}px`, nodes, edges, rings, focusKey,
             counts: { resource: resources.length, memory: memories.length, work: workItems.length, goal: goals.length }
         };
     }
 
-    return { emptyLayout, buildGoalMapLayout, relationLabel };
+    return { emptyLayout, filterGoalMap, buildGoalMapLayout, relationLabel };
 }));

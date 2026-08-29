@@ -115,6 +115,23 @@ func buildWorkResumeBrief(bundle *models.WorkResumeBundle) (*models.WorkResumeBr
 		}
 		brief.GoalContext = &goalContext
 	}
+	if bundle.PlanContext != nil {
+		planContext := *bundle.PlanContext
+		planContext.Component.IssueKey, _ = truncateWorkResumeString(strings.TrimSpace(planContext.Component.IssueKey), 96)
+		planContext.Component.Title, _ = truncateWorkResumeString(strings.TrimSpace(planContext.Component.Title), 256)
+		planContext.Outcome, _ = truncateWorkResumeString(strings.TrimSpace(planContext.Outcome), 384)
+		planContext.Guidance, _ = truncateWorkResumeString(strings.TrimSpace(planContext.Guidance), 384)
+		planContext.TaskDetails, _ = truncateWorkResumeString(strings.TrimSpace(planContext.TaskDetails), 384)
+		planContext.OwnedScopes = append([]string(nil), bundle.PlanContext.OwnedScopes...)
+		if len(planContext.OwnedScopes) > 4 {
+			planContext.OwnedScopes = planContext.OwnedScopes[:4]
+			planContext.MoreOwnedScopes = true
+		}
+		for index := range planContext.OwnedScopes {
+			planContext.OwnedScopes[index], _ = truncateWorkResumeString(strings.TrimSpace(planContext.OwnedScopes[index]), 256)
+		}
+		brief.PlanContext = &planContext
+	}
 	brief.NextAction, _ = truncateWorkResumeString(strings.TrimSpace(bundle.NextAction), 512)
 	if bundle.LatestAttempt != nil {
 		agentID, _ := truncateWorkResumeString(strings.TrimSpace(bundle.LatestAttempt.AgentID), 128)

@@ -68,7 +68,7 @@ func workPlanOptionalPaths(request mcp.CallToolRequest, key string) (*[]string, 
 
 func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 	mcpServer.AddTool(mcp.NewTool("get_work_plan",
-		mcp.WithDescription("Return the owner-facing component map, nested executable tasks, component dependencies, owned paths, decisions, and convention warnings for one namespace."),
+		mcp.WithDescription("Return the owner-facing component map, nested executable tasks, component dependencies, owned scopes, decisions, and convention warnings for one namespace."),
 		mcp.WithString("namespace", mcp.Description("Exact project namespace path")),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		_, namespaceID, err := exactNamespaceID(ctx, bc, request.GetString("namespace", "/"))
@@ -98,11 +98,11 @@ func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 	})
 
 	mcpServer.AddTool(mcp.NewTool("create_plan_component",
-		mcp.WithDescription("Create a stable, owner-facing system component in the living work plan. Use 5 to 9 components; put executable work in child tasks."),
+		mcp.WithDescription("Create a stable, owner-facing system component in the living work plan. Put executable work in child tasks."),
 		mcp.WithString("title", mcp.Required(), mcp.Description("Verb-led, plain-language component outcome")),
 		mcp.WithString("description", mcp.Description("Owner-facing scope and done condition")),
 		mcp.WithString("technical_details", mcp.Description("Optional implementation detail for the technical line")),
-		mcp.WithString("owned_paths", mcp.Description("Comma-separated repository paths or glob patterns owned by this component")),
+		mcp.WithString("owned_paths", mcp.Description("Comma-separated file paths, connector resource patterns, or other work scopes owned by this component")),
 		mcp.WithNumber("goal_id", mcp.Description("Goal this component contributes to; defaults to the shared project goal")),
 		mcp.WithString("labels", mcp.Description("Comma-separated labels")),
 		mcp.WithString("reporter"), mcp.WithString("owner"), mcp.WithString("status", mcp.DefaultString("ready")),
@@ -144,7 +144,7 @@ func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 		mcp.WithString("title", mcp.Description("Replacement owner-facing component outcome")),
 		mcp.WithString("description", mcp.Description("Replacement owner-facing scope and done condition")),
 		mcp.WithString("technical_details", mcp.Description("Replacement implementation detail; send an empty string to clear")),
-		mcp.WithString("owned_paths", mcp.Description("Replacement comma-separated paths; send an empty string to clear")),
+		mcp.WithString("owned_paths", mcp.Description("Replacement comma-separated file patterns, connector resources, or other work scopes; send an empty string to clear")),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		componentID, err := requiredPositiveID(request, "component_id")
 		if err != nil {
@@ -411,8 +411,8 @@ func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 	})
 
 	mcpServer.AddTool(mcp.NewTool("set_plan_component_paths",
-		mcp.WithDescription("Replace the repository paths and glob patterns owned by a plan component."),
-		mcp.WithNumber("component_id", mcp.Required()), mcp.WithString("owned_paths", mcp.Required()),
+		mcp.WithDescription("Replace the file patterns, connector resources, or other work scopes owned by a plan component."),
+		mcp.WithNumber("component_id", mcp.Required()), mcp.WithString("owned_paths", mcp.Required(), mcp.Description("Comma-separated work scopes")),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		componentID, err := requiredPositiveID(request, "component_id")
 		if err != nil {

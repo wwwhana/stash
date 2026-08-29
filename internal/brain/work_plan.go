@@ -1104,10 +1104,6 @@ func (b *Brain) GetWorkPlan(ctx context.Context, namespaceID int64) (*models.Wor
 	plan.Decisions = decisions
 	if len(plan.Components) == 0 {
 		plan.Warnings = append(plan.Warnings, models.WorkPlanWarning{Code: "no_components"})
-	} else if len(plan.Components) < 5 {
-		plan.Warnings = append(plan.Warnings, models.WorkPlanWarning{Code: "component_count_low", Count: len(plan.Components)})
-	} else if len(plan.Components) > 9 {
-		plan.Warnings = append(plan.Warnings, models.WorkPlanWarning{Code: "component_count_high", Count: len(plan.Components)})
 	}
 	goalSet := make(map[int64]struct{}, len(plan.GoalTree.Goals))
 	for _, goal := range plan.GoalTree.Goals {

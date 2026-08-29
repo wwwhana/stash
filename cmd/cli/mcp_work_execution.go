@@ -238,6 +238,11 @@ func compactWorkResumeBundle(bundle *models.WorkResumeBundle, maxBytes int) *mod
 		goalContext.Siblings = append([]models.GoalBrief(nil), bundle.GoalContext.Siblings...)
 		compact.GoalContext = &goalContext
 	}
+	if bundle.PlanContext != nil {
+		planContext := *bundle.PlanContext
+		planContext.OwnedScopes = append([]string(nil), bundle.PlanContext.OwnedScopes...)
+		compact.PlanContext = &planContext
+	}
 	if bundle.LatestAttempt != nil {
 		attempt := *bundle.LatestAttempt
 		compact.LatestAttempt = &attempt
@@ -273,6 +278,27 @@ func compactWorkResumeBundle(bundle *models.WorkResumeBundle, maxBytes int) *mod
 		}
 		for index := range compact.GoalContext.Siblings {
 			compact.GoalContext.Siblings[index].Content, shortened = truncateWorkResumeString(compact.GoalContext.Siblings[index].Content, 192)
+			compact.Truncated.Core = compact.Truncated.Core || shortened
+		}
+	}
+	if compact.PlanContext != nil {
+		compact.PlanContext.Component.IssueKey, shortened = truncateWorkResumeString(compact.PlanContext.Component.IssueKey, 128)
+		compact.Truncated.Core = compact.Truncated.Core || shortened
+		compact.PlanContext.Component.Title, shortened = truncateWorkResumeString(compact.PlanContext.Component.Title, 512)
+		compact.Truncated.Core = compact.Truncated.Core || shortened
+		compact.PlanContext.Outcome, shortened = truncateWorkResumeString(compact.PlanContext.Outcome, 1024)
+		compact.Truncated.Core = compact.Truncated.Core || shortened
+		compact.PlanContext.Guidance, shortened = truncateWorkResumeString(compact.PlanContext.Guidance, 1024)
+		compact.Truncated.Core = compact.Truncated.Core || shortened
+		compact.PlanContext.TaskDetails, shortened = truncateWorkResumeString(compact.PlanContext.TaskDetails, 1024)
+		compact.Truncated.Core = compact.Truncated.Core || shortened
+		if len(compact.PlanContext.OwnedScopes) > 16 {
+			compact.PlanContext.OwnedScopes = compact.PlanContext.OwnedScopes[:16]
+			compact.PlanContext.MoreOwnedScopes = true
+			compact.Truncated.Core = true
+		}
+		for index := range compact.PlanContext.OwnedScopes {
+			compact.PlanContext.OwnedScopes[index], shortened = truncateWorkResumeString(compact.PlanContext.OwnedScopes[index], 512)
 			compact.Truncated.Core = compact.Truncated.Core || shortened
 		}
 	}
@@ -715,7 +741,7 @@ func registerWorkExecutionTools(mcpServer *server.MCPServer, bc *bootstrap.Conte
 	}))
 
 	mcpServer.AddTool(mcp.NewTool("resume_work",
-		mcp.WithDescription("Call before acting on tracked work and after a handoff. The default brief returns the goal path, current action, pending conditions, small resource references, completed dependency results, relevant memory, and blockers."),
+		mcp.WithDescription("Call before acting on tracked work and after a handoff. The default brief returns the goal path, parent plan component and owned scopes, current action, pending conditions, small resource references, completed dependency results, relevant memory, and blockers."),
 		mcp.WithNumber("work_item_id", mcp.Description("Work item to resume"), mcp.Required()),
 		mcp.WithString("detail", mcp.Description("brief minimizes model input; full also includes evidence, events, and optional Git worktree metadata"), mcp.DefaultString("brief"), mcp.Enum("brief", "full")),
 		mcp.WithString("known_context_digest", mcp.Description("Digest from the previous brief response; matching state returns only an unchanged receipt"), mcp.Pattern(`sha256:[0-9a-f]{64}`)),

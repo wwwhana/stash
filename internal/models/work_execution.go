@@ -147,6 +147,7 @@ type WorkResumeTruncated struct {
 type WorkResumeBundle struct {
 	WorkItem             WorkItem                  `json:"work_item"`
 	GoalContext          *WorkGoalContext          `json:"goal_context,omitempty"`
+	PlanContext          *WorkPlanExecutionContext `json:"plan_context,omitempty"`
 	NextAction           string                    `json:"next_action"`
 	LatestAttempt        *WorkAttempt              `json:"latest_attempt,omitempty"`
 	LatestCheckpoint     *WorkCheckpoint           `json:"latest_checkpoint,omitempty"`

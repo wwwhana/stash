@@ -5,28 +5,16 @@
 }(typeof globalThis !== 'undefined' ? globalThis : this, function () {
     'use strict';
 
-    const ROOT_CARD_WIDTH = 216;
-    const ROOT_CARD_BASE_HEIGHT = 92;
-    const ROOT_CARD_CHILD_TOGGLE_HEIGHT = 34;
-    const ROOT_STAGE_MIN_WIDTH = 224;
-    const ROOT_STAGE_GAP = 24;
-    const ROOT_ROW_GAP = 12;
-    const ROOT_PADDING_X = 2;
-    const ROOT_STAGE_TOP = 12;
-    const ROOT_STAGE_HEADER_HEIGHT = 42;
-    const ROOT_PADDING_BOTTOM = 12;
-    const ROOT_MIN_HEIGHT = 200;
-
-    const CHILD_NODE_WIDTH = 138;
-    const CHILD_NODE_HEIGHT = 62;
-    const CHILD_STAGE_WIDTH = 146;
-    const CHILD_STAGE_GAP = 14;
-    const CHILD_ROW_GAP = 8;
-    const CHILD_PADDING_X = 2;
-    const CHILD_STAGE_TOP = 10;
-    const CHILD_STAGE_HEADER_HEIGHT = 28;
-    const CHILD_PADDING_BOTTOM = 8;
-    const CHILD_MIN_WIDTH = 150;
+    const NODE_WIDTH = 204;
+    const NODE_HEIGHT = 94;
+    const COLUMN_WIDTH = 236;
+    const COLUMN_GAP = 72;
+    const ROW_GAP = 24;
+    const PADDING_X = 30;
+    const PADDING_TOP = 58;
+    const PADDING_BOTTOM = 30;
+    const MIN_WIDTH = 760;
+    const MIN_HEIGHT = 360;
 
     function keyOf(value) {
         return String(value);
@@ -36,8 +24,14 @@
         return String(node && (node.issue_key || node.title || ('#' + node.id)) || '작업');
     }
 
-    function dragKey(scope, key) {
-        return `${scope}:${key}`;
+    function compareNodes(left, right) {
+        const byName = nodeName(left).localeCompare(nodeName(right), 'ko');
+        if (byName !== 0) return byName;
+        return keyOf(left && left.id).localeCompare(keyOf(right && right.id));
+    }
+
+    function dragKey(key) {
+        return `node:${key}`;
     }
 
     function nodeOffset(offsets, key) {
@@ -48,12 +42,6 @@
             x: Number.isFinite(x) ? x : 0,
             y: Number.isFinite(y) ? y : 0
         };
-    }
-
-    function compareNodes(left, right) {
-        const byName = nodeName(left).localeCompare(nodeName(right), 'ko');
-        if (byName !== 0) return byName;
-        return keyOf(left && left.id).localeCompare(keyOf(right && right.id));
     }
 
     function normalizeNodes(rawNodes) {
@@ -71,6 +59,9 @@
         return (Array.isArray(rawEdges) ? rawEdges : []).map((edge, index) => ({
             edge,
             index,
+            key: edge && edge.id !== undefined && edge.id !== null
+                ? `work-edge-${edge.id}`
+                : `work-edge-${index}`,
             fromKey: keyOf(edge && edge.from_item_id),
             toKey: keyOf(edge && edge.to_item_id),
             type: String(edge && edge.edge_type || 'relates_to')
@@ -100,64 +91,47 @@
         for (const node of nodes) {
             const start = keyOf(node.id);
             const chain = [];
-            const localIndex = new Map();
+            const indexByKey = new Map();
             let current = start;
             while (parentByNode.has(current)) {
-                if (localIndex.has(current)) {
-                    const cycleKeys = chain.slice(localIndex.get(current));
-                    cycleKeys.forEach(key => hierarchyCycleNodes.add(key));
-                    const breakKey = cycleKeys.slice().sort((left, right) => compareNodes(nodeMap.get(left), nodeMap.get(right)))[0];
+                if (indexByKey.has(current)) {
+                    const members = chain.slice(indexByKey.get(current));
+                    members.forEach(key => hierarchyCycleNodes.add(key));
+                    const breakKey = members.slice().sort((left, right) => (
+                        compareNodes(nodeMap.get(left), nodeMap.get(right))
+                    ))[0];
                     parentByNode.delete(breakKey);
                     break;
                 }
-                localIndex.set(current, chain.length);
+                indexByKey.set(current, chain.length);
                 chain.push(current);
                 current = parentByNode.get(current);
             }
         }
 
         const childrenByParent = new Map(nodes.map(node => [keyOf(node.id), []]));
-        for (const [childKey, parentKey] of parentByNode) childrenByParent.get(parentKey).push(childKey);
+        for (const [childKey, parentKey] of parentByNode) {
+            childrenByParent.get(parentKey).push(childKey);
+        }
         for (const children of childrenByParent.values()) {
             children.sort((left, right) => compareNodes(nodeMap.get(left), nodeMap.get(right)));
         }
+        return { parentByNode, childrenByParent, orphanParentByNode, hierarchyCycleNodes };
+    }
 
-        const rootByNode = new Map();
-        const depthByNode = new Map();
-        for (const node of nodes) {
-            const key = keyOf(node.id);
-            let current = key;
-            let depth = 0;
-            const guard = new Set();
-            while (parentByNode.has(current) && !guard.has(current)) {
-                guard.add(current);
-                current = parentByNode.get(current);
-                depth += 1;
-            }
-            rootByNode.set(key, current);
-            depthByNode.set(key, depth);
+    function graphEdges(explicitEdges, hierarchy) {
+        const result = explicitEdges.slice();
+        for (const [childKey, parentKey] of hierarchy.parentByNode) {
+            result.push({
+                edge: null,
+                index: result.length,
+                key: `work-parent-${childKey}-${parentKey}`,
+                fromKey: childKey,
+                toKey: parentKey,
+                type: 'part_of'
+            });
         }
-
-        const descendantsByRoot = new Map();
-        for (const node of nodes) {
-            const key = keyOf(node.id);
-            const rootKey = rootByNode.get(key);
-            if (!descendantsByRoot.has(rootKey)) descendantsByRoot.set(rootKey, []);
-            if (key !== rootKey) descendantsByRoot.get(rootKey).push(key);
-        }
-        for (const descendants of descendantsByRoot.values()) {
-            descendants.sort((left, right) => compareNodes(nodeMap.get(left), nodeMap.get(right)));
-        }
-
-        return {
-            parentByNode,
-            orphanParentByNode,
-            hierarchyCycleNodes,
-            childrenByParent,
-            rootByNode,
-            depthByNode,
-            descendantsByRoot
-        };
+        return result;
     }
 
     function stronglyConnectedComponents(nodeKeys, outgoing, reverseOutgoing) {
@@ -205,68 +179,83 @@
         return components;
     }
 
-    function computeLevels(nodeKeys, graphEdges, nodeMap) {
-        if (!nodeKeys.length) {
-            return { stages: [], cycles: [], cycleByNode: new Map(), maxDepth: -1 };
-        }
-        const keySet = new Set(nodeKeys);
+    function orderStages(stages, directedEdges, nodeMap) {
+        const incoming = new Map();
+        directedEdges.forEach(edge => {
+            if (!incoming.has(edge.toKey)) incoming.set(edge.toKey, []);
+            incoming.get(edge.toKey).push(edge.fromKey);
+        });
+        const position = new Map();
+        stages.forEach((members, depth) => {
+            members.sort((left, right) => compareNodes(nodeMap.get(left), nodeMap.get(right)));
+            if (depth > 0) {
+                members.sort((left, right) => {
+                    const average = key => {
+                        const values = (incoming.get(key) || []).map(parent => position.get(parent)).filter(Number.isFinite);
+                        return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : Number.POSITIVE_INFINITY;
+                    };
+                    const delta = average(left) - average(right);
+                    return Number.isFinite(delta) && delta !== 0
+                        ? delta
+                        : compareNodes(nodeMap.get(left), nodeMap.get(right));
+                });
+            }
+            members.forEach((key, index) => position.set(key, index));
+        });
+        return stages;
+    }
+
+    function computeLevels(nodeKeys, edges, nodeMap) {
+        if (!nodeKeys.length) return { stages: [], cycles: [], cycleByNode: new Map(), maxDepth: -1 };
+        const directedEdges = edges.filter(edge => edge.type === 'blocks' || edge.type === 'part_of');
         const outgoing = new Map(nodeKeys.map(key => [key, []]));
         const reverseOutgoing = new Map(nodeKeys.map(key => [key, []]));
         const selfLoops = new Set();
-        const blockEdges = graphEdges.filter(edge => edge.type === 'blocks' && keySet.has(edge.fromKey) && keySet.has(edge.toKey));
-        for (const edge of blockEdges) {
+        directedEdges.forEach(edge => {
             outgoing.get(edge.fromKey).push(edge.toKey);
             reverseOutgoing.get(edge.toKey).push(edge.fromKey);
             if (edge.fromKey === edge.toKey) selfLoops.add(edge.fromKey);
-        }
+        });
 
         const components = stronglyConnectedComponents(nodeKeys, outgoing, reverseOutgoing);
-        for (const component of components) {
-            component.sort((left, right) => compareNodes(nodeMap.get(left), nodeMap.get(right)));
-        }
+        components.forEach(component => component.sort((left, right) => compareNodes(nodeMap.get(left), nodeMap.get(right))));
         const componentByNode = new Map();
-        components.forEach((component, componentIndex) => {
-            component.forEach(key => componentByNode.set(key, componentIndex));
-        });
+        components.forEach((component, index) => component.forEach(key => componentByNode.set(key, index)));
 
         const componentOutgoing = components.map(() => new Set());
-        const componentIncoming = components.map(() => new Set());
-        for (const edge of blockEdges) {
-            const fromComponent = componentByNode.get(edge.fromKey);
-            const toComponent = componentByNode.get(edge.toKey);
-            if (fromComponent === toComponent) continue;
-            componentOutgoing[fromComponent].add(toComponent);
-            componentIncoming[toComponent].add(fromComponent);
-        }
+        const indegree = components.map(() => 0);
+        directedEdges.forEach(edge => {
+            const from = componentByNode.get(edge.fromKey);
+            const to = componentByNode.get(edge.toKey);
+            if (from === to || componentOutgoing[from].has(to)) return;
+            componentOutgoing[from].add(to);
+            indegree[to] += 1;
+        });
 
-        const componentName = componentIndex => nodeName(nodeMap.get(components[componentIndex][0]));
+        const componentName = index => nodeName(nodeMap.get(components[index][0]));
         const queue = [];
-        const indegree = componentIncoming.map(incoming => incoming.size);
         const depth = components.map(() => 0);
-        const enqueue = componentIndex => {
-            queue.push(componentIndex);
+        const enqueue = index => {
+            queue.push(index);
             queue.sort((left, right) => componentName(left).localeCompare(componentName(right), 'ko'));
         };
-        indegree.forEach((value, componentIndex) => {
-            if (value === 0) enqueue(componentIndex);
-        });
+        indegree.forEach((value, index) => { if (value === 0) enqueue(index); });
         while (queue.length) {
-            const componentIndex = queue.shift();
-            for (const successor of componentOutgoing[componentIndex]) {
-                depth[successor] = Math.max(depth[successor], depth[componentIndex] + 1);
-                indegree[successor] -= 1;
-                if (indegree[successor] === 0) enqueue(successor);
+            const current = queue.shift();
+            for (const next of componentOutgoing[current]) {
+                depth[next] = Math.max(depth[next], depth[current] + 1);
+                indegree[next] -= 1;
+                if (indegree[next] === 0) enqueue(next);
             }
         }
 
         const cycles = [];
         const cycleByNode = new Map();
-        components.forEach((component, componentIndex) => {
+        components.forEach((component, index) => {
             if (component.length === 1 && !selfLoops.has(component[0])) return;
             const cycle = {
                 id: `cycle-${cycles.length + 1}`,
                 nodeIds: component.map(key => nodeMap.get(key).id),
-                nodeKeys: component.slice(),
                 label: component.map(key => nodeName(nodeMap.get(key))).join(' ↔ ')
             };
             cycles.push(cycle);
@@ -275,213 +264,45 @@
 
         const maxDepth = Math.max(...depth, 0);
         const stages = Array.from({ length: maxDepth + 1 }, () => []);
-        components.forEach((component, componentIndex) => {
-            component.forEach(key => stages[depth[componentIndex]].push(key));
-        });
-        stages.forEach(members => members.sort((left, right) => compareNodes(nodeMap.get(left), nodeMap.get(right))));
+        components.forEach((component, index) => component.forEach(key => stages[depth[index]].push(key)));
+        orderStages(stages, directedEdges, nodeMap);
         return { stages, cycles, cycleByNode, maxDepth };
     }
 
     function edgePath(source, target, index) {
-        const deltaX = target.x - source.x;
-        const sourceY = source.anchorY === undefined ? source.y : source.anchorY;
-        const targetY = target.anchorY === undefined ? target.y : target.anchorY;
-        const sourceEdgeHeight = source.edgeHeight || source.height;
-        const targetEdgeHeight = target.edgeHeight || target.height;
-        if (Math.abs(deltaX) < 16) {
-            const yDirection = targetY >= sourceY ? 1 : -1;
+        if (source.depth === target.depth) {
+            const direction = target.y >= source.y ? 1 : -1;
             const sourceX = source.x + source.width / 2;
             const targetX = target.x + target.width / 2;
-            const sourceEdgeY = sourceY + yDirection * Math.min(18, sourceEdgeHeight / 4);
-            const targetEdgeY = targetY - yDirection * Math.min(18, targetEdgeHeight / 4);
             const bend = 48 + (index % 4) * 14;
-            return `M ${sourceX} ${sourceEdgeY} C ${sourceX + bend} ${sourceEdgeY}, ${targetX + bend} ${targetEdgeY}, ${targetX} ${targetEdgeY}`;
+            return `M ${sourceX} ${source.y} C ${sourceX + bend} ${source.y}, ${targetX + bend} ${target.y - direction * 12}, ${targetX} ${target.y}`;
         }
-        const direction = deltaX > 0 ? 1 : -1;
+        const leftToRight = target.x >= source.x;
+        const direction = leftToRight ? 1 : -1;
         const sourceX = source.x + direction * source.width / 2;
         const targetX = target.x - direction * target.width / 2;
-        const control = Math.max(16, Math.abs(targetX - sourceX) * 0.44);
-        return `M ${sourceX} ${sourceY} C ${sourceX + direction * control} ${sourceY}, ${targetX - direction * control} ${targetY}, ${targetX} ${targetY}`;
+        const control = Math.max(38, Math.abs(targetX - sourceX) * 0.44) + (index % 3) * 5;
+        return `M ${sourceX} ${source.y} C ${sourceX + direction * control} ${source.y}, ${targetX - direction * control} ${target.y}, ${targetX} ${target.y}`;
     }
 
-    function stageLabel(depth) {
-        return depth === 0 ? '시작' : `${depth + 1}단계`;
+    function stageLabel(depth, maxDepth) {
+        if (maxDepth === 0) return '작업';
+        if (depth === 0) return '시작';
+        if (depth === maxDepth) return '결과';
+        return `${depth + 1}단계`;
     }
 
-    function edgeKey(entry, prefix) {
-        if (entry.edge && entry.edge.id !== undefined && entry.edge.id !== null) return `${prefix}-${entry.edge.id}`;
-        return `${prefix}-${entry.fromKey}-${entry.toKey}-${entry.type}-${entry.index}`;
+    function edgeAppearance(type, cycle) {
+        if (cycle) return { stroke: '#fb7185', dashArray: null, marker: true };
+        if (type === 'blocks') return { stroke: '#f97316', dashArray: null, marker: true };
+        if (type === 'part_of') return { stroke: '#818cf8', dashArray: null, marker: true };
+        return { stroke: '#64748b', dashArray: '7 6', marker: false };
     }
 
-    function decorateLayoutEdges(graphEdges, layoutByNode, cycleByNode, prefix) {
-        return graphEdges.filter(edge => layoutByNode.has(edge.fromKey) && layoutByNode.has(edge.toKey)).map((entry, index) => {
-            const source = layoutByNode.get(entry.fromKey);
-            const target = layoutByNode.get(entry.toKey);
-            const sourceCycle = cycleByNode.get(entry.fromKey);
-            const cycle = entry.type === 'blocks' && sourceCycle && sourceCycle === cycleByNode.get(entry.toKey);
-            const fromName = nodeName(source.item);
-            const toName = nodeName(target.item);
-            return {
-                key: edgeKey(entry, prefix),
-                edge: entry.edge,
-                rawEdges: entry.rawEdges || [entry.edge],
-                type: entry.type,
-                cycle: Boolean(cycle),
-                path: edgePath(source, target, index),
-                stroke: cycle ? '#fb7185' : (entry.type === 'blocks' ? '#818cf8' : '#64748b'),
-                dashArray: entry.type === 'blocks' ? null : '7 6',
-                marker: entry.type === 'blocks',
-                ariaLabel: entry.ariaLabel || (entry.type === 'blocks'
-                    ? `${fromName}가 끝나야 ${toName}를 진행할 수 있습니다.`
-                    : `${fromName}과 ${toName}는 관련된 작업입니다.`)
-            };
-        });
-    }
-
-    function childEntry(key, hierarchy, nodeMap, offsets) {
-        const parentKey = hierarchy.parentByNode.get(key);
-        const keyForDrag = dragKey('child', key);
-        return {
-            key,
-            item: nodeMap.get(key),
-            dragKey: keyForDrag,
-            offset: nodeOffset(offsets, keyForDrag),
-            hierarchyDepth: hierarchy.depthByNode.get(key) || 1,
-            parentItem: parentKey ? nodeMap.get(parentKey) : null,
-            hierarchyCycle: hierarchy.hierarchyCycleNodes.has(key)
-        };
-    }
-
-    function buildChildLayout(rootKey, descendantKeys, edges, hierarchy, nodeMap, offsets) {
-        if (!descendantKeys.length) {
-            return {
-                width: 0, height: 0, canvasStyle: '', stages: [], nodes: [], edges: [],
-                disconnected: [], cycles: [], flowHeight: 0, detachedStyle: ''
-            };
-        }
-        const descendantSet = new Set(descendantKeys);
-        const childEdges = edges.filter(edge => descendantSet.has(edge.fromKey) && descendantSet.has(edge.toKey));
-        const incident = new Set();
-        childEdges.forEach(edge => {
-            incident.add(edge.fromKey);
-            incident.add(edge.toKey);
-        });
-        const flowKeys = descendantKeys.filter(key => incident.has(key));
-        const disconnectedKeys = descendantKeys.filter(key => !incident.has(key));
-        const levelData = computeLevels(flowKeys, childEdges, nodeMap);
-
-        const flowWidth = levelData.stages.length
-            ? CHILD_PADDING_X * 2 + levelData.stages.length * CHILD_STAGE_WIDTH + Math.max(0, levelData.stages.length - 1) * CHILD_STAGE_GAP
-            : 0;
-        const maxRows = Math.max(0, ...levelData.stages.map(members => members.length));
-        const flowHeight = levelData.stages.length
-            ? CHILD_STAGE_TOP + CHILD_STAGE_HEADER_HEIGHT + maxRows * CHILD_NODE_HEIGHT + Math.max(0, maxRows - 1) * CHILD_ROW_GAP + CHILD_PADDING_BOTTOM
-            : 0;
-        const baseWidth = Math.max(CHILD_MIN_WIDTH, flowWidth);
-        const detachedColumns = baseWidth >= 560 ? 3 : (baseWidth >= 360 ? 2 : 1);
-        const detachedRows = Math.ceil(disconnectedKeys.length / detachedColumns);
-        const detachedHeight = disconnectedKeys.length ? 45 + detachedRows * 54 + Math.max(0, detachedRows - 1) * 7 + 10 : 0;
-        const detachedTop = flowHeight ? flowHeight + 10 : 0;
-        const baseHeight = Math.max(1, detachedTop + detachedHeight);
-        const childOffsets = descendantKeys.map(key => nodeOffset(offsets, dragKey('child', key)));
-        const width = baseWidth + Math.max(0, ...childOffsets.map(offset => offset.x));
-        const height = baseHeight + Math.max(0, ...childOffsets.map(offset => offset.y));
-        const stageHeight = Math.max(1, flowHeight - CHILD_STAGE_TOP - CHILD_PADDING_BOTTOM);
-        const layoutByNode = new Map();
-        const stages = levelData.stages.map((members, depth) => {
-            const left = CHILD_PADDING_X + depth * (CHILD_STAGE_WIDTH + CHILD_STAGE_GAP);
-            const stage = {
-                depth,
-                label: stageLabel(depth),
-                style: `left: ${left}px; top: ${CHILD_STAGE_TOP}px; width: ${CHILD_STAGE_WIDTH}px; height: ${stageHeight}px`,
-                nodes: []
-            };
-            members.forEach((key, row) => {
-                const base = childEntry(key, hierarchy, nodeMap, offsets);
-                const baseX = left + CHILD_STAGE_WIDTH / 2;
-                const baseY = CHILD_STAGE_TOP + CHILD_STAGE_HEADER_HEIGHT + CHILD_NODE_HEIGHT / 2 + row * (CHILD_NODE_HEIGHT + CHILD_ROW_GAP);
-                const x = baseX + base.offset.x;
-                const y = baseY + base.offset.y;
-                const layoutNode = {
-                    ...base,
-                    baseX,
-                    baseY,
-                    x,
-                    y,
-                    width: CHILD_NODE_WIDTH,
-                    height: CHILD_NODE_HEIGHT,
-                    canvasWidth: width,
-                    canvasHeight: height,
-                    depth,
-                    stageLabel: stage.label,
-                    cycle: levelData.cycleByNode.get(key) || null,
-                    style: `left: ${x - CHILD_NODE_WIDTH / 2}px; top: ${y - CHILD_NODE_HEIGHT / 2}px`
-                };
-                stage.nodes.push(layoutNode);
-                layoutByNode.set(key, layoutNode);
-            });
-            return stage;
-        });
-        const layoutEdges = decorateLayoutEdges(childEdges, layoutByNode, levelData.cycleByNode, `child-${rootKey}`);
-        const disconnected = disconnectedKeys.map(key => childEntry(key, hierarchy, nodeMap, offsets));
-        return {
-            width,
-            height,
-            canvasStyle: `width: ${width}px; height: ${height}px`,
-            stages,
-            nodes: stages.flatMap(stage => stage.nodes),
-            edges: layoutEdges,
-            disconnected,
-            cycles: levelData.cycles,
-            flowHeight,
-            detachedStyle: `top: ${detachedTop}px; width: ${baseWidth}px; --child-columns: ${detachedColumns}`
-        };
-    }
-
-    function aggregateRootEdges(edges, hierarchy, nodeMap) {
-        const aggregated = new Map();
-        const crossParentLinks = [];
-        for (const entry of edges) {
-            const fromRoot = hierarchy.rootByNode.get(entry.fromKey);
-            const toRoot = hierarchy.rootByNode.get(entry.toKey);
-            if (fromRoot === toRoot) continue;
-            const aggregationKey = `${fromRoot}\u0000${toRoot}\u0000${entry.type}`;
-            if (!aggregated.has(aggregationKey)) {
-                aggregated.set(aggregationKey, {
-                    edge: null,
-                    index: aggregated.size,
-                    fromKey: fromRoot,
-                    toKey: toRoot,
-                    type: entry.type,
-                    rawEdges: []
-                });
-            }
-            const grouped = aggregated.get(aggregationKey);
-            grouped.rawEdges.push(entry.edge);
-            if (!grouped.edge) grouped.edge = entry.edge;
-            if (entry.fromKey !== fromRoot || entry.toKey !== toRoot) {
-                crossParentLinks.push({
-                    key: edgeKey(entry, 'cross-parent'),
-                    type: entry.type,
-                    fromRoot: nodeMap.get(fromRoot),
-                    toRoot: nodeMap.get(toRoot),
-                    fromItem: nodeMap.get(entry.fromKey),
-                    toItem: nodeMap.get(entry.toKey),
-                    label: entry.type === 'blocks'
-                        ? `${nodeName(nodeMap.get(entry.fromKey))} → ${nodeName(nodeMap.get(entry.toKey))}`
-                        : `${nodeName(nodeMap.get(entry.fromKey))} · ${nodeName(nodeMap.get(entry.toKey))}`
-                });
-            }
-        }
-        for (const entry of aggregated.values()) {
-            const cross = crossParentLinks.find(link => keyOf(link.fromRoot.id) === entry.fromKey && keyOf(link.toRoot.id) === entry.toKey && link.type === entry.type);
-            if (cross) {
-                entry.ariaLabel = entry.type === 'blocks'
-                    ? `${nodeName(cross.fromRoot)}의 ${nodeName(cross.fromItem)}가 끝나야 ${nodeName(cross.toRoot)}의 ${nodeName(cross.toItem)}를 진행할 수 있습니다.`
-                    : `${nodeName(cross.fromRoot)}의 ${nodeName(cross.fromItem)}와 ${nodeName(cross.toRoot)}의 ${nodeName(cross.toItem)}는 관련된 작업입니다.`;
-            }
-        }
-        return { edges: Array.from(aggregated.values()), crossParentLinks };
+    function edgeLabel(edge, source, target) {
+        if (edge.type === 'blocks') return `${nodeName(source.item)}가 끝나야 ${nodeName(target.item)}를 진행할 수 있습니다.`;
+        if (edge.type === 'part_of') return `${nodeName(source.item)}의 결과가 ${nodeName(target.item)}에 합쳐집니다.`;
+        return `${nodeName(source.item)}과 ${nodeName(target.item)}는 관련된 작업입니다.`;
     }
 
     function emptyLayout() {
@@ -494,147 +315,103 @@
             edges: [],
             disconnected: [],
             cycles: [],
-            crossParentLinks: [],
             hierarchyWarnings: [],
             maxDepth: -1,
-            sourceNodeCount: 0
+            sourceNodeCount: 0,
+            visibleNodeCount: 0
         };
     }
 
     function buildWorkGraphLayout(rawNodes, rawEdges, options) {
         const nodes = normalizeNodes(rawNodes);
+        if (!nodes.length) return emptyLayout();
         const nodeMap = new Map(nodes.map(node => [keyOf(node.id), node]));
-        const edges = normalizeEdges(rawEdges, nodeMap);
+        const explicitEdges = normalizeEdges(rawEdges, nodeMap);
         const hierarchy = buildHierarchy(nodes, nodeMap);
-        const expandedIds = new Set(Array.isArray(options && options.expandedIds) ? options.expandedIds.map(keyOf) : []);
+        const edges = graphEdges(explicitEdges, hierarchy);
+        const nodeKeys = nodes.map(node => keyOf(node.id));
+        const levelData = computeLevels(nodeKeys, edges, nodeMap);
         const offsets = options && options.offsets && typeof options.offsets === 'object' ? options.offsets : {};
-        const rootKeys = nodes.map(node => keyOf(node.id)).filter(key => hierarchy.rootByNode.get(key) === key);
-        rootKeys.sort((left, right) => compareNodes(nodeMap.get(left), nodeMap.get(right)));
 
-        const incidentRoots = new Set();
-        edges.forEach(edge => {
-            incidentRoots.add(hierarchy.rootByNode.get(edge.fromKey));
-            incidentRoots.add(hierarchy.rootByNode.get(edge.toKey));
-        });
-        const connectedRootKeys = [];
-        const disconnectedRootKeys = [];
-        for (const rootKey of rootKeys) {
-            const descendants = hierarchy.descendantsByRoot.get(rootKey) || [];
-            if (descendants.length || incidentRoots.has(rootKey)) connectedRootKeys.push(rootKey);
-            else disconnectedRootKeys.push(rootKey);
-        }
-
-        const aggregated = aggregateRootEdges(edges, hierarchy, nodeMap);
-        const levelData = computeLevels(connectedRootKeys, aggregated.edges, nodeMap);
-        const rootMeta = new Map();
-        const childCycles = [];
-        for (const rootKey of connectedRootKeys) {
-            const descendants = hierarchy.descendantsByRoot.get(rootKey) || [];
-            const childLayout = buildChildLayout(rootKey, descendants, edges, hierarchy, nodeMap, offsets);
-            childLayout.cycles.forEach(cycle => childCycles.push({
-                ...cycle,
-                id: `child-${rootKey}-${cycle.id}`,
-                label: `${nodeName(nodeMap.get(rootKey))}: ${cycle.label}`
-            }));
-            const expanded = descendants.length > 0 && expandedIds.has(rootKey);
-            const orphanParentId = hierarchy.orphanParentByNode.get(rootKey);
-            const hierarchyCycle = hierarchy.hierarchyCycleNodes.has(rootKey);
-            const warningHeight = orphanParentId !== undefined || hierarchyCycle ? 24 : 0;
-            const baseHeight = ROOT_CARD_BASE_HEIGHT + warningHeight + (descendants.length ? ROOT_CARD_CHILD_TOGGLE_HEIGHT : 0);
-            const width = expanded ? Math.max(ROOT_CARD_WIDTH, childLayout.width + 12) : ROOT_CARD_WIDTH;
-            const height = expanded ? baseHeight + childLayout.height + 8 : baseHeight;
-            rootMeta.set(rootKey, {
-                descendants: descendants.map(key => nodeMap.get(key)),
-                directChildren: (hierarchy.childrenByParent.get(rootKey) || []).map(key => nodeMap.get(key)),
-                childLayout,
-                expanded,
-                orphanParentId,
-                hierarchyCycle,
-                width,
-                height,
-                baseHeight
-            });
-        }
-
-        const stageWidths = levelData.stages.map(members => Math.max(
-            ROOT_STAGE_MIN_WIDTH,
-            ...members.map(key => rootMeta.get(key).width + 8)
-        ));
-        const stageLefts = [];
-        let nextLeft = ROOT_PADDING_X;
-        stageWidths.forEach(width => {
-            stageLefts.push(nextLeft);
-            nextLeft += width + ROOT_STAGE_GAP;
-        });
-        const baseWidth = levelData.stages.length ? nextLeft - ROOT_STAGE_GAP + ROOT_PADDING_X : 0;
-        const stageContentHeights = levelData.stages.map(members => members.reduce((sum, key, index) => (
-            sum + rootMeta.get(key).height + (index ? ROOT_ROW_GAP : 0)
-        ), 0));
-        const baseHeight = levelData.stages.length ? Math.max(
-            ROOT_MIN_HEIGHT,
-            ROOT_STAGE_TOP + ROOT_STAGE_HEADER_HEIGHT + Math.max(...stageContentHeights, 0) + ROOT_PADDING_BOTTOM
-        ) : 0;
-        const rootOffsets = connectedRootKeys.map(key => nodeOffset(offsets, dragKey('root', key)));
-        const width = baseWidth + Math.max(0, ...rootOffsets.map(offset => offset.x));
-        const height = baseHeight + Math.max(0, ...rootOffsets.map(offset => offset.y));
-        const stageHeight = Math.max(1, height - ROOT_STAGE_TOP - ROOT_PADDING_BOTTOM);
+        const contentWidth = PADDING_X * 2 + levelData.stages.length * COLUMN_WIDTH + Math.max(0, levelData.stages.length - 1) * COLUMN_GAP;
+        const maxRows = Math.max(1, ...levelData.stages.map(stage => stage.length));
+        const contentHeight = PADDING_TOP + maxRows * NODE_HEIGHT + Math.max(0, maxRows - 1) * ROW_GAP + PADDING_BOTTOM;
+        const baseWidth = Math.max(MIN_WIDTH, contentWidth);
+        const baseHeight = Math.max(MIN_HEIGHT, contentHeight);
+        const allOffsets = nodeKeys.map(key => nodeOffset(offsets, dragKey(key)));
+        const width = baseWidth + Math.max(0, ...allOffsets.map(offset => offset.x));
+        const height = baseHeight + Math.max(0, ...allOffsets.map(offset => offset.y));
+        const contentInset = Math.max(0, (baseWidth - contentWidth) / 2);
         const layoutByNode = new Map();
+
         const stages = levelData.stages.map((members, depth) => {
-            const left = stageLefts[depth];
-            const stageWidth = stageWidths[depth];
+            const left = contentInset + PADDING_X + depth * (COLUMN_WIDTH + COLUMN_GAP);
+            const label = stageLabel(depth, levelData.maxDepth);
             const stage = {
                 depth,
-                label: stageLabel(depth),
-                style: `left: ${left}px; top: ${ROOT_STAGE_TOP}px; width: ${stageWidth}px; height: ${stageHeight}px`,
+                label,
+                style: `left:${left}px;top:0;width:${COLUMN_WIDTH}px;height:${height}px`,
                 nodes: []
             };
-            let top = ROOT_STAGE_TOP + ROOT_STAGE_HEADER_HEIGHT;
-            members.forEach(key => {
+            members.forEach((key, row) => {
                 const item = nodeMap.get(key);
-                const meta = rootMeta.get(key);
-                const keyForDrag = dragKey('root', key);
-                const offset = nodeOffset(offsets, keyForDrag);
-                const baseX = left + stageWidth / 2;
-                const baseY = top + meta.height / 2;
+                const offset = nodeOffset(offsets, dragKey(key));
+                const baseX = left + COLUMN_WIDTH / 2;
+                const baseY = PADDING_TOP + NODE_HEIGHT / 2 + row * (NODE_HEIGHT + ROW_GAP);
                 const x = baseX + offset.x;
                 const y = baseY + offset.y;
+                const parentKey = hierarchy.parentByNode.get(key);
+                const children = hierarchy.childrenByParent.get(key) || [];
                 const layoutNode = {
                     key,
                     item,
-                    ...meta,
-                    dragKey: keyForDrag,
+                    dragKey: dragKey(key),
                     offset,
                     baseX,
                     baseY,
                     x,
                     y,
+                    width: NODE_WIDTH,
+                    height: NODE_HEIGHT,
                     canvasWidth: width,
                     canvasHeight: height,
-                    width: meta.width,
-                    height: meta.height,
-                    anchorY: top + ROOT_CARD_BASE_HEIGHT / 2 + offset.y,
-                    edgeHeight: ROOT_CARD_BASE_HEIGHT,
                     depth,
-                    stageLabel: stage.label,
+                    stageLabel: label,
+                    parentItem: parentKey ? nodeMap.get(parentKey) : null,
+                    childItems: children.map(childKey => nodeMap.get(childKey)),
+                    orphanParentId: hierarchy.orphanParentByNode.get(key),
+                    hierarchyCycle: hierarchy.hierarchyCycleNodes.has(key),
                     cycle: levelData.cycleByNode.get(key) || null,
-                    style: `left: ${x - meta.width / 2}px; top: ${y - meta.height / 2}px; width: ${meta.width}px; height: ${meta.height}px`
+                    context: Boolean(item && item.__filter_context),
+                    style: `left:${x - NODE_WIDTH / 2}px;top:${y - NODE_HEIGHT / 2}px;width:${NODE_WIDTH}px;height:${NODE_HEIGHT}px`
                 };
                 stage.nodes.push(layoutNode);
                 layoutByNode.set(key, layoutNode);
-                top += meta.height + ROOT_ROW_GAP;
             });
             return stage;
         });
 
-        const layoutEdges = decorateLayoutEdges(aggregated.edges, layoutByNode, levelData.cycleByNode, 'root');
-        const disconnected = disconnectedRootKeys.map(key => ({
-            key,
-            item: nodeMap.get(key),
-            dragKey: dragKey('root', key),
-            offset: nodeOffset(offsets, dragKey('root', key)),
-            orphanParentId: hierarchy.orphanParentByNode.get(key),
-            hierarchyCycle: hierarchy.hierarchyCycleNodes.has(key)
-        }));
+        const layoutEdges = edges.map((edge, index) => {
+            const source = layoutByNode.get(edge.fromKey);
+            const target = layoutByNode.get(edge.toKey);
+            if (!source || !target) return null;
+            const sourceCycle = levelData.cycleByNode.get(edge.fromKey);
+            const cycle = sourceCycle && sourceCycle === levelData.cycleByNode.get(edge.toKey);
+            return {
+                key: edge.key,
+                fromKey: edge.fromKey,
+                toKey: edge.toKey,
+                type: edge.type,
+                cycle: Boolean(cycle),
+                path: edgePath(source, target, index),
+                ...edgeAppearance(edge.type, cycle),
+                ariaLabel: edgeLabel(edge, source, target)
+            };
+        }).filter(Boolean);
+
+        const incident = new Set();
+        edges.forEach(edge => { incident.add(edge.fromKey); incident.add(edge.toKey); });
+        const disconnected = stages.flatMap(stage => stage.nodes).filter(node => !incident.has(node.key));
         const hierarchyWarnings = nodes.filter(node => {
             const key = keyOf(node.id);
             return hierarchy.orphanParentByNode.has(key) || hierarchy.hierarchyCycleNodes.has(key);
@@ -653,24 +430,18 @@
         return {
             width,
             height,
-            canvasStyle: width && height ? `width: ${width}px; height: ${height}px` : '',
+            canvasStyle: `width:${width}px;height:${height}px`,
             stages,
             nodes: stages.flatMap(stage => stage.nodes),
             edges: layoutEdges,
             disconnected,
-            cycles: [
-                ...levelData.cycles.map(cycle => ({ ...cycle, id: `root-${cycle.id}` })),
-                ...childCycles
-            ],
-            crossParentLinks: aggregated.crossParentLinks,
+            cycles: levelData.cycles,
             hierarchyWarnings,
             maxDepth: levelData.maxDepth,
-            sourceNodeCount: nodes.length
+            sourceNodeCount: Number(options && options.sourceNodeCount) || nodes.length,
+            visibleNodeCount: nodes.length
         };
     }
 
-    return {
-        buildWorkGraphLayout,
-        emptyLayout
-    };
+    return { buildWorkGraphLayout, emptyLayout };
 }));

@@ -11,7 +11,7 @@ Use Stash as the shared AI plan and continuity record. Human work may remain aut
 
 1. Call `resume_project` with the exact namespace, a stable `agent_id`, and the small set of capabilities available in this session.
 2. Continue this agent's active work first. Otherwise choose one returned candidate whose `required_capabilities` it can satisfy.
-3. Call `resume_work` for that item and read its compact goal path, next action, pending conditions, relevant memory, linked resource summaries, prerequisite results, and blockers.
+3. Call `resume_work` for that item and read its compact goal path, parent plan component, owned scopes, next action, pending conditions, relevant memory, linked resource summaries, prerequisite results, and blockers.
 4. Continue a matching item. Create a component, task, or issue only when the bounded responses and any needed paginated search show no match.
 
 No local path, Git repository, or MCP Roots are required. Capabilities, paths, URLs, provider IDs, and agent IDs are routing hints; MCP authentication controls namespace access.
@@ -23,7 +23,7 @@ Reserve `get_goal_map` for owner monitoring. Worker turns use `resume_project` a
 ## Follow the shared outcome tree
 
 - Treat the selected top-level goal as the project outcome. Child goals are A-1, A-2, and deeper results that combine into it.
-- Read `goal_context.path` before acting. Attach each component and task to the narrowest matching goal with `goal_id`.
+- Read `goal_context.path` and `plan_context` before acting. The plan context gives the current component and owned scopes without loading the full plan. Attach each component and task to the narrowest matching goal with `goal_id`.
 - Do not work around a missing or rejected goal link.
 - Link durable context or results with `link_goal_memory` or `remember_work`; omit routine narration.
 - Verified leaf work completes eligible child and parent goals. Never complete a parent while child work remains unfinished.
@@ -31,10 +31,10 @@ Reserve `get_goal_map` for owner monitoring. Worker turns use `resume_project` a
 ## Maintain the component map
 
 - Components are recognizable parts of the system, not phases, sprints, milestones, or chronological buckets. Create them with `create_plan_component`.
-- Keep 5 to 9 components for the project. Grow child tasks. Split a component only when one agent could no longer own it for a working session.
+- Create one component for each independently owned part of the system. Put executable work in child tasks, and split a component when one agent can no longer own it for a working session.
 - Treat each component issue key as stable. Remove an obsolete component and add a new one instead of changing its identity.
 - Use verb-led, plain-language titles whose completion is visible to the owner. Put implementation language in `technical_details` and the done condition in `description`.
-- Keep `owned_paths` current when the project has repository paths. Leave them empty for non-code components.
+- Keep owned scopes current. A scope may be a repository pattern, connector resource, external system, or another work boundary.
 - Use `link_plan_components`: `needs` imposes order; `links` records interaction without order.
 
 ## Update work immediately

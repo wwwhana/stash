@@ -25,6 +25,7 @@ The response contains the shared top-level goal, this agent's active work, at mo
 Continue active work first. Otherwise select one candidate and call `resume_work(work_item_id)`. Its default brief contains only:
 
 - the shared goal path
+- the parent plan component, its outcome, and owned scopes
 - the current item and next action
 - pending completion conditions
 - a few relevant memories and linked resource summaries

@@ -18,6 +18,12 @@ func TestBuildWorkResumeBriefBoundsAgentInputAndSupportsDigestReceipt(t *testing
 			Path: []models.GoalBrief{{ID: 1, Content: "A", Status: "active"}, {ID: 7, ParentID: int64Pointer(1), Content: "A-1", Status: "active"}}, PathTotal: 2,
 			Siblings: []models.GoalBrief{},
 		},
+		PlanContext: &models.WorkPlanExecutionContext{
+			Component: models.WorkPlanReference{ID: 4, IssueKey: "W-000004", Title: strings.Repeat("A-2 운영 화면 ", 80)},
+			Outcome:   strings.Repeat("운영자가 결과를 확인한다. ", 80), Guidance: strings.Repeat("공통 계획을 따른다. ", 80),
+			TaskDetails: strings.Repeat("필터와 상태를 연결한다. ", 80),
+			OwnedScopes: []string{"web://agent-atlas/**", "jira://agent-atlas/**", "confluence://agent-atlas/**", "stash://memory/**", "api://agent-atlas/**"},
+		},
 		NextAction: strings.Repeat("다음 행동 ", 300),
 		LatestAttempt: &models.WorkAttempt{
 			ID: 42, AgentID: strings.Repeat("에이전트", 3000), Status: "active",
@@ -68,6 +74,12 @@ func TestBuildWorkResumeBriefBoundsAgentInputAndSupportsDigestReceipt(t *testing
 	if len(brief.LatestAttempt.AgentID) > 128 {
 		t.Fatalf("agent ID = %d bytes", len(brief.LatestAttempt.AgentID))
 	}
+	if brief.PlanContext == nil || brief.PlanContext.Component.ID != 4 || len(brief.PlanContext.OwnedScopes) != 4 || !brief.PlanContext.MoreOwnedScopes {
+		t.Fatalf("plan context = %#v", brief.PlanContext)
+	}
+	if len(brief.PlanContext.Outcome) > 384 || len(brief.PlanContext.Guidance) > 384 || len(brief.PlanContext.TaskDetails) > 384 {
+		t.Fatalf("plan context text was not bounded: %#v", brief.PlanContext)
+	}
 	repeated, err := buildWorkResumeBrief(bundle)
 	if err != nil || repeated.ContextDigest != brief.ContextDigest {
 		t.Fatalf("stable digest = %q, want %q, err=%v", repeated.ContextDigest, brief.ContextDigest, err)
@@ -80,6 +92,12 @@ func TestBuildWorkResumeBriefBoundsAgentInputAndSupportsDigestReceipt(t *testing
 	changed, err := buildWorkResumeBrief(bundle)
 	if err != nil || changed.ContextDigest == brief.ContextDigest {
 		t.Fatalf("changed digest = %q, previous %q, err=%v", changed.ContextDigest, brief.ContextDigest, err)
+	}
+	bundle.NextAction = strings.Repeat("다음 행동 ", 300)
+	bundle.PlanContext.Outcome = "다른 구성 결과"
+	planChanged, err := buildWorkResumeBrief(bundle)
+	if err != nil || planChanged.ContextDigest == brief.ContextDigest {
+		t.Fatalf("plan digest = %q, previous %q, err=%v", planChanged.ContextDigest, brief.ContextDigest, err)
 	}
 }
 

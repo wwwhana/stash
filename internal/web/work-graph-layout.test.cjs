@@ -15,11 +15,7 @@ function placed(layout, id) {
     return layout.nodes.find(item => item.item.id === id);
 }
 
-function childPlaced(parent, id) {
-    return parent.childLayout.nodes.find(item => item.item.id === id);
-}
-
-test('fork and join use longest predecessor depth', () => {
+test('fork and join use the longest predecessor depth', () => {
     const layout = buildWorkGraphLayout(
         ['A', 'B', 'C', 'D'].map(id => node(id)),
         [edge(1, 'A', 'B'), edge(2, 'A', 'C'), edge(3, 'B', 'D'), edge(4, 'C', 'D')]
@@ -31,7 +27,7 @@ test('fork and join use longest predecessor depth', () => {
     assert.equal(placed(layout, 'B').x, placed(layout, 'C').x);
     assert.equal(placed(layout, 'D').depth, 2);
     assert.ok(placed(layout, 'D').x > placed(layout, 'B').x);
-    assert.equal(layout.edges.filter(item => item.edge.to_item_id === 'D').length, 2);
+    assert.equal(layout.edges.filter(item => item.toKey === 'D' && item.type === 'blocks').length, 2);
 });
 
 test('status and board position never control graph placement', () => {
@@ -51,26 +47,26 @@ test('status and board position never control graph placement', () => {
     }
 });
 
-test('session offset moves a root node, updates its blocks path, expands the canvas, and resets', () => {
+test('session offset moves one node, updates attached paths, expands the canvas, and resets', () => {
     const nodes = ['A', 'B'].map(id => node(id));
     const edges = [edge(1, 'A', 'B')];
     const initial = buildWorkGraphLayout(nodes, edges);
-    const moved = buildWorkGraphLayout(nodes, edges, { offsets: { 'root:B': { x: 180, y: 120 } } });
+    const moved = buildWorkGraphLayout(nodes, edges, { offsets: { 'node:B': { x: 220, y: 260 } } });
     const reset = buildWorkGraphLayout(nodes, edges, { offsets: {} });
 
-    assert.equal(placed(moved, 'B').x, placed(initial, 'B').x + 180);
-    assert.equal(placed(moved, 'B').y, placed(initial, 'B').y + 120);
+    assert.equal(placed(moved, 'B').x, placed(initial, 'B').x + 220);
+    assert.equal(placed(moved, 'B').y, placed(initial, 'B').y + 260);
     assert.equal(placed(moved, 'B').depth, placed(initial, 'B').depth);
     assert.notEqual(moved.edges[0].path, initial.edges[0].path);
-    assert.equal(moved.width, initial.width + 180);
-    assert.equal(moved.height, initial.height + 120);
+    assert.ok(moved.width > initial.width);
+    assert.ok(moved.height > initial.height);
     assert.deepEqual(
         { x: placed(reset, 'B').x, y: placed(reset, 'B').y, path: reset.edges[0].path, width: reset.width, height: reset.height },
         { x: placed(initial, 'B').x, y: placed(initial, 'B').y, path: initial.edges[0].path, width: initial.width, height: initial.height }
     );
 });
 
-test('relates_to is metadata and does not add dependency depth', () => {
+test('related work is connected without creating a dependency stage', () => {
     const layout = buildWorkGraphLayout(
         ['A', 'B', 'C'].map(id => node(id)),
         [edge(1, 'A', 'B', 'relates_to'), edge(2, 'B', 'C')]
@@ -79,20 +75,21 @@ test('relates_to is metadata and does not add dependency depth', () => {
     assert.equal(placed(layout, 'A').depth, 0);
     assert.equal(placed(layout, 'B').depth, 0);
     assert.equal(placed(layout, 'C').depth, 1);
-    assert.equal(layout.edges.find(item => item.edge.id === 1).dashArray, '7 6');
+    assert.equal(layout.edges.find(item => item.key === 'work-edge-1').dashArray, '7 6');
 });
 
-test('items without any valid edge are kept in a separate area', () => {
+test('work without an edge stays visible and is reported as disconnected', () => {
     const layout = buildWorkGraphLayout(
         ['A', 'B', 'E'].map(id => node(id)),
         [edge(1, 'A', 'B')]
     );
 
     assert.deepEqual(layout.disconnected.map(item => item.item.id), ['E']);
-    assert.equal(placed(layout, 'E'), undefined);
+    assert.ok(placed(layout, 'E'));
+    assert.equal(layout.nodes.length, 3);
 });
 
-test('strongly connected blocks edges are grouped and marked as a cycle', () => {
+test('strongly connected blocking edges share a stage and are marked as a cycle', () => {
     const layout = buildWorkGraphLayout(
         ['A', 'B', 'C'].map(id => node(id)),
         [edge(1, 'A', 'B'), edge(2, 'B', 'A'), edge(3, 'B', 'C')]
@@ -106,71 +103,66 @@ test('strongly connected blocks edges are grouped and marked as a cycle', () => 
     assert.equal(layout.edges.filter(item => item.cycle).length, 2);
 });
 
-test('nested parent_id items stay inside their top-level parent card', () => {
+test('every hierarchy item is an independent node joined child to parent', () => {
     const nodes = [
         node('P'),
         { ...node('C'), parent_id: 'P' },
         { ...node('G'), parent_id: 'C' }
     ];
-    const layout = buildWorkGraphLayout(nodes, [], { expandedIds: ['P'] });
-    const parent = placed(layout, 'P');
+    const layout = buildWorkGraphLayout(nodes, []);
 
-    assert.deepEqual(layout.nodes.map(item => item.item.id), ['P']);
-    assert.deepEqual(parent.descendants.map(item => item.id), ['C', 'G']);
-    assert.equal(parent.expanded, true);
-    assert.equal(parent.childLayout.nodes.length, 0);
-    const grandchild = parent.childLayout.disconnected.find(item => item.item.id === 'G');
-    assert.equal(grandchild.hierarchyDepth, 2);
-    assert.equal(grandchild.parentItem.id, 'C');
+    assert.deepEqual(layout.nodes.map(item => item.item.id), ['G', 'C', 'P']);
+    assert.equal(placed(layout, 'G').depth, 0);
+    assert.equal(placed(layout, 'C').depth, 1);
+    assert.equal(placed(layout, 'P').depth, 2);
+    assert.equal(placed(layout, 'C').parentItem.id, 'P');
+    assert.deepEqual(placed(layout, 'C').childItems.map(item => item.id), ['G']);
+    assert.equal(layout.edges.filter(item => item.type === 'part_of').length, 2);
+    assert.ok(layout.edges.some(item => item.fromKey === 'G' && item.toKey === 'C'));
+    assert.ok(layout.edges.some(item => item.fromKey === 'C' && item.toKey === 'P'));
 });
 
-test('child fork and join keep parallel depth inside the expanded parent', () => {
+test('hierarchy and dependency edges share one node-link layout', () => {
     const nodes = [node('P'), ...['A', 'B', 'C', 'D'].map(id => ({ ...node(id), parent_id: 'P' }))];
     const edges = [edge(1, 'A', 'B'), edge(2, 'A', 'C'), edge(3, 'B', 'D'), edge(4, 'C', 'D')];
-    const layout = buildWorkGraphLayout(nodes, edges, { expandedIds: ['P'] });
-    const parent = placed(layout, 'P');
+    const layout = buildWorkGraphLayout(nodes, edges);
 
-    assert.equal(layout.nodes.length, 1);
-    assert.equal(childPlaced(parent, 'A').depth, 0);
-    assert.equal(childPlaced(parent, 'B').depth, 1);
-    assert.equal(childPlaced(parent, 'C').depth, 1);
-    assert.equal(childPlaced(parent, 'B').x, childPlaced(parent, 'C').x);
-    assert.equal(childPlaced(parent, 'D').depth, 2);
-    assert.equal(parent.childLayout.edges.filter(item => item.edge.to_item_id === 'D').length, 2);
+    assert.equal(layout.nodes.length, 5);
+    assert.equal(placed(layout, 'A').depth, 0);
+    assert.equal(placed(layout, 'B').depth, 1);
+    assert.equal(placed(layout, 'C').depth, 1);
+    assert.equal(placed(layout, 'D').depth, 2);
+    assert.equal(placed(layout, 'P').depth, 3);
+    assert.equal(layout.edges.filter(item => item.type === 'blocks').length, 4);
+    assert.equal(layout.edges.filter(item => item.type === 'part_of').length, 4);
 });
 
-test('session offset moves a child join and keeps every incoming edge attached', () => {
+test('moving a nested item keeps every incoming edge attached', () => {
     const nodes = [node('P'), ...['A', 'B', 'C', 'D'].map(id => ({ ...node(id), parent_id: 'P' }))];
     const edges = [edge(1, 'A', 'B'), edge(2, 'A', 'C'), edge(3, 'B', 'D'), edge(4, 'C', 'D')];
-    const initialParent = placed(buildWorkGraphLayout(nodes, edges, { expandedIds: ['P'] }), 'P');
-    const movedParent = placed(buildWorkGraphLayout(nodes, edges, {
-        expandedIds: ['P'],
-        offsets: { 'child:D': { x: 90, y: 70 } }
-    }), 'P');
+    const initial = buildWorkGraphLayout(nodes, edges);
+    const moved = buildWorkGraphLayout(nodes, edges, { offsets: { 'node:D': { x: 90, y: 70 } } });
 
-    assert.equal(childPlaced(movedParent, 'D').x, childPlaced(initialParent, 'D').x + 90);
-    assert.equal(childPlaced(movedParent, 'D').y, childPlaced(initialParent, 'D').y + 70);
-    assert.equal(movedParent.childLayout.width, initialParent.childLayout.width + 90);
-    assert.equal(movedParent.childLayout.height, initialParent.childLayout.height + 70);
-    const initialIncoming = initialParent.childLayout.edges.filter(item => item.edge.to_item_id === 'D').map(item => item.path);
-    const movedIncoming = movedParent.childLayout.edges.filter(item => item.edge.to_item_id === 'D').map(item => item.path);
+    assert.equal(placed(moved, 'D').x, placed(initial, 'D').x + 90);
+    assert.equal(placed(moved, 'D').y, placed(initial, 'D').y + 70);
+    const initialIncoming = initial.edges.filter(item => item.toKey === 'D').map(item => item.path);
+    const movedIncoming = moved.edges.filter(item => item.toKey === 'D').map(item => item.path);
     assert.equal(movedIncoming.length, 2);
     assert.notDeepEqual(movedIncoming, initialIncoming);
 });
 
-test('orphan parent_id keeps the item visible and reports the missing parent', () => {
+test('an orphan parent keeps the work visible and reports the missing node', () => {
     const orphan = { ...node('X'), parent_id: 999 };
     const layout = buildWorkGraphLayout([orphan], []);
 
     assert.equal(layout.sourceNodeCount, 1);
-    assert.equal(layout.nodes.length, 0);
+    assert.equal(layout.nodes.length, 1);
     assert.equal(layout.disconnected.length, 1);
-    assert.equal(layout.disconnected[0].item.id, 'X');
-    assert.equal(layout.disconnected[0].orphanParentId, 999);
+    assert.equal(placed(layout, 'X').orphanParentId, 999);
     assert.match(layout.hierarchyWarnings[0].label, /#999/);
 });
 
-test('cross-parent child dependency advances parent depth and stays named', () => {
+test('a dependency across different parents keeps all four nodes and all relation types', () => {
     const nodes = [
         node('P'), node('Q'),
         { ...node('A'), parent_id: 'P' },
@@ -178,28 +170,30 @@ test('cross-parent child dependency advances parent depth and stays named', () =
     ];
     const layout = buildWorkGraphLayout(nodes, [edge(1, 'A', 'B')]);
 
-    assert.equal(placed(layout, 'P').depth, 0);
-    assert.equal(placed(layout, 'Q').depth, 1);
-    assert.equal(layout.crossParentLinks.length, 1);
-    assert.equal(layout.crossParentLinks[0].label, 'A → B');
-    assert.equal(placed(layout, 'A'), undefined);
-    assert.equal(placed(layout, 'B'), undefined);
+    assert.equal(layout.nodes.length, 4);
+    assert.ok(placed(layout, 'A'));
+    assert.ok(placed(layout, 'B'));
+    assert.equal(layout.edges.filter(item => item.type === 'part_of').length, 2);
+    assert.equal(layout.edges.filter(item => item.type === 'blocks').length, 1);
+    assert.ok(placed(layout, 'B').depth > placed(layout, 'A').depth);
+    assert.ok(placed(layout, 'Q').depth > placed(layout, 'B').depth);
 });
 
-test('disconnected parent and child cards keep status classes and labels', () => {
+test('the graph UI renders one independent node template with filters and no nested child canvas', () => {
     const html = fs.readFileSync(require.resolve('./ui/index.html'), 'utf8');
-    const childArea = html.match(/<section x-show="node\.childLayout\.disconnected\.length"[\s\S]*?<\/section>/)?.[0] || '';
-    const rootArea = html.match(/<section x-show="workGraphLayout\.disconnected\.length"[\s\S]*?<\/section>/)?.[0] || '';
+    const graphArea = html.match(/<div x-show="view === 'graph'"[\s\S]*?<div x-show="view === 'worktrees'"/)?.[0] || '';
 
-    assert.match(childArea, /:class="graphNodeClasses\(child\)"/);
-    assert.match(childArea, /statusLabel\(child\.item\.status\)/);
-    assert.match(rootArea, /:class="graphNodeClasses\(entry\)"/);
-    assert.match(rootArea, /statusLabel\(entry\.item\.status\)/);
+    assert.match(graphArea, /x-for="node in workGraphLayout\.nodes"/);
+    assert.match(graphArea, /:class="graphNodeClasses\(node\)"/);
+    assert.match(graphArea, /graphNodeMeta\(node\)/);
+    assert.match(graphArea, /graphFilter\.query/);
+    assert.match(graphArea, /graphFilter\.status/);
+    assert.doesNotMatch(graphArea, /childLayout|stash-graph-child|toggleGraphParent/);
 });
 
 test('drag handles stay in the graph view-model and never persist offsets', () => {
     const html = fs.readFileSync(require.resolve('./ui/index.html'), 'utf8');
-    const graphViewModel = html.match(/function createWorkGraphViewModel\(\) \{[\s\S]*?\n        function createPlanViewModel/)?.[0] || '';
+    const graphViewModel = html.match(/function createWorkGraphViewModel\(\) \{[\s\S]*?\n        function createGoalMapViewModel/)?.[0] || '';
 
     assert.match(graphViewModel, /graphNodeOffsets: \{\}/);
     assert.match(graphViewModel, /startGraphNodeDrag\(/);
@@ -212,15 +206,11 @@ test('drag handles stay in the graph view-model and never persist offsets', () =
     assert.match(html, />배치 초기화<\/button>/);
 });
 
-test('graph shell uses the full viewport and keeps dependency stages compact', () => {
+test('the graph shell fills its view and always has room for a real horizontal graph', () => {
     const html = fs.readFileSync(require.resolve('./ui/index.html'), 'utf8');
-    const nodes = [node('P'), ...['A', 'B', 'C', 'D'].map(id => ({ ...node(id), parent_id: 'P' }))];
-    const edges = [edge(1, 'A', 'B'), edge(2, 'A', 'C'), edge(3, 'B', 'D'), edge(4, 'C', 'D')];
-    const parent = placed(buildWorkGraphLayout(nodes, edges, { expandedIds: ['P'] }), 'P');
-    const singleRow = buildWorkGraphLayout(
-        ['A', 'B', 'C'].map(id => node(id)),
-        [edge(5, 'A', 'B'), edge(6, 'B', 'C')]
-    );
+    const hierarchy = buildWorkGraphLayout([
+        node('P'), { ...node('C'), parent_id: 'P' }, { ...node('G'), parent_id: 'C' }
+    ], []);
 
     assert.match(html, /\.stash-main \{[^}]*width: 100% !important;[^}]*max-width: none !important;/);
     assert.match(html, /@media \(min-width: 981px\) \{[\s\S]*?\.stash-main \{ padding-right: 0 !important; \}/);
@@ -228,6 +218,9 @@ test('graph shell uses the full viewport and keeps dependency stages compact', (
     assert.match(html, /\.stash-graph-content \{[^}]*flex: 1 1 auto;[^}]*flex-direction: column;/);
     assert.match(html, /class="stash-graph-content"/);
     assert.doesNotMatch(html, /<main class="[^"]*max-w-7xl/);
-    assert.ok(parent.childLayout.width <= 470, `child flow width ${parent.childLayout.width}px`);
-    assert.equal(singleRow.height, 200);
+    assert.ok(hierarchy.width >= 760);
+    assert.ok(hierarchy.height >= 360);
+    assert.equal(hierarchy.stages.length, 3);
+    assert.equal(hierarchy.stages[0].label, '시작');
+    assert.equal(hierarchy.stages.at(-1).label, '결과');
 });

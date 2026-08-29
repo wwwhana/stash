@@ -1906,6 +1906,39 @@ func (b *Brain) boundedWorkResumeLimit(limit int) int {
 	return limit
 }
 
+func readWorkPlanExecutionContext(ctx context.Context, tx pgx.Tx, workItemID, namespaceID int64) (*models.WorkPlanExecutionContext, error) {
+	var planContext models.WorkPlanExecutionContext
+	err := tx.QueryRow(ctx,
+		`SELECT component.id, component.issue_key, component.title, component.description,
+		        component_plan.technical_details,
+		        CASE WHEN active_plan.kind = $4 THEN active_plan.technical_details ELSE '' END,
+		        component_plan.owned_paths
+		 FROM work_items active_item
+		 JOIN work_plan_items active_plan ON active_plan.work_item_id = active_item.id
+		 JOIN work_items component
+		   ON component.id = CASE
+		       WHEN active_plan.kind = $3 THEN active_item.id
+		       WHEN active_plan.kind = $4 THEN active_item.parent_id
+		   END
+		 JOIN work_plan_items component_plan
+		   ON component_plan.work_item_id = component.id AND component_plan.kind = $3
+		 WHERE active_item.id = $1 AND active_item.namespace_id = $2 AND active_item.deleted_at IS NULL
+		   AND component.namespace_id = $2 AND component.deleted_at IS NULL
+		   AND active_plan.kind IN ($3, $4)`,
+		workItemID, namespaceID, workPlanComponentKind, workPlanTaskKind,
+	).Scan(
+		&planContext.Component.ID, &planContext.Component.IssueKey, &planContext.Component.Title,
+		&planContext.Outcome, &planContext.Guidance, &planContext.TaskDetails, &planContext.OwnedScopes,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read work plan execution context: %w", err)
+	}
+	return &planContext, nil
+}
+
 func (b *Brain) GetWorkResumeBundle(ctx context.Context, workItemID int64, recentEventLimit int) (*models.WorkResumeBundle, error) {
 	if recentEventLimit <= 0 {
 		recentEventLimit = defaultResumeEventLimit
@@ -1982,6 +2015,10 @@ func (b *Brain) GetWorkResumeBundle(ctx context.Context, workItemID int64, recen
 		DependencyResults:    make([]models.WorkDependencyResult, 0),
 		Blockers:             make([]models.WorkItem, 0),
 		RecentEvents:         make([]models.WorkEvent, 0),
+	}
+	bundle.PlanContext, err = readWorkPlanExecutionContext(ctx, tx, workItemID, namespaceID)
+	if err != nil {
+		return nil, err
 	}
 	if err := tx.QueryRow(ctx,
 		`SELECT

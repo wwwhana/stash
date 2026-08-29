@@ -13,7 +13,7 @@ Namespace paths, remote URLs, provider IDs, capabilities, and agent IDs are rout
 
 ## Follow the shared goal tree
 
-- Read the shared root from `resume_project` and `goal_context.path` from `resume_work`. The path runs from the project outcome to the specific outcome this item contributes to.
+- Read the shared root from `resume_project`, then read `goal_context.path` and `plan_context` from `resume_work`. The goal path identifies the result this item contributes to; the plan context identifies its parent component, component outcome, task details, and owned scopes.
 - Model A-1, A-2, and deeper outcomes as child goals under A. Attach each component and task to the narrowest matching goal with `goal_id`.
 - Never start detached work. When a project root exists, Stash binds legacy unassigned work to the root and rejects work assigned outside that tree.
 - Link only durable context, constraints, decisions, failures, evidence, and results to goals or work. Routine narration stays out of memory.
@@ -23,7 +23,7 @@ Namespace paths, remote URLs, provider IDs, capabilities, and agent IDs are rout
 
 - `resume_project` returns at most three active items and three runnable candidates. The default `resume_work` response is a brief. Request `detail: full` only when a referenced plan, event, evidence record, or connector detail is necessary for the next action.
 - Save `context_digest`. Send it back as `known_context_digest`; an unchanged project or work item returns a small receipt instead of repeating the same context.
-- Read only the current goal path, current action, pending conditions, relevant memory, and blockers. Use IDs to fetch one missing record rather than loading every list.
+- Read only the current goal path, parent plan component, owned scopes, current action, pending conditions, relevant memory, and blockers. Use IDs to fetch one missing record rather than loading every list.
 - `get_goal_map` is for owner monitoring. Routine worker turns must not load the full map when a resume brief already contains their goal path.
 
 ## Claim work atomically
@@ -50,10 +50,10 @@ Namespace paths, remote URLs, provider IDs, capabilities, and agent IDs are rout
 ## Maintain the component map
 
 - Components are parts of the system, not phases, sprints, milestones, or chronological buckets.
-- Keep 5 to 9 components for the project. Grow child tasks. Split a component only when one agent could no longer own it for a working session.
+- Create one component for each independently owned part of the system. Put executable work in child tasks.
 - Keep component issue keys stable. Remove and add a component instead of changing its identity.
 - Use verb-led, concrete titles whose completion is visible to the owner. Put implementation language in `technical_details` and the done condition in `description`.
-- Keep `owned_paths` current.
+- Keep each component's owned scopes current. A scope may be a file pattern, connector resource, external system, or other work boundary.
 - `needs` imposes order between components. `links` records interaction without order.
 
 ## Update state as work happens

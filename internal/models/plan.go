@@ -20,6 +20,18 @@ type WorkPlanReference struct {
 	Title    string `json:"title"`
 }
 
+// WorkPlanExecutionContext is the small part of the shared plan that an
+// executing agent needs alongside its own work item. OwnedScopes intentionally
+// covers files, connector resources, external systems, and other boundaries.
+type WorkPlanExecutionContext struct {
+	Component       WorkPlanReference `json:"component"`
+	Outcome         string            `json:"outcome,omitempty"`
+	Guidance        string            `json:"guidance,omitempty"`
+	TaskDetails     string            `json:"task_details,omitempty"`
+	OwnedScopes     []string          `json:"owned_scopes"`
+	MoreOwnedScopes bool              `json:"more_owned_scopes,omitempty"`
+}
+
 // WorkPlanComponent groups executable tasks that one agent can own in a
 // session. The WorkItem issue key is the stable component identifier.
 type WorkPlanComponent struct {

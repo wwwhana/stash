@@ -15,7 +15,7 @@ Use Stash as the durable record for AI project work. Human work may remain autho
 
 1. Call `resume_project` with the exact project namespace, a stable `agent_id`, and the small set of capabilities available in this session.
 2. Continue this agent's active item first. Otherwise choose one of the returned runnable items whose `required_capabilities` it can satisfy.
-3. Call `resume_work` for that item. Read the shared goal path, current action, pending conditions, relevant memory, resource summaries, prerequisite results, and blockers.
+3. Call `resume_work` for that item. Read the shared goal path, parent plan component, owned scopes, current action, pending conditions, relevant memory, resource summaries, prerequisite results, and blockers.
 4. Continue the same item instead of creating a replacement. Search only when the bounded project response does not identify the intended work.
 
 Keep `context_digest` and send it as `known_context_digest` on later resume calls. An unchanged view returns a small receipt. See [the protocol](references/protocol.md) for recovery and connector details.
@@ -23,6 +23,7 @@ Keep `context_digest` and send it as `known_context_digest` on later resume call
 ## Stay on the shared goal path
 
 - Treat the selected top-level goal as the project outcome. A-1, A-2, and deeper results belong under it.
+- Follow `plan_context`: it gives this item only its parent component, component outcome, task details, and owned scopes instead of loading the full plan.
 - Give new components and work items the narrowest matching `goal_id`. Stash rejects attempt starts outside the selected tree and binds older unassigned work to the shared root.
 - Reserve `get_goal_map` for owner monitoring. Worker turns use the short project and work resumes.
 - Save only durable constraints, decisions, failures, and results as memory. Do not store routine narration.

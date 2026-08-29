@@ -325,11 +325,19 @@
         .stash-graph-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 7px; }
         .stash-graph-title { color: #f8fafc; font-size: 14px; font-weight: 800; }
         .stash-graph-scope { margin-top: 4px; color: #94a3b8; font-size: 10px; }
-        .stash-graph-toolbar { display: flex; align-items: end; justify-content: space-between; gap: 8px; margin-bottom: 8px; padding: 7px 8px; border: 1px solid rgba(148,163,184,.2); border-radius: 8px; background: rgba(15,23,42,.68); }
+        .stash-graph-toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin-bottom: 8px; padding: 8px; border: 1px solid rgba(148,163,184,.2); border-radius: 8px; background: rgba(15,23,42,.68); }
         .stash-graph-project { display: flex; align-items: center; gap: 8px; color: #cbd5e1; font-size: 10px; font-weight: 800; }
         .stash-graph-project select { min-width: 220px; min-height: 34px; padding: 6px 28px 6px 9px; border: 1px solid #475569; border-radius: 7px; color: #f8fafc; background: #1e293b; font-size: 11px; }
         .stash-graph-project select:focus { border-color: #818cf8; outline: 2px solid rgba(129,140,248,.25); }
         .stash-graph-project-note { color: #94a3b8; font-size: 10px; }
+        .stash-map-filter { display: flex; flex-direction: column; gap: 4px; min-width: 126px; color: #94a3b8; font-size: 9px; font-weight: 800; }
+        .stash-map-filter.is-search { flex: 1 1 180px; }
+        .stash-map-filter input, .stash-map-filter select { width: 100%; min-height: 34px; padding: 6px 9px; border: 1px solid #475569; border-radius: 7px; color: #f8fafc; background: #1e293b; font-size: 10px; }
+        .stash-map-filter input::placeholder { color: #7c8ba3; }
+        .stash-map-filter input:focus, .stash-map-filter select:focus { border-color: #818cf8; outline: 2px solid rgba(129,140,248,.25); }
+        .stash-map-types { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+        .stash-map-types button { min-height: 30px; padding: 5px 8px; border: 1px solid #475569; border-radius: 7px; color: #94a3b8; background: #172033; font-size: 9px; font-weight: 800; }
+        .stash-map-types button[aria-pressed="true"] { border-color: #818cf8; color: #eef2ff; background: #303d63; }
         .stash-graph-reset { min-height: 34px; padding: 6px 10px; border: 1px solid #475569; border-radius: 7px; color: #e2e8f0; background: #1e293b; font-size: 10px; font-weight: 800; }
         .stash-graph-reset:hover:not(:disabled) { border-color: #818cf8; color: #fff; background: #273552; }
         .stash-graph-reset:disabled { color: #64748b; cursor: default; opacity: .65; }
@@ -355,15 +363,16 @@
         .stash-graph-canvas { position: relative; min-height: 100%; overflow: hidden; }
         .stash-graph-edge-layer { position: absolute; inset: 0; z-index: 1; width: 100% !important; min-width: 0 !important; height: 100% !important; pointer-events: none; }
         .stash-graph-edge-layer path { fill: none; vector-effect: non-scaling-stroke; }
-        .stash-graph-stage { position: absolute; z-index: 0; border: 1px solid rgba(148,163,184,.18); border-radius: 9px; background: rgba(30,41,59,.48); }
-        .stash-graph-stage::after { content: ''; position: absolute; top: 40px; right: 7px; left: 7px; border-top: 1px solid rgba(148,163,184,.16); }
-        .stash-graph-stage__label { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; padding: 10px 8px; color: #e2e8f0; font-size: 11px; font-weight: 850; }
+        .stash-graph-stage { position: absolute; z-index: 0; pointer-events: none; }
+        .stash-graph-stage::after { content: ''; position: absolute; top: 42px; bottom: 18px; left: 50%; border-left: 1px dashed rgba(148,163,184,.2); }
+        .stash-graph-stage__label { width: max-content; min-width: 88px; display: flex; align-items: baseline; justify-content: center; gap: 6px; margin: 8px auto 0; padding: 5px 8px; border: 1px solid rgba(148,163,184,.2); border-radius: 999px; color: #e2e8f0; background: rgba(30,41,59,.82); font-size: 10px; font-weight: 850; }
         .stash-graph-stage__label span { color: #94a3b8; font-size: 9px; font-weight: 700; }
         .stash-graph-node { position: absolute; z-index: 2; display: block; padding: 0; overflow: hidden; border: 1px solid #475569; border-radius: 11px; color: #f8fafc; background: #18233a; box-shadow: 0 8px 18px rgba(2,6,23,.2); text-align: left; transition: border-color .15s ease, box-shadow .15s ease; }
         .stash-graph-node:hover { border-color: #818cf8; box-shadow: 0 10px 22px rgba(2,6,23,.28); }
         .stash-graph-node.is-cycle { border-color: #fb7185; box-shadow: 0 0 0 1px rgba(251,113,133,.2), 0 8px 18px rgba(2,6,23,.2); }
         .stash-graph-node.is-moved { border-color: #a5b4fc; }
-        .stash-graph-node__open { width: 100%; height: 92px; display: block; padding: 12px 42px 12px 13px; border: 0; color: inherit; background: transparent; text-align: left; }
+        .stash-graph-node.is-context { opacity: .64; }
+        .stash-graph-node__open { width: 100%; height: 100%; display: block; padding: 12px 42px 10px 13px; border: 0; color: inherit; background: transparent; text-align: left; }
         .stash-graph-node__open:hover { background: rgba(99,102,241,.08); }
         .stash-graph-node__open:focus-visible { position: relative; z-index: 1; box-shadow: inset 0 0 0 3px rgba(165,180,252,.55); outline: none; }
         .stash-graph-node__top { display: flex; align-items: center; justify-content: space-between; gap: 7px; }
@@ -379,128 +388,85 @@
         .is-canceled .stash-graph-status-dot { background: #64748b; }
         .stash-graph-cycle-badge { padding: 2px 5px; border-radius: 999px; color: #fecdd3; background: rgba(190,24,93,.25); font-size: 8px; font-weight: 900; }
         .stash-graph-node__title { display: -webkit-box; margin-top: 8px; overflow: hidden; color: #f8fafc; font-size: 11px; font-weight: 750; line-height: 1.35; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+        .stash-graph-node__meta { display: block; margin-top: 6px; overflow: hidden; color: #94a3b8; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
         .stash-graph-node__warning { height: 24px; display: flex; align-items: center; padding: 0 12px; border-top: 1px solid rgba(251,191,36,.2); color: #fde68a; background: rgba(120,53,15,.15); font-size: 9px; }
         .stash-graph-node__warning span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .stash-graph-children-toggle { width: 100%; height: 34px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 13px; border: 0; border-top: 1px solid rgba(148,163,184,.18); color: #cbd5e1; background: rgba(15,23,42,.35); font-size: 10px; text-align: left; }
-        .stash-graph-children-toggle:hover { color: #fff; background: rgba(99,102,241,.12); }
-        .stash-graph-children-toggle strong { color: #a5b4fc; font-size: 9px; }
-        .stash-graph-children { padding: 4px 6px; border-top: 1px solid rgba(148,163,184,.16); background: rgba(8,15,29,.48); }
-        .stash-graph-child-canvas { position: relative; overflow: hidden; }
-        .stash-graph-child-edge-layer { position: absolute; inset: 0; z-index: 1; width: 100% !important; min-width: 0 !important; height: 100% !important; pointer-events: none; }
-        .stash-graph-child-edge-layer path { fill: none; vector-effect: non-scaling-stroke; }
-        .stash-graph-child-stage { position: absolute; z-index: 0; border: 1px solid rgba(148,163,184,.13); border-radius: 9px; background: rgba(30,41,59,.3); }
-        .stash-graph-child-stage strong { display: block; padding: 6px 7px; color: #94a3b8; font-size: 9px; }
-        .stash-graph-child-stage::after { content: ''; position: absolute; top: 27px; right: 4px; left: 4px; border-top: 1px solid rgba(148,163,184,.12); }
-        .stash-graph-child-node { position: absolute; z-index: 2; width: 138px; height: 62px; padding: 0; overflow: hidden; border: 1px solid #3b4a61; border-radius: 8px; color: #f8fafc; background: #121c30; text-align: left; }
-        .stash-graph-child-node:hover { border-color: #818cf8; }
-        .stash-graph-child-node.is-cycle { border-color: #fb7185; }
-        .stash-graph-child-node.is-moved { border-color: #a5b4fc; }
-        .stash-graph-child-node__open { width: 100%; height: 100%; display: block; padding: 7px 28px 7px 8px; border: 0; color: inherit; background: transparent; text-align: left; }
-        .stash-graph-child-node__open:focus-visible { box-shadow: inset 0 0 0 2px rgba(129,140,248,.45); outline: none; }
-        .stash-graph-child-node__top { display: flex; align-items: center; justify-content: space-between; gap: 5px; }
-        .stash-graph-child-node__top > strong { min-width: 0; overflow: hidden; color: #c7d2fe; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
-        .stash-graph-child-node__top > span { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 4px; color: #94a3b8; font-size: 8px; }
-        .stash-graph-child-node__title { display: block; margin-top: 5px; overflow: hidden; font-size: 9px; font-weight: 750; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
-        .stash-graph-child-node small { display: block; margin-top: 4px; overflow: hidden; color: #64748b; font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
         .stash-graph-drag-handle { position: absolute; top: 7px; right: 7px; z-index: 5; width: 25px; height: 25px; display: grid; padding: 0; place-items: center; border: 1px solid rgba(165,180,252,.48); border-radius: 7px; color: #c7d2fe; background: rgba(15,23,42,.92); box-shadow: 0 2px 5px rgba(2,6,23,.28); cursor: grab; touch-action: none; }
         .stash-graph-drag-handle:hover { border-color: #c7d2fe; color: #fff; background: #303d63; }
         .stash-graph-drag-handle:focus-visible { border-color: #fff; box-shadow: 0 0 0 3px rgba(129,140,248,.42); outline: none; }
-        .stash-graph-drag-handle.is-child { top: 4px; right: 4px; width: 20px; height: 20px; border-radius: 5px; font-size: 10px; }
         .stash-graph-drag-handle span { line-height: 1; pointer-events: none; }
         body.stash-graph-dragging, body.stash-graph-dragging * { cursor: grabbing !important; user-select: none !important; }
-        .stash-graph-child-unlinked { position: absolute; left: 0; z-index: 2; padding: 7px 4px 4px; border-top: 1px dashed rgba(148,163,184,.22); }
-        .stash-graph-child-unlinked > strong { display: block; margin-bottom: 6px; color: #94a3b8; font-size: 8px; }
-        .stash-graph-child-unlinked > div { display: grid; grid-template-columns: repeat(var(--child-columns), minmax(0, 1fr)); gap: 7px; }
-        .stash-graph-child-unlinked-card { position: relative; min-width: 0; height: 54px; overflow: hidden; border: 1px solid #334155; border-radius: 7px; color: #e2e8f0; background: #111a2c; text-align: left; will-change: transform; }
-        .stash-graph-child-unlinked-card:hover { border-color: #64748b; }
-        .stash-graph-child-unlinked-card.is-moved { border-color: #a5b4fc; }
-        .stash-graph-child-unlinked-card__open { width: 100%; height: 100%; padding: 7px 29px 7px 8px; border: 0; color: inherit; background: transparent; text-align: left; }
-        .stash-graph-child-unlinked-card__open:focus-visible { box-shadow: inset 0 0 0 2px rgba(129,140,248,.45); outline: none; }
-        .stash-graph-child-unlinked-card__open > span { display: flex; align-items: center; justify-content: space-between; gap: 5px; }
-        .stash-graph-child-unlinked-card__open > span > span { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 4px; color: #94a3b8; font-size: 8px; }
-        .stash-graph-child-unlinked b { overflow: hidden; color: #a5b4fc; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
-        .stash-graph-child-unlinked em { display: block; margin-top: 4px; overflow: hidden; font-size: 9px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
-        .stash-graph-child-unlinked small { display: block; margin-top: 3px; overflow: hidden; color: #64748b; font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
-        .stash-graph-cross-links { margin-top: 12px; padding: 10px 12px; border: 1px solid rgba(129,140,248,.22); border-radius: 10px; background: rgba(30,41,59,.36); }
-        .stash-graph-cross-links > strong { color: #c7d2fe; font-size: 10px; }
-        .stash-graph-cross-links > div { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
-        .stash-graph-cross-links span { display: inline-flex; align-items: center; gap: 6px; padding: 4px 7px; border-radius: 7px; color: #e2e8f0; background: rgba(15,23,42,.55); font-size: 9px; }
-        .stash-graph-cross-links b { font-weight: 800; }
-        .stash-graph-cross-links small { color: #94a3b8; }
         .stash-graph-edges-text { position: absolute; }
-        .stash-graph-unlinked { margin-top: 14px; padding: 13px; border: 1px solid rgba(148,163,184,.24); border-radius: 12px; background: rgba(15,23,42,.5); }
-        .stash-graph-unlinked__header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-        .stash-graph-unlinked h3 { margin: 0; color: #e2e8f0; font-size: 12px; }
-        .stash-graph-unlinked p { margin: 4px 0 0; color: #94a3b8; font-size: 10px; }
-        .stash-graph-unlinked__count { color: #94a3b8; font-size: 10px; }
-        .stash-graph-unlinked__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(176px, 1fr)); gap: 8px; margin-top: 11px; }
-        .stash-graph-unlinked__item { position: relative; min-width: 0; overflow: hidden; border: 1px solid #334155; border-radius: 9px; color: #f8fafc; background: #172033; text-align: left; will-change: transform; }
-        .stash-graph-unlinked__item:hover { border-color: #64748b; }
-        .stash-graph-unlinked__item.is-moved { border-color: #a5b4fc; }
-        .stash-graph-unlinked__open { width: 100%; height: 100%; min-height: 68px; padding: 9px 38px 9px 10px; border: 0; color: inherit; background: transparent; text-align: left; }
-        .stash-graph-unlinked__open:focus-visible { box-shadow: inset 0 0 0 2px rgba(129,140,248,.45); outline: none; }
-        .stash-graph-unlinked__top { display: flex; align-items: center; justify-content: space-between; gap: 7px; }
-        .stash-graph-unlinked__top strong { min-width: 0; overflow: hidden; color: #cbd5e1; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
-        .stash-graph-unlinked__badge { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 4px; color: #94a3b8; font-size: 8px; }
-        .stash-graph-unlinked__title { display: block; margin-top: 5px; overflow: hidden; font-size: 10px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
-        .stash-graph-unlinked__item small { display: block; margin-top: 5px; color: #fde68a; font-size: 8px; }
-        .stash-goal-map { width: 100%; height: 100%; min-height: 100%; display: flex; flex-direction: column; padding: 12px; color: #f8fafc; background: #111a2f; }
-        .stash-goal-map__header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 9px; }
-        .stash-goal-map__title { font-size: 14px; font-weight: 850; }
-        .stash-goal-map__scope { margin-top: 3px; color: #94a3b8; font-size: 10px; }
-        .stash-goal-map__legend { display: flex; flex-wrap: wrap; gap: 10px; color: #cbd5e1; font-size: 10px; }
+        .stash-goal-map { width: 100%; height: 100%; min-height: 100%; display: flex; flex-direction: column; padding: 16px; color: #25324a; background: #f5f7fb; }
+        .stash-goal-map__header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 11px; }
+        .stash-goal-map__title { color: #172033; font-size: 17px; font-weight: 900; letter-spacing: -.025em; }
+        .stash-goal-map__scope { margin-top: 3px; color: #667085; font-size: 10px; }
+        .stash-goal-map__legend { display: flex; flex-wrap: wrap; gap: 10px; color: #667085; font-size: 10px; }
         .stash-goal-map__legend span { display: inline-flex; align-items: center; gap: 5px; }
-        .stash-goal-map__legend i { width: 18px; border-top: 2px solid #818cf8; }
-        .stash-goal-map__legend i.is-memory { border-top-style: dashed; border-top-color: #fbbf24; }
-        .stash-goal-map__legend i.is-resource { border-top-style: dashed; border-top-color: #38bdf8; }
-        .stash-goal-map__toolbar { display: flex; align-items: end; justify-content: space-between; gap: 10px; margin-bottom: 9px; padding: 8px; border: 1px solid rgba(148,163,184,.2); border-radius: 8px; background: rgba(15,23,42,.68); }
+        .stash-goal-map__legend i { width: 8px; height: 8px; border-radius: 50%; background: #6366f1; }
+        .stash-goal-map__legend i.is-work { background: #0f9f73; }
+        .stash-goal-map__legend i.is-memory { background: #d79a0b; }
+        .stash-goal-map__legend i.is-resource { background: #1688c9; }
+        .stash-goal-map__toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin-bottom: 10px; padding: 10px; border: 1px solid #dfe4ec; border-radius: 10px; background: #fff; box-shadow: 0 4px 14px rgba(27,39,70,.05); }
+        .stash-goal-map .stash-graph-project, .stash-goal-map .stash-map-filter { color: #667085; }
+        .stash-goal-map .stash-graph-project select, .stash-goal-map .stash-map-filter input, .stash-goal-map .stash-map-filter select { border-color: #d0d5dd; color: #344054; background: #fff; }
+        .stash-goal-map .stash-map-filter input::placeholder { color: #98a2b3; }
+        .stash-goal-map .stash-map-types button { border-color: #d0d5dd; color: #667085; background: #fff; }
+        .stash-goal-map .stash-map-types button[aria-pressed="true"] { border-color: #818cf8; color: #3730a3; background: #eef2ff; }
+        .stash-goal-map .stash-graph-reset { border-color: #d0d5dd; color: #475467; background: #fff; }
         .stash-goal-map__summary { display: flex; gap: 7px; }
-        .stash-goal-map__summary span { padding: 5px 8px; border-radius: 7px; color: #cbd5e1; background: #1e293b; font-size: 9px; }
-        .stash-goal-map__summary strong { margin-right: 3px; color: #fff; }
-        .stash-goal-map__activity { display: flex; gap: 6px; margin: 0 0 9px; overflow-x: auto; }
-        .stash-goal-map__activity button { min-width: 160px; max-width: 260px; padding: 7px 9px; border: 1px solid rgba(129,140,248,.25); border-radius: 8px; color: #e2e8f0; background: rgba(30,41,59,.72); text-align: left; }
-        .stash-goal-map__activity button.is-blocked { border-color: rgba(251,113,133,.42); }
+        .stash-goal-map__summary span { padding: 5px 8px; border-radius: 7px; color: #667085; background: #f2f4f7; font-size: 9px; }
+        .stash-goal-map__summary strong { margin-right: 3px; color: #344054; }
+        .stash-goal-map__activity { display: flex; gap: 7px; margin: 0 0 10px; overflow-x: auto; }
+        .stash-goal-map__activity button { min-width: 170px; max-width: 270px; padding: 8px 10px; border: 1px solid #dfe3ff; border-radius: 9px; color: #344054; background: #fff; text-align: left; box-shadow: 0 3px 10px rgba(27,39,70,.04); }
+        .stash-goal-map__activity button.is-blocked { border-color: #f4b4b0; background: #fff7f6; }
         .stash-goal-map__activity strong, .stash-goal-map__activity span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .stash-goal-map__activity strong { font-size: 9px; }
-        .stash-goal-map__activity span { margin-top: 3px; color: #94a3b8; font-size: 8px; }
-        .stash-goal-map__empty { display: grid; min-height: 280px; flex: 1; place-items: center; padding: 24px; border: 1px dashed rgba(148,163,184,.3); border-radius: 12px; color: #94a3b8; background: rgba(15,23,42,.3); font-size: 12px; text-align: center; }
-        .stash-goal-map__empty.is-error { color: #fecaca; }
+        .stash-goal-map__activity span { margin-top: 3px; color: #7b8497; font-size: 8px; }
+        .stash-goal-map__empty { display: grid; min-height: 280px; flex: 1; place-items: center; padding: 24px; border: 1px dashed #cbd2dd; border-radius: 12px; color: #667085; background: #fff; font-size: 12px; text-align: center; }
+        .stash-goal-map__empty.is-error { color: #b42318; background: #fff7f6; }
         .stash-goal-map__setup { display: grid; width: min(420px, 100%); gap: 8px; margin-top: 14px; }
-        .stash-goal-map__setup select { width: 100%; padding: 8px 10px; border: 1px solid rgba(148,163,184,.34); border-radius: 7px; color: #f8fafc; background: #172033; }
+        .stash-goal-map__setup select { width: 100%; padding: 8px 10px; border: 1px solid #d0d5dd; border-radius: 7px; color: #344054; background: #fff; }
         .stash-goal-map__setup .stash-btn { justify-self: center; }
-        .stash-goal-map__scroll { min-height: 260px; flex: 1; overflow: auto; border: 1px solid rgba(148,163,184,.2); border-radius: 10px; background: rgba(8,15,29,.45); }
+        .stash-goal-map__scroll { min-height: 320px; flex: 1; overflow: auto; border: 1px solid #dfe4ec; border-radius: 12px; background: radial-gradient(circle at center, #fff 0, #fafbff 42%, #f2f5fa 100%); box-shadow: inset 0 1px 0 rgba(255,255,255,.8); }
         .stash-goal-map__canvas { position: relative; min-height: 100%; overflow: hidden; }
-        .stash-goal-map__columns { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
-        .stash-goal-map__column { position: absolute; top: 10px; bottom: 10px; border: 1px solid rgba(148,163,184,.13); border-radius: 9px; background: rgba(30,41,59,.32); }
-        .stash-goal-map__column strong { display: block; padding: 9px 10px; color: #94a3b8; font-size: 9px; }
-        .stash-goal-map__column span { float: right; color: #64748b; }
+        .stash-goal-map__rings { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
+        .stash-goal-map__ring { position: absolute; border: 1px dashed #cfd5e2; border-radius: 50%; }
+        .stash-goal-map__ring.is-goal { border-color: #c9cdfb; background: rgba(99,102,241,.018); }
+        .stash-goal-map__ring.is-work { border-color: #b8dfd4; background: rgba(15,159,115,.012); }
+        .stash-goal-map__ring.is-context { border-color: #d9dde6; }
+        .stash-goal-map__ring > span { position: absolute; top: 0; left: 50%; display: inline-flex; align-items: center; gap: 5px; padding: 4px 7px; border: 1px solid #dfe4ec; border-radius: 999px; color: #667085; background: rgba(255,255,255,.94); font-size: 8px; font-weight: 800; white-space: nowrap; transform: translate(-50%, -50%); box-shadow: 0 2px 7px rgba(27,39,70,.06); }
+        .stash-goal-map__ring > span b { color: #344054; }
+        .stash-goal-map__ring > span i { font-style: normal; }
         .stash-goal-map__edges { position: absolute; inset: 0; z-index: 1; width: 100% !important; height: 100% !important; pointer-events: none; }
         .stash-goal-map__edges path { fill: none; vector-effect: non-scaling-stroke; }
-        .stash-goal-node { position: absolute; z-index: 2; overflow: hidden; border: 1px solid #475569; border-radius: 10px; color: #f8fafc; background: #18233a; box-shadow: 0 7px 16px rgba(2,6,23,.24); }
-        .stash-goal-node.is-root { border-color: #a5b4fc; background: #222d50; box-shadow: 0 0 0 1px rgba(165,180,252,.2), 0 8px 18px rgba(2,6,23,.28); }
-        .stash-goal-node.is-complete { border-color: rgba(52,211,153,.6); }
-        .stash-goal-node.is-ready { border-color: #38bdf8; }
-        .stash-goal-node.is-mismatch { border-color: #fb7185; }
+        .stash-goal-node { position: absolute; z-index: 2; overflow: hidden; border: 1px solid #d7dce5; border-radius: 11px; color: #344054; background: #fff; box-shadow: 0 7px 18px rgba(34,48,78,.11); }
+        .stash-goal-node.is-root { z-index: 3; border: 2px solid #6366f1; background: #f6f6ff; box-shadow: 0 0 0 9px rgba(99,102,241,.08), 0 10px 24px rgba(55,48,163,.18); }
+        .stash-goal-node.is-complete { border-color: #6fc9aa; }
+        .stash-goal-node.is-ready { border-color: #55aee0; }
+        .stash-goal-node.is-mismatch { border-color: #e98178; }
+        .stash-goal-node.is-context { opacity: .64; }
         .stash-goal-node__body { width: 100%; height: 100%; padding: 10px 11px; text-align: left; }
         button.stash-goal-node__body { border: 0; color: inherit; background: transparent; }
-        button.stash-goal-node__body:hover { background: rgba(99,102,241,.08); }
-        button.stash-goal-node__body:focus-visible { box-shadow: inset 0 0 0 3px rgba(165,180,252,.48); outline: none; }
-        .stash-goal-node__top { display: flex; align-items: center; justify-content: space-between; gap: 7px; color: #94a3b8; font-size: 8px; }
-        .stash-goal-node__top strong { color: #c7d2fe; font-size: 9px; }
+        button.stash-goal-node__body:hover { background: rgba(99,102,241,.05); }
+        button.stash-goal-node__body:focus-visible { box-shadow: inset 0 0 0 3px rgba(99,102,241,.25); outline: none; }
+        .stash-goal-node__top { display: flex; align-items: center; justify-content: space-between; gap: 7px; color: #7b8497; font-size: 8px; }
+        .stash-goal-node__top strong { color: #4f46e5; font-size: 9px; }
         .stash-goal-node__title { display: -webkit-box; margin-top: 7px; overflow: hidden; font-size: 10px; font-weight: 800; line-height: 1.35; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-        .stash-goal-node__meta { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 7px; color: #94a3b8; font-size: 8px; }
-        .stash-goal-node__detail { display: block; margin-top: 5px; overflow: hidden; color: #94a3b8; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
-        .stash-goal-node__progress { display: block; height: 4px; margin-top: 7px; overflow: hidden; border-radius: 999px; background: #334155; }
-        .stash-goal-node__progress i { display: block; height: 100%; border-radius: inherit; background: #818cf8; }
-        .stash-goal-node.is-memory { border-color: rgba(251,191,36,.45); background: #272318; }
-        .stash-goal-node.is-memory .stash-goal-node__top strong { color: #fde68a; }
-        .stash-goal-node.is-resource { border-color: rgba(56,189,248,.5); background: #132638; }
-        .stash-goal-node.is-resource .stash-goal-node__top strong { color: #7dd3fc; }
-        .stash-goal-node.is-work { background: #172033; }
-        .stash-goal-map__unassigned { margin-top: 9px; padding: 10px; border: 1px solid rgba(251,191,36,.3); border-radius: 9px; background: rgba(120,53,15,.14); }
-        .stash-goal-map__unassigned > strong { color: #fde68a; font-size: 10px; }
+        .stash-goal-node__meta { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 7px; color: #7b8497; font-size: 8px; }
+        .stash-goal-node__detail { display: block; margin-top: 5px; overflow: hidden; color: #7b8497; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+        .stash-goal-node__progress { display: block; height: 4px; margin-top: 7px; overflow: hidden; border-radius: 999px; background: #e4e7ec; }
+        .stash-goal-node__progress i { display: block; height: 100%; border-radius: inherit; background: #6366f1; }
+        .stash-goal-node.is-memory { border-color: #ead69b; background: #fffaf0; }
+        .stash-goal-node.is-memory .stash-goal-node__top strong { color: #a56b00; }
+        .stash-goal-node.is-resource { border-color: #aad6ec; background: #f1f9fd; }
+        .stash-goal-node.is-resource .stash-goal-node__top strong { color: #0879b7; }
+        .stash-goal-node.is-work { border-color: #acd9cc; background: #f5fbf8; }
+        .stash-goal-node.is-work .stash-goal-node__top strong { color: #087a59; }
+        .stash-goal-map__unassigned { margin-top: 9px; padding: 10px; border: 1px solid #f1d497; border-radius: 9px; background: #fff9ec; }
+        .stash-goal-map__unassigned > strong { color: #925f00; font-size: 10px; }
         .stash-goal-map__unassigned > div { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
-        .stash-goal-map__unassigned button { padding: 5px 8px; border: 1px solid rgba(251,191,36,.25); border-radius: 7px; color: #fef3c7; background: rgba(15,23,42,.6); font-size: 9px; }
+        .stash-goal-map__unassigned button { padding: 5px 8px; border: 1px solid #e6c47f; border-radius: 7px; color: #7a5100; background: #fff; font-size: 9px; }
         .stash-worktree-summary { display: flex; align-items: center; gap: 8px; margin-bottom: 13px; color: var(--stash-muted); font-size: 11px; }
         .stash-worktree-summary strong { color: var(--stash-ink); font-size: 18px; }
         .stash-worktree-card__path { margin-top: 10px; padding: 8px 9px; overflow-wrap: anywhere; border-radius: 7px; color: #475467; background: #f8fafc; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; line-height: 1.45; }
@@ -519,7 +485,7 @@
         .stash-plan-stat.is-red strong { color: var(--stash-red); }
         .stash-plan-toolbar { display: flex; align-items: end; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; padding: 10px; border: 1px solid var(--stash-line); border-radius: 11px; background: rgba(255,255,255,.68); }
         .stash-plan-toolbar .stash-field { flex: 1 1 170px; max-width: 250px; }
-        .stash-plan-toolbar input { width: 100%; min-height: 36px; padding: 7px 9px; border: 1px solid var(--stash-line); border-radius: 8px; color: var(--stash-ink); background: #fff; font-size: 12px; }
+        .stash-plan-toolbar input, .stash-plan-toolbar select { width: 100%; min-height: 36px; padding: 7px 9px; border: 1px solid var(--stash-line); border-radius: 8px; color: var(--stash-ink); background: #fff; font-size: 12px; }
         .stash-plan-form { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 10px; margin: 0 0 14px; padding: 15px; border: 1px solid #dfe3ff; border-radius: 12px; background: #fafaff; }
         .stash-plan-form input, .stash-plan-form textarea, .stash-plan-form select { width: 100%; min-height: 37px; padding: 8px 9px; border: 1px solid var(--stash-line); border-radius: 8px; color: var(--stash-ink); background: #fff; font-size: 12px; }
         .stash-plan-form textarea { min-height: 74px; resize: vertical; }
@@ -667,9 +633,10 @@
             .stash-graph-toolbar { display: block; }
             .stash-graph-project { display: block; }
             .stash-graph-project select { width: 100%; margin-top: 6px; }
+            .stash-map-filter { width: 100%; margin-top: 8px; }
+            .stash-map-types { margin-top: 9px; }
             .stash-graph-project-note { display: block; margin-top: 7px; }
             .stash-graph-reset { width: 100%; margin-top: 9px; }
-            .stash-graph-unlinked__grid { grid-template-columns: 1fr; }
             .stash-maintenance-intro { display: block; }
             .stash-maintenance-model { margin-top: 12px; }
             .stash-maintenance-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -733,17 +700,17 @@
                 <div class="stash-sidebar-card bg-white p-4 rounded-lg shadow-sm border border-gray-100">
                     <h2 class="stash-sidebar-label text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">작업 공간</h2>
                     <nav class="stash-nav flex flex-col gap-2">
-                        <button @click="loadGoalMap()" :class="{'is-active': activeNav === 'goal-map'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">◎</span>목표 지도</button>
+                        <button @click="loadGoalMap()" :class="{'is-active': activeNav === 'goal-map'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">◎</span>목표·지식 지도</button>
                         <button @click="loadWorkPlan()" :class="{'is-active': activeNav === 'plan'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">◇</span>작업 계획</button>
                         <button @click="loadWorkBoard()" :class="{'is-active': activeNav === 'board'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">▦</span>이슈 보드</button>
-                        <button @click="loadWorkGraph()" :class="{'is-active': activeNav === 'graph'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">⌁</span>작업 그래프</button>
+                        <button @click="loadWorkGraph()" :class="{'is-active': activeNav === 'graph'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">⌁</span>작업 흐름</button>
                         <button @click="loadWorktrees()" :class="{'is-active': activeNav === 'worktrees'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">⌘</span>Git 연결</button>
                         <button x-show="isAdmin" x-cloak @click="showMaintenance()" :class="{'is-active': activeNav === 'maintenance'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">⚙</span>임베딩 관리</button>
                         <div class="stash-nav-divider"></div>
                         <button @click="callTool('list_namespaces', {limit: 100})" :class="{'is-active': activeNav === 'list_namespaces'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">◌</span>네임스페이스</button>
-                        <button @click="callTool('query_facts', {namespaces: '/', limit: 100})" :class="{'is-active': activeNav === 'query_facts'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">✓</span>사실</button>
-                        <button @click="callTool('list_hypotheses', {namespaces: '/', limit: 100})" :class="{'is-active': activeNav === 'list_hypotheses'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">?</span>가설</button>
-                        <button @click="callTool('list_goals', {namespaces: '/', limit: 100})" :class="{'is-active': activeNav === 'list_goals'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">↗</span>목표</button>
+                        <button @click="callTool('query_facts', {namespaces: mapNamespaceSlug || '/', limit: 100})" :class="{'is-active': activeNav === 'query_facts'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">✓</span>사실</button>
+                        <button @click="callTool('list_hypotheses', {namespaces: mapNamespaceSlug || '/', limit: 100})" :class="{'is-active': activeNav === 'list_hypotheses'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">?</span>가설</button>
+                        <button @click="callTool('list_goals', {namespaces: mapNamespaceSlug || '/', limit: 100})" :class="{'is-active': activeNav === 'list_goals'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">↗</span>목표</button>
                         <div class="stash-nav-divider"></div>
                         <button @click="showAgentGuide()" :class="{'is-active': activeNav === 'agent'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">⌘</span>에이전트 규칙</button>
                     </nav>
@@ -1022,13 +989,19 @@
                         </section>
                     </div>
 
-                    <div x-show="view === 'goal-map'" x-cloak class="stash-goal-map" aria-label="목표 지도">
+                    <div x-show="view === 'goal-map'" x-cloak class="stash-goal-map" aria-label="목표·지식 지도">
                         <div class="stash-goal-map__header">
-                            <div><div class="stash-goal-map__title">목표 흐름</div><div class="stash-goal-map__scope" x-text="goalMapScopeLabel()"></div></div>
-                            <div class="stash-goal-map__legend" aria-label="목표 지도 범례"><span><i></i>결과가 목표에 합쳐짐</span><span><i class="is-resource"></i>자료 연결</span><span><i class="is-memory"></i>기억 연결</span></div>
+                            <div><div class="stash-goal-map__title">목표·지식 지도</div><div class="stash-goal-map__scope" x-text="goalMapScopeLabel()"></div></div>
+                            <div class="stash-goal-map__legend" aria-label="항목 종류"><span><i></i>목표</span><span><i class="is-work"></i>작업</span><span><i class="is-memory"></i>사실·기억</span><span><i class="is-resource"></i>자료</span></div>
                         </div>
-                        <div class="stash-goal-map__toolbar">
-                            <label class="stash-graph-project"><span>프로젝트</span><select x-model="graphProjectSlug" @change="loadGoalMap(false)" :disabled="graphProjectsLoading || loading" aria-label="목표 지도 프로젝트 선택"><option value="">기본 작업 공간</option><template x-for="project in graphProjects" :key="'goal-map-' + project.slug"><option :value="project.slug" x-text="project.label"></option></template></select></label>
+                        <div class="stash-goal-map__toolbar" aria-label="목표·지식 지도 필터">
+                            <label class="stash-graph-project"><span>네임스페이스</span><select x-model="mapNamespaceSlug" @change="loadGoalMap(false)" :disabled="mapNamespacesLoading || loading" aria-label="목표·지식 지도 네임스페이스 선택"><option value="">기본 공간 (/)</option><template x-for="namespace in mapNamespaces" :key="'goal-map-' + namespace.slug"><option :value="namespace.slug" x-text="namespace.label"></option></template></select></label>
+                            <label class="stash-map-filter is-search"><span>검색</span><input type="search" x-model.debounce.180ms="goalMapFilters.query" @input.debounce.180ms="refreshGoalMapLayout()" placeholder="작업, 사실, 자료"></label>
+                            <label class="stash-map-filter"><span>작업 상태</span><select x-model="goalMapFilters.status" @change="refreshGoalMapLayout()"><option value="">전체</option><option value="ready">준비</option><option value="doing">진행 중</option><option value="blocked">막힘</option><option value="review">검토</option><option value="done">완료</option></select></label>
+                            <label class="stash-map-filter"><span>담당</span><select x-model="goalMapFilters.agent" @change="refreshGoalMapLayout()"><option value="">전체</option><template x-for="agent in goalMapAgents()" :key="'goal-agent-' + agent"><option :value="agent" x-text="agent"></option></template></select></label>
+                            <label class="stash-map-filter"><span>기억 종류</span><select x-model="goalMapFilters.memoryType" @change="refreshGoalMapLayout()"><option value="">전체</option><option value="fact">사실</option><option value="episode">경험</option><option value="hypothesis">가설</option><option value="failure">실패 기록</option></select></label>
+                            <div class="stash-map-types" role="group" aria-label="표시할 항목"><button type="button" @click="toggleGoalMapKind('goal')" :aria-pressed="String(goalMapFilters.kinds.goal)">목표</button><button type="button" @click="toggleGoalMapKind('work')" :aria-pressed="String(goalMapFilters.kinds.work)">작업</button><button type="button" @click="toggleGoalMapKind('memory')" :aria-pressed="String(goalMapFilters.kinds.memory)">사실·기억</button><button type="button" @click="toggleGoalMapKind('resource')" :aria-pressed="String(goalMapFilters.kinds.resource)">자료</button></div>
+                            <button type="button" class="stash-graph-reset" @click="resetGoalMapFilters()" :disabled="!goalMapHasFilters()">필터 초기화</button>
                             <div class="stash-goal-map__summary" aria-label="목표 진행 요약">
                                 <span><strong x-text="goalMapLayout.counts.goal"></strong>목표</span>
                                 <span><strong x-text="goalMapLayout.counts.work"></strong>작업</span>
@@ -1043,12 +1016,13 @@
                                 <button type="button" :class="{'is-blocked': item.status === 'blocked'}" @click="openIssue(item.id, $event.currentTarget)" :title="goalMapWorkDetail(item)"><strong x-text="(item.issue_key || '#' + item.id) + ' · ' + item.title"></strong><span x-text="goalMapAttentionText(item)"></span></button>
                             </template>
                         </div>
-                        <div x-show="loading" class="stash-goal-map__empty" role="status">목표 지도를 불러오는 중</div>
+                        <div x-show="loading" class="stash-goal-map__empty" role="status">목표·지식 지도를 불러오는 중</div>
                         <div x-show="!loading && goalMapError" class="stash-goal-map__empty is-error" role="alert"><div><span x-text="goalMapError"></span><br><button type="button" class="stash-btn" @click="loadGoalMap(false)">다시 시도</button></div></div>
                         <div x-show="!loading && !goalMapError && !goalMapHasRoot()" class="stash-goal-map__empty"><div><strong>공통 목표가 아직 없습니다.</strong><div x-show="goalMapRootCandidates.length" class="stash-goal-map__setup"><label class="sr-only" for="goal-map-root">공통 목표</label><select id="goal-map-root" x-model="goalMapRootGoalId" :disabled="goalMapRootSaving"><option value="">목표 선택</option><template x-for="goal in goalMapRootCandidates" :key="'goal-map-root-' + goal.id"><option :value="String(goal.id)" x-text="goal.content"></option></template></select><button type="button" class="stash-btn stash-btn-primary" @click="setProjectGoal()" :disabled="!goalMapRootGoalId || goalMapRootSaving" x-text="goalMapRootSaving ? '저장 중' : '공통 목표로 정하기'"></button></div><span x-show="!goalMapRootCandidates.length">먼저 최상위 목표를 만드세요.</span><br><span x-show="goalMap.unassigned_work.length" x-text="'목표에 연결할 작업 ' + goalMap.unassigned_work.length + '개'"></span></div></div>
-                        <div x-show="!loading && !goalMapError && goalMapHasRoot()" class="stash-goal-map__scroll" tabindex="0" aria-label="자료와 기억에서 작업을 거쳐 공통 목표로 이어지는 지도">
+                        <div x-show="!loading && !goalMapError && goalMapHasRoot() && !goalMapLayout.nodes.length" class="stash-goal-map__empty">조건에 맞는 항목이 없습니다.</div>
+                        <div x-show="!loading && !goalMapError && goalMapHasRoot() && goalMapLayout.nodes.length" class="stash-goal-map__scroll" tabindex="0" aria-label="공통 목표를 중심으로 세부 목표, 작업, 사실과 자료가 둘러싼 지도">
                             <div class="stash-goal-map__canvas" :style="goalMapLayout.canvasStyle" role="region" :aria-label="goalMapAriaLabel()">
-                                <div class="stash-goal-map__columns" aria-hidden="true"><template x-for="column in goalMapLayout.columns" :key="column.key"><div class="stash-goal-map__column" :style="column.style"><strong><span x-text="column.count + '개'"></span><b x-text="column.label"></b></strong></div></template></div>
+                                <div class="stash-goal-map__rings" aria-hidden="true"><template x-for="ring in goalMapLayout.rings" :key="ring.key"><div class="stash-goal-map__ring" :class="'is-' + ring.tone" :style="ring.style"><span><b x-text="ring.label"></b><i x-text="ring.count + '개'"></i></span></div></template></div>
                                 <template x-for="edge in goalMapLayout.edges" :key="edge.key">
                                     <svg :viewBox="goalMapCanvasViewBox()" :style="goalMapLayout.canvasStyle" class="stash-goal-map__edges" aria-hidden="true"><defs><marker :id="goalMapMarkerId(edge)" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" :fill="edge.stroke"></path></marker></defs><path :d="edge.path" :stroke="edge.stroke" stroke-width="2" :stroke-dasharray="edge.dashArray" :marker-end="edge.marker ? goalMapMarkerUrl(edge) : null" opacity="0.88"></path></svg>
                                 </template>
@@ -1063,22 +1037,26 @@
                                 <div class="sr-only"><h3>목표 연결</h3><ul><template x-for="edge in goalMapLayout.edges" :key="'goal-map-text-' + edge.key"><li x-text="edge.ariaLabel"></li></template></ul></div>
                             </div>
                         </div>
-                        <section x-show="!loading && !goalMapError && goalMap.unassigned_work.length" class="stash-goal-map__unassigned" aria-label="목표에 연결되지 않은 작업"><strong>목표 연결 필요</strong><div><template x-for="item in goalMap.unassigned_work" :key="'unassigned-goal-work-' + item.id"><button type="button" @click="openIssue(item.id, $event.currentTarget)" x-text="(item.issue_key || '#' + item.id) + ' · ' + item.title"></button></template></div></section>
+                        <section x-show="!loading && !goalMapError && goalMapVisible.unassigned_work.length" class="stash-goal-map__unassigned" aria-label="목표에 연결되지 않은 작업"><strong>목표 연결 필요</strong><div><template x-for="item in goalMapVisible.unassigned_work" :key="'unassigned-goal-work-' + item.id"><button type="button" @click="openIssue(item.id, $event.currentTarget)" x-text="(item.issue_key || '#' + item.id) + ' · ' + item.title"></button></template></div></section>
                     </div>
 
                     <div x-show="view === 'graph'" x-cloak class="stash-graph p-4 bg-slate-950 text-white" @pointermove.window="moveGraphNodeDrag($event)" @pointerup.window="finishGraphNodeDrag($event)" @pointercancel.window="finishGraphNodeDrag($event)" @keydown.escape.window="cancelGraphNodeDrag($event)">
-                        <div class="stash-graph-header"><div><div class="stash-graph-title">작업 흐름</div><div class="stash-graph-scope" x-text="graphScopeLabel()"></div></div><div class="stash-graph-legend" aria-label="그래프 범례"><span><i class="stash-legend-line"></i>선행 → 다음</span><span><i class="stash-legend-line is-dashed"></i>관련</span></div></div>
+                        <div class="stash-graph-header"><div><div class="stash-graph-title">작업 흐름</div><div class="stash-graph-scope" x-text="graphScopeLabel()"></div></div><div class="stash-graph-legend" aria-label="작업 연결 종류"><span><i class="stash-legend-line"></i>하위 → 상위</span><span><i class="stash-legend-line" style="border-color:#f97316"></i>먼저 → 다음</span><span><i class="stash-legend-line is-dashed"></i>관련</span></div></div>
                         <div class="stash-graph-toolbar" role="group" aria-label="작업 흐름 보기 설정">
-                            <label class="stash-graph-project"><span>프로젝트</span><select x-model="graphProjectSlug" @change="loadWorkGraph(false)" :disabled="graphProjectsLoading || loading" aria-label="그래프 프로젝트 선택"><option value="">모든 프로젝트</option><template x-for="project in graphProjects" :key="project.slug"><option :value="project.slug" x-text="project.label"></option></template></select></label>
-                            <span x-show="graphProjectsLoading" x-cloak class="stash-graph-project-note">프로젝트를 불러오는 중...</span>
-                            <span x-show="!graphProjectsLoading && graphProjectError" x-cloak class="stash-graph-project-note" x-text="graphProjectError"></span>
-                            <span x-show="!graphProjectsLoading && !graphProjectError && !graphProjects.length" class="stash-graph-project-note">등록된 프로젝트가 없습니다.</span>
+                            <label class="stash-graph-project"><span>네임스페이스</span><select x-model="mapNamespaceSlug" @change="loadWorkGraph(false)" :disabled="mapNamespacesLoading || loading" aria-label="작업 흐름 네임스페이스 선택"><option value="">전체</option><template x-for="namespace in mapNamespaces" :key="namespace.slug"><option :value="namespace.slug" x-text="namespace.label"></option></template></select></label>
+                            <label class="stash-map-filter is-search"><span>검색</span><input type="search" x-model.debounce.180ms="graphFilter.query" @input.debounce.180ms="refreshWorkGraphLayout()" placeholder="작업, 담당, 지원 기능"></label>
+                            <label class="stash-map-filter"><span>상태</span><select x-model="graphFilter.status" @change="refreshWorkGraphLayout()"><option value="">전체</option><option value="backlog">대기</option><option value="ready">준비</option><option value="doing">진행 중</option><option value="blocked">막힘</option><option value="review">검토</option><option value="done">완료</option></select></label>
+                            <span x-show="mapNamespacesLoading" x-cloak class="stash-graph-project-note">네임스페이스를 불러오는 중...</span>
+                            <span x-show="!mapNamespacesLoading && mapNamespaceError" x-cloak class="stash-graph-project-note" x-text="mapNamespaceError"></span>
+                            <span x-show="!mapNamespacesLoading && !mapNamespaceError && !mapNamespaces.length" class="stash-graph-project-note">등록된 네임스페이스가 없습니다.</span>
+                            <button type="button" class="stash-graph-reset" @click="resetGraphFilters()" :disabled="!graphHasFilters()">필터 초기화</button>
                             <button type="button" class="stash-graph-reset" @click="resetGraphLayout()" :disabled="!graphHasMovedNodes()">배치 초기화</button>
                         </div>
                         <p class="sr-only" aria-live="polite" x-text="graphMoveAnnouncement"></p>
-                        <div x-show="loading" x-cloak class="stash-graph-empty" role="status">그래프를 불러오는 중</div>
+                        <div x-show="loading" x-cloak class="stash-graph-empty" role="status">작업 흐름을 불러오는 중</div>
                         <div x-show="!loading && graphError" x-cloak class="stash-graph-empty is-error" role="alert"><div><span x-text="graphError"></span><br><button type="button" class="stash-btn" @click="loadWorkGraph(false)">다시 시도</button></div></div>
                         <div x-show="!loading && !graphError && !graph.nodes.length" x-cloak class="stash-graph-empty">표시할 작업이 없습니다.</div>
+                        <div x-show="!loading && !graphError && graph.nodes.length && !workGraphLayout.nodes.length" x-cloak class="stash-graph-empty">조건에 맞는 작업이 없습니다.</div>
                         <div x-show="!loading && !graphError && graph.nodes.length" x-cloak class="stash-graph-content">
                             <div x-show="workGraphLayout.cycles.length" class="stash-graph-cycle-alert" role="status">
                                 <strong>서로 막는 작업이 있습니다.</strong>
@@ -1089,7 +1067,7 @@
                                 <strong>상위 작업 연결을 확인하세요.</strong>
                                 <div><template x-for="warning in workGraphLayout.hierarchyWarnings" :key="warning.key"><span x-text="warning.label"></span></template></div>
                             </div>
-                            <div x-show="workGraphLayout.nodes.length" class="stash-graph-scroll" tabindex="0" aria-label="작업 의존 흐름. 가로와 세로로 이동해 모든 작업을 볼 수 있습니다.">
+                            <div x-show="workGraphLayout.nodes.length" class="stash-graph-scroll" tabindex="0" aria-label="작업 흐름. 가로와 세로로 이동해 모든 작업을 볼 수 있습니다.">
                                 <div class="stash-graph-canvas" :style="workGraphLayout.canvasStyle" role="region" :aria-label="graphAriaLabel()">
                                     <template x-for="edge in workGraphLayout.edges" :key="edge.key">
                                         <svg :viewBox="graphCanvasViewBox()" :style="workGraphLayout.canvasStyle" class="stash-graph-edge-layer" aria-hidden="true">
@@ -1103,48 +1081,19 @@
                                         <div class="stash-graph-stage" :style="stage.style" aria-hidden="true"><div class="stash-graph-stage__label"><strong x-text="stage.label"></strong><span x-text="stage.nodes.length + '개'"></span></div></div>
                                     </template>
                                     <template x-for="node in workGraphLayout.nodes" :key="node.key">
-                                        <article class="stash-graph-node" :class="graphNodeClasses(node)" :style="node.style" :aria-labelledby="'graph-parent-title-' + node.key">
+                                        <article class="stash-graph-node" :class="graphNodeClasses(node)" :style="node.style" :aria-labelledby="'graph-node-title-' + node.key">
                                             <button type="button" class="stash-graph-node__open" @click="openIssue(node.item.id, $event.currentTarget)" :aria-label="graphNodeAriaLabel(node)">
                                                 <span class="stash-graph-node__top"><strong class="stash-graph-node__key" x-text="node.item.issue_key || '#' + node.item.id"></strong><span class="stash-graph-node__badges"><i class="stash-graph-status-dot" aria-hidden="true"></i><span x-text="statusLabel(node.item.status)"></span><span x-show="node.cycle" class="stash-graph-cycle-badge">순환</span></span></span>
-                                                <span class="stash-graph-node__title" :id="'graph-parent-title-' + node.key" x-text="node.item.title"></span>
+                                                <span class="stash-graph-node__title" :id="'graph-node-title-' + node.key" x-text="node.item.title"></span>
+                                                <span class="stash-graph-node__meta" x-text="graphNodeMeta(node)"></span>
                                             </button>
-                                            <button type="button" class="stash-graph-drag-handle" :data-graph-drag-key="node.dragKey" @pointerdown="startGraphNodeDrag($event, node, 'root')" @keydown="moveGraphNodeWithKeyboard($event, node, 'root')" @click.stop.prevent="void 0" :aria-label="graphDragHandleLabel(node)"><span aria-hidden="true">✥</span></button>
+                                            <button type="button" class="stash-graph-drag-handle" :data-graph-drag-key="node.dragKey" @pointerdown="startGraphNodeDrag($event, node)" @keydown="moveGraphNodeWithKeyboard($event, node)" @click.stop.prevent="void 0" :aria-label="graphDragHandleLabel(node)"><span aria-hidden="true">✥</span></button>
                                             <div x-show="node.orphanParentId !== undefined || node.hierarchyCycle" class="stash-graph-node__warning"><span x-show="node.orphanParentId !== undefined" x-text="'상위 작업 #' + node.orphanParentId + '을 찾을 수 없음'"></span><span x-show="node.hierarchyCycle">상위 작업 연결이 순환함</span></div>
-                                            <button x-show="node.descendants.length" type="button" class="stash-graph-children-toggle" @click.stop="toggleGraphParent(node)" :aria-expanded="node.expanded" :aria-controls="'graph-children-' + node.key"><span x-text="'하위 작업 ' + node.descendants.length + '개'"></span><strong x-text="node.expanded ? '접기' : '펼치기'"></strong></button>
-                                            <div x-show="node.expanded" :id="'graph-children-' + node.key" class="stash-graph-children" :aria-label="(node.item.issue_key || node.item.title) + ' 하위 작업'">
-                                                <div class="stash-graph-child-canvas" :style="node.childLayout.canvasStyle">
-                                                    <template x-for="edge in node.childLayout.edges" :key="edge.key">
-                                                        <svg :viewBox="graphChildCanvasViewBox(node)" :style="node.childLayout.canvasStyle" class="stash-graph-child-edge-layer" aria-hidden="true">
-                                                            <defs><marker :id="edgeMarkerId(edge)" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 z" :fill="edge.stroke"></path></marker></defs>
-                                                            <path :d="edge.path" :stroke="edge.stroke" stroke-width="1.7" :stroke-dasharray="edge.dashArray" :marker-end="edge.marker ? edgeMarkerUrl(edge) : null" opacity="0.9"></path>
-                                                        </svg>
-                                                    </template>
-                                                    <template x-for="stage in node.childLayout.stages" :key="node.key + '-child-stage-' + stage.depth"><div class="stash-graph-child-stage" :style="stage.style" aria-hidden="true"><strong x-text="stage.label"></strong></div></template>
-                                                    <template x-for="child in node.childLayout.nodes" :key="child.key">
-                                                        <article class="stash-graph-child-node" :class="graphNodeClasses(child)" :style="child.style">
-                                                            <button type="button" class="stash-graph-child-node__open" @click.stop="openIssue(child.item.id, $event.currentTarget)" :aria-label="graphChildNodeAriaLabel(child)">
-                                                                <span class="stash-graph-child-node__top"><strong x-text="child.item.issue_key || '#' + child.item.id"></strong><span><i class="stash-graph-status-dot" aria-hidden="true"></i><span x-text="statusLabel(child.item.status)"></span></span></span>
-                                                                <span class="stash-graph-child-node__title" x-text="child.item.title"></span>
-                                                                <small x-show="graphChildParentLabel(child)" x-text="graphChildParentLabel(child)"></small>
-                                                            </button>
-                                                            <button type="button" class="stash-graph-drag-handle is-child" :data-graph-drag-key="child.dragKey" @pointerdown="startGraphNodeDrag($event, child, 'child')" @keydown="moveGraphNodeWithKeyboard($event, child, 'child')" @click.stop.prevent="void 0" :aria-label="graphDragHandleLabel(child)"><span aria-hidden="true">✥</span></button>
-                                                        </article>
-                                                    </template>
-                                                    <section x-show="node.childLayout.disconnected.length" class="stash-graph-child-unlinked" :style="node.childLayout.detachedStyle" :aria-label="'연결 없는 하위 작업 ' + node.childLayout.disconnected.length + '개'"><strong>연결 없음</strong><div><template x-for="child in node.childLayout.disconnected" :key="'child-unlinked-' + child.key"><article class="stash-graph-child-unlinked-card" :class="graphNodeClasses(child)" :style="graphDetachedNodeStyle(child)"><button type="button" class="stash-graph-child-unlinked-card__open" @click.stop="openIssue(child.item.id, $event.currentTarget)" :aria-label="graphDisconnectedAriaLabel(child)"><span><b x-text="child.item.issue_key || '#' + child.item.id"></b><span><i class="stash-graph-status-dot" aria-hidden="true"></i><span x-text="statusLabel(child.item.status)"></span></span></span><em x-text="child.item.title"></em><small x-show="graphChildParentLabel(child)" x-text="graphChildParentLabel(child)"></small></button><button type="button" class="stash-graph-drag-handle is-child" :data-graph-drag-key="child.dragKey" @pointerdown="startGraphNodeDrag($event, child, 'child')" @keydown="moveGraphNodeWithKeyboard($event, child, 'child')" @click.stop.prevent="void 0" :aria-label="graphDragHandleLabel(child)"><span aria-hidden="true">✥</span></button></article></template></div></section>
-                                                    <div class="sr-only"><h4>하위 작업 연결</h4><ul><template x-for="edge in node.childLayout.edges" :key="'child-text-' + edge.key"><li x-text="edge.ariaLabel"></li></template></ul></div>
-                                                </div>
-                                            </div>
                                         </article>
                                     </template>
                                     <div class="sr-only stash-graph-edges-text"><h3>작업 연결</h3><ul><template x-for="edge in workGraphLayout.edges" :key="'text-' + edge.key"><li x-text="edge.ariaLabel"></li></template></ul></div>
                                 </div>
                             </div>
-                            <section x-show="workGraphLayout.crossParentLinks.length" class="stash-graph-cross-links" aria-labelledby="cross-parent-links-title"><strong id="cross-parent-links-title">하위 작업 연결</strong><div><template x-for="link in workGraphLayout.crossParentLinks" :key="link.key"><span><b x-text="link.label"></b><small x-text="(link.fromRoot.issue_key || link.fromRoot.title) + ' → ' + (link.toRoot.issue_key || link.toRoot.title)"></small></span></template></div></section>
-                            <div x-show="!workGraphLayout.nodes.length && workGraphLayout.disconnected.length" class="stash-graph-empty">의존 관계가 있는 작업이 없습니다.</div>
-                            <section x-show="workGraphLayout.disconnected.length" class="stash-graph-unlinked" aria-labelledby="unlinked-work-title">
-                                <div class="stash-graph-unlinked__header"><div><h3 id="unlinked-work-title">연결 없는 작업</h3><p>선행 또는 관련 연결이 없는 작업입니다.</p></div><span class="stash-graph-unlinked__count" x-text="workGraphLayout.disconnected.length + '개'"></span></div>
-                                <div class="stash-graph-unlinked__grid"><template x-for="entry in workGraphLayout.disconnected" :key="'unlinked-' + entry.key"><article class="stash-graph-unlinked__item" :class="graphNodeClasses(entry)" :style="graphDetachedNodeStyle(entry)"><button type="button" class="stash-graph-unlinked__open" @click="openIssue(entry.item.id, $event.currentTarget)" :aria-label="graphDisconnectedAriaLabel(entry)"><span class="stash-graph-unlinked__top"><strong x-text="entry.item.issue_key || '#' + entry.item.id"></strong><span class="stash-graph-unlinked__badge"><i class="stash-graph-status-dot" aria-hidden="true"></i><span x-text="statusLabel(entry.item.status)"></span></span></span><span class="stash-graph-unlinked__title" x-text="entry.item.title"></span><small x-show="entry.orphanParentId !== undefined" x-text="'상위 작업 #' + entry.orphanParentId + ' 없음'"></small></button><button type="button" class="stash-graph-drag-handle" :data-graph-drag-key="entry.dragKey" @pointerdown="startGraphNodeDrag($event, entry, 'root')" @keydown="moveGraphNodeWithKeyboard($event, entry, 'root')" @click.stop.prevent="void 0" :aria-label="graphDragHandleLabel(entry)"><span aria-hidden="true">✥</span></button></article></template></div>
-                            </section>
                         </div>
                     </div>
 
@@ -1205,6 +1154,7 @@
                         </div>
 
 	                        <div class="stash-plan-toolbar">
+	                            <label class="stash-field"><span>네임스페이스</span><select x-model="mapNamespaceSlug" @change="loadWorkPlan(false)" :disabled="mapNamespacesLoading || loading" aria-label="작업 계획 네임스페이스 선택"><option value="">기본 공간 (/)</option><template x-for="namespace in mapNamespaces" :key="'plan-' + namespace.slug"><option :value="namespace.slug" x-text="namespace.label"></option></template></select></label>
 	                            <label class="stash-field"><span>작업자</span><input x-model="planActor" placeholder="예: codex" aria-label="작업자"></label>
 	                            <button type="button" class="stash-btn stash-btn-primary" @click="openPlanComponentForm()">구성 요소 만들기</button>
 	                            <button type="button" class="stash-btn" @click="planDecisionFormOpen = !planDecisionFormOpen">결정 기록</button>
@@ -1218,7 +1168,7 @@
                             <label class="stash-field stash-plan-field--goal"><span>연결 목표</span><select x-model="planComponentForm.goalId"><option value="">공통 목표</option><template x-for="goal in planGoals()" :key="'component-goal-' + goal.id"><option :value="goal.id" x-text="planGoalLabel(goal)"></option></template></select></label>
                             <label class="stash-field stash-plan-field--description"><span>완료 조건</span><textarea x-model="planComponentForm.description" placeholder="사용자가 확인할 수 있는 결과"></textarea></label>
                             <label class="stash-field stash-plan-field--tech"><span>구현 메모</span><textarea x-model="planComponentForm.technicalDetails" placeholder="필요한 구현 방식"></textarea></label>
-                            <label class="stash-field stash-plan-field--paths"><span>맡는 경로</span><input x-model="planComponentForm.ownedPaths" placeholder="src/audio/**, config.py"></label>
+                            <label class="stash-field stash-plan-field--paths"><span>맡는 범위</span><input x-model="planComponentForm.ownedScopes" placeholder="src/audio/**, confluence://team/**"></label>
                             <div class="stash-plan-form__actions"><button type="submit" class="stash-btn stash-btn-success" x-text="planComponentForm.componentId ? '수정' : '만들기'"></button><button type="button" class="stash-btn" @click="closePlanComponentForm()">닫기</button></div>
                         </form>
 
@@ -1275,8 +1225,8 @@
                                             <template x-for="need in component.needs" :key="'need-' + need.id"><span class="stash-plan-chip is-edge" x-text="'선행 ' + need.issue_key"></span></template>
                                             <template x-for="link in component.links" :key="'link-' + link.id"><span class="stash-plan-chip" x-text="'연결 ' + link.issue_key"></span></template>
                                         </div>
-                                        <div x-show="planPathEditorComponentId === component.id" x-cloak class="stash-plan-path-editor"><input x-model="planPathEditorValue" aria-label="맡는 경로" placeholder="src/audio/**, config.py"><button type="button" class="stash-btn stash-btn-success" @click="savePlanComponentPaths(component.id)">저장</button><button type="button" class="stash-btn" @click="closePlanPathEditor()">닫기</button></div>
-                                        <div class="stash-plan-component__actions"><button type="button" class="stash-btn" @click="openPlanComponentForm(component)">내용 수정</button><button x-show="planPathEditorComponentId !== component.id" type="button" class="stash-btn" @click="openPlanPathEditor(component)">경로 수정</button></div>
+                                        <div x-show="planScopeEditorComponentId === component.id" x-cloak class="stash-plan-path-editor"><input x-model="planScopeEditorValue" aria-label="맡는 범위" placeholder="src/audio/**, confluence://team/**"><button type="button" class="stash-btn stash-btn-success" @click="savePlanComponentScopes(component.id)">저장</button><button type="button" class="stash-btn" @click="closePlanScopeEditor()">닫기</button></div>
+                                        <div class="stash-plan-component__actions"><button type="button" class="stash-btn" @click="openPlanComponentForm(component)">내용 수정</button><button x-show="planScopeEditorComponentId !== component.id" type="button" class="stash-btn" @click="openPlanScopeEditor(component)">범위 수정</button></div>
                                     </header>
                                     <div class="stash-plan-component__body">
                                         <div class="stash-plan-task-list">
@@ -1310,21 +1260,69 @@
     </div>
 
     <script>
+        function createMapScopeViewModel() {
+            return {
+                mapNamespaces: [],
+                mapNamespaceSlug: '',
+                mapNamespacesLoaded: false,
+                mapNamespacesLoading: false,
+                mapNamespaceError: '',
+
+                async loadMapNamespaces(force = false) {
+                    if (this.mapNamespacesLoaded && !force) return;
+                    const chooseOnlyProject = !this.mapNamespacesLoaded && !this.mapNamespaceSlug;
+                    this.mapNamespacesLoading = true;
+                    this.mapNamespaceError = '';
+                    try {
+                        const listed = [];
+                        const limit = 100;
+                        let offset = 0;
+                        for (let page = 0; page < 100; page += 1) {
+                            const data = await this.invokeTool('list_namespaces', { limit: limit + 1, offset });
+                            const value = this.toolValue(data);
+                            const result = this.pageSlice(value, limit, offset);
+                            listed.push(...result.items);
+                            if (!result.hasMore || !result.items.length || result.nextOffset <= offset) break;
+                            offset = result.nextOffset;
+                        }
+                        const namespaces = new Map();
+                        for (const item of listed) {
+                            const rawSlug = String(item && item.slug || '').trim();
+                            const slug = (rawSlug.startsWith('/') ? rawSlug : '/' + rawSlug).replace(/\/+$/, '') || '/';
+                            if (slug === '/') continue;
+                            const name = String(item && item.name || '').trim();
+                            namespaces.set(slug, { slug, label: name && name !== slug ? `${name} · ${slug}` : slug });
+                        }
+                        this.mapNamespaces = Array.from(namespaces.values()).sort((left, right) => left.slug.localeCompare(right.slug, 'ko'));
+                        if (this.mapNamespaceSlug && !this.mapNamespaces.some(item => item.slug === this.mapNamespaceSlug)) {
+                            this.mapNamespaceSlug = '';
+                        }
+                        if (chooseOnlyProject && !this.mapNamespaceSlug) {
+                            const projects = this.mapNamespaces.filter(item => /^\/projects\/[^/]+$/.test(item.slug));
+                            if (projects.length === 1) this.mapNamespaceSlug = projects[0].slug;
+                        }
+                        this.mapNamespacesLoaded = true;
+                    } catch (_) {
+                        this.mapNamespaces = [];
+                        this.mapNamespaceError = '네임스페이스 목록을 불러오지 못했습니다.';
+                        this.mapNamespacesLoaded = true;
+                    } finally {
+                        this.mapNamespacesLoading = false;
+                    }
+                }
+            };
+        }
+
         function createWorkGraphViewModel() {
             const layout = window.StashWorkGraph;
             let activeDragHandle = null;
             return {
                 graph: { nodes: [], edges: [], worktrees: [] },
                 workGraphLayout: layout.emptyLayout(),
-                expandedGraphParents: {},
+                graphFilter: { query: '', status: '' },
                 graphNodeOffsets: {},
                 graphDragState: null,
                 graphMoveAnnouncement: '',
-                graphProjects: [],
-                graphProjectSlug: '',
-                graphProjectsLoaded: false,
-                graphProjectsLoading: false,
-                graphProjectError: '',
                 graphError: '',
 
                 setWorkGraph(value) {
@@ -1335,10 +1333,7 @@
                         worktrees: Array.isArray(graph.worktrees) ? graph.worktrees : []
                     };
                     const validIDs = new Set(this.graph.nodes.map(item => String(item.id)));
-                    this.expandedGraphParents = Object.fromEntries(
-                        Object.entries(this.expandedGraphParents).filter(([id, expanded]) => expanded && validIDs.has(id))
-                    );
-                    const validOffsetKeys = new Set(Array.from(validIDs).flatMap(id => [`root:${id}`, `child:${id}`]));
+                    const validOffsetKeys = new Set(Array.from(validIDs).map(id => `node:${id}`));
                     this.graphNodeOffsets = Object.fromEntries(
                         Object.entries(this.graphNodeOffsets).filter(([key, offset]) => (
                             validOffsetKeys.has(key) && offset && (Number(offset.x) || Number(offset.y))
@@ -1364,16 +1359,55 @@
                 },
 
                 refreshWorkGraphLayout() {
-                    const expandedIds = Object.keys(this.expandedGraphParents).filter(id => this.expandedGraphParents[id]);
-                    this.workGraphLayout = layout.buildWorkGraphLayout(this.graph.nodes, this.graph.edges, {
-                        expandedIds,
-                        offsets: this.graphNodeOffsets
+                    const query = String(this.graphFilter.query || '').trim().toLocaleLowerCase('ko');
+                    const status = String(this.graphFilter.status || '').trim();
+                    const hasFilters = Boolean(query || status);
+                    const byID = new Map(this.graph.nodes.map(item => [String(item.id), item]));
+                    const matchedIDs = new Set(this.graph.nodes.filter(item => {
+                        if (status && item.status !== status) return false;
+                        if (!query) return true;
+                        const values = [
+                            item.issue_key, item.title, item.description, item.status, item.owner,
+                            ...(Array.isArray(item.labels) ? item.labels : []),
+                            ...(Array.isArray(item.required_capabilities) ? item.required_capabilities : [])
+                        ];
+                        return values.some(value => String(value || '').toLocaleLowerCase('ko').includes(query));
+                    }).map(item => String(item.id)));
+                    const visibleIDs = new Set(matchedIDs);
+                    if (hasFilters) {
+                        for (const id of matchedIDs) {
+                            let current = byID.get(id);
+                            const guard = new Set();
+                            while (current && current.parent_id !== undefined && current.parent_id !== null) {
+                                const parentID = String(current.parent_id);
+                                if (guard.has(parentID)) break;
+                                guard.add(parentID);
+                                visibleIDs.add(parentID);
+                                current = byID.get(parentID);
+                            }
+                        }
+                        for (const edge of this.graph.edges) {
+                            const from = String(edge.from_item_id);
+                            const to = String(edge.to_item_id);
+                            if (matchedIDs.has(from)) visibleIDs.add(to);
+                            if (matchedIDs.has(to)) visibleIDs.add(from);
+                        }
+                    }
+                    const nodes = this.graph.nodes.filter(item => visibleIDs.has(String(item.id))).map(item => (
+                        matchedIDs.has(String(item.id)) ? item : { ...item, __filter_context: true }
+                    ));
+                    const edges = this.graph.edges.filter(edge => (
+                        visibleIDs.has(String(edge.from_item_id)) && visibleIDs.has(String(edge.to_item_id))
+                    ));
+                    this.workGraphLayout = layout.buildWorkGraphLayout(nodes, edges, {
+                        offsets: this.graphNodeOffsets,
+                        sourceNodeCount: this.graph.nodes.length
                     });
                 },
 
-                graphNodeDragKey(node, scope) {
+                graphNodeDragKey(node) {
                     if (node && node.dragKey) return node.dragKey;
-                    return `${scope}:${node && node.item ? node.item.id : ''}`;
+                    return `node:${node && node.item ? node.item.id : ''}`;
                 },
 
                 graphNodeMoveBounds(node) {
@@ -1410,11 +1444,11 @@
                     this.refreshWorkGraphLayout();
                 },
 
-                startGraphNodeDrag(event, node, scope) {
+                startGraphNodeDrag(event, node) {
                     if (!event || !node || (event.isPrimary === false) || (event.button !== undefined && event.button !== 0)) return;
                     event.preventDefault();
                     event.stopPropagation();
-                    const key = this.graphNodeDragKey(node, scope);
+                    const key = this.graphNodeDragKey(node);
                     const origin = this.graphNodeOffsets[key] || { x: 0, y: 0 };
                     this.graphDragState = {
                         key,
@@ -1475,14 +1509,14 @@
                     this.graphMoveAnnouncement = `${state.label} 이동을 취소했습니다.`;
                 },
 
-                moveGraphNodeWithKeyboard(event, node, scope) {
+                moveGraphNodeWithKeyboard(event, node) {
                     const direction = {
                         ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1]
                     }[event && event.key];
                     if (!direction || !node) return;
                     event.preventDefault();
                     event.stopPropagation();
-                    const key = this.graphNodeDragKey(node, scope);
+                    const key = this.graphNodeDragKey(node);
                     const current = this.graphNodeOffsets[key] || { x: 0, y: 0 };
                     const step = event.shiftKey ? 40 : 8;
                     this.writeGraphNodeOffset(
@@ -1493,11 +1527,6 @@
                     );
                     const label = node.item.issue_key || node.item.title || '#' + node.item.id;
                     this.graphMoveAnnouncement = `${label} 위치를 ${step}픽셀 옮겼습니다.`;
-                },
-
-                graphDetachedNodeStyle(node) {
-                    const offset = node && node.offset || { x: 0, y: 0 };
-                    return `transform: translate3d(${Number(offset.x) || 0}px, ${Number(offset.y) || 0}px, 0)`;
                 },
 
                 graphDragHandleLabel(node) {
@@ -1514,13 +1543,16 @@
                     if (!this.graphHasMovedNodes()) return;
                     this.graphNodeOffsets = {};
                     this.refreshWorkGraphLayout();
-                    this.graphMoveAnnouncement = '카드 위치를 기본 배치로 되돌렸습니다.';
+                    this.graphMoveAnnouncement = '작업 위치를 기본 배치로 되돌렸습니다.';
                 },
 
-                toggleGraphParent(node) {
-                    if (!node || !node.descendants || !node.descendants.length) return;
-                    const key = String(node.item.id);
-                    this.expandedGraphParents = { ...this.expandedGraphParents, [key]: !this.expandedGraphParents[key] };
+                graphHasFilters() {
+                    return Boolean(String(this.graphFilter.query || '').trim() || String(this.graphFilter.status || '').trim());
+                },
+
+                resetGraphFilters() {
+                    if (!this.graphHasFilters()) return;
+                    this.graphFilter = { query: '', status: '' };
                     this.refreshWorkGraphLayout();
                 },
 
@@ -1529,24 +1561,21 @@
                 },
 
                 graphScopeLabel() {
-                    if (!this.graphProjectSlug) return '모든 프로젝트의 작업 흐름입니다.';
-                    const project = this.graphProjects.find(item => item.slug === this.graphProjectSlug);
-                    return (project ? project.label : this.graphProjectSlug) + ' 프로젝트의 작업 흐름입니다.';
+                    if (!this.mapNamespaceSlug) return '전체 네임스페이스의 작업 순서와 포함 관계입니다.';
+                    const namespace = this.mapNamespaces.find(item => item.slug === this.mapNamespaceSlug);
+                    return (namespace ? namespace.label : this.mapNamespaceSlug) + ' 범위의 작업 순서와 포함 관계입니다.';
                 },
 
                 graphAriaLabel() {
-                    const connected = this.workGraphLayout.nodes.length;
+                    const visible = this.workGraphLayout.visibleNodeCount;
+                    const source = this.workGraphLayout.sourceNodeCount;
                     const disconnected = this.workGraphLayout.disconnected.length;
                     const cycles = this.workGraphLayout.cycles.length;
-                    return `${this.graphScopeLabel()} 상위 작업 ${connected}개, 전체 작업 ${this.workGraphLayout.sourceNodeCount}개, 연결 없는 작업 ${disconnected}개, 순환 묶음 ${cycles}개.`;
+                    return `${this.graphScopeLabel()} 작업 ${visible}/${source}개, 연결 ${this.workGraphLayout.edges.length}개, 연결 없는 작업 ${disconnected}개, 순환 묶음 ${cycles}개.`;
                 },
 
                 graphCanvasViewBox() {
                     return `0 0 ${this.workGraphLayout.width} ${this.workGraphLayout.height}`;
-                },
-
-                graphChildCanvasViewBox(node) {
-                    return `0 0 ${node.childLayout.width} ${node.childLayout.height}`;
                 },
 
                 edgeMarkerId(edge) {
@@ -1561,89 +1590,43 @@
                     return {
                         ['is-' + String(node && node.item && node.item.status || 'unknown').replace(/[^a-z0-9_-]/gi, '')]: true,
                         'is-cycle': Boolean(node && node.cycle),
-                        'is-moved': Boolean(node && node.offset && (node.offset.x || node.offset.y))
+                        'is-moved': Boolean(node && node.offset && (node.offset.x || node.offset.y)),
+                        'is-context': Boolean(node && node.context)
                     };
+                },
+
+                graphNodeMeta(node) {
+                    if (!node || !node.item) return '';
+                    const parts = [];
+                    if (node.parentItem) parts.push('상위 ' + (node.parentItem.issue_key || '#' + node.parentItem.id));
+                    if (node.childItems && node.childItems.length) parts.push(`하위 ${node.childItems.length}개`);
+                    const owner = String(node.item.owner || '').trim();
+                    if (owner) parts.push(owner);
+                    if (node.context) parts.push('연결 맥락');
+                    return parts.join(' · ') || '독립 작업';
                 },
 
                 graphNodeAriaLabel(node) {
                     const item = node.item;
                     const key = item.issue_key || '#' + item.id;
                     const parts = [`${key}: ${item.title}`, node.stageLabel, `상태 ${this.statusLabel(item.status)}`];
-                    if (node.descendants.length) parts.push(`하위 작업 ${node.descendants.length}개`);
+                    if (node.parentItem) parts.push(`상위 작업 ${node.parentItem.issue_key || '#' + node.parentItem.id}`);
+                    if (node.childItems && node.childItems.length) parts.push(`하위 작업 ${node.childItems.length}개`);
                     if (node.cycle) parts.push('서로 막는 연결에 포함됨');
                     if (node.orphanParentId !== undefined) parts.push(`상위 작업 ${node.orphanParentId}을 찾을 수 없음`);
                     if (node.hierarchyCycle) parts.push('상위 작업 연결이 순환함');
+                    if (node.context) parts.push('검색 결과의 연결 맥락');
                     return parts.join('. ') + '.';
                 },
 
-                graphChildNodeAriaLabel(node) {
-                    const item = node.item;
-                    const key = item.issue_key || '#' + item.id;
-                    const parts = [`${key}: ${item.title}`, node.stageLabel, `상태 ${this.statusLabel(item.status)}`];
-                    if (node.parentItem) parts.push(`상위 작업 ${node.parentItem.issue_key || '#' + node.parentItem.id}`);
-                    if (node.cycle) parts.push('서로 막는 연결에 포함됨');
-                    return parts.join('. ') + '.';
-                },
-
-                graphChildParentLabel(node) {
-                    if (!node || node.hierarchyDepth < 2 || !node.parentItem) return '';
-                    return '상위 ' + (node.parentItem.issue_key || '#' + node.parentItem.id);
-                },
-
-                graphDisconnectedAriaLabel(entry) {
-                    const item = entry.item;
-                    const key = item.issue_key || '#' + item.id;
-                    const warning = entry.orphanParentId !== undefined ? ` 상위 작업 ${entry.orphanParentId}을 찾을 수 없습니다.` : '';
-                    return `${key}: ${item.title}. 연결 없는 작업. 상태 ${this.statusLabel(item.status)}.${warning}`;
-                },
-
-                async loadGraphProjects(force = false) {
-                    if (this.graphProjectsLoaded && !force) return;
-                    this.graphProjectsLoading = true;
-                    this.graphProjectError = '';
-                    try {
-                        const namespaces = [];
-                        const limit = 100;
-                        let offset = 0;
-                        for (let page = 0; page < 100; page += 1) {
-                            const data = await this.invokeTool('list_namespaces', { limit: limit + 1, offset });
-                            const value = this.toolValue(data);
-                            const result = this.pageSlice(value, limit, offset);
-                            namespaces.push(...result.items);
-                            if (!result.hasMore || !result.items.length || result.nextOffset <= offset) break;
-                            offset = result.nextOffset;
-                        }
-                        const projects = new Map();
-                        for (const namespace of namespaces) {
-                            const slug = String(namespace && namespace.slug || '').replace(/\/+$/, '');
-                            const parts = slug.split('/').filter(Boolean);
-                            if (parts.length !== 2 || parts[0] !== 'projects') continue;
-                            const fallback = parts[1];
-                            const name = String(namespace && namespace.name || '').trim();
-                            projects.set(slug, { slug, label: name && name !== slug ? name : fallback });
-                        }
-                        this.graphProjects = Array.from(projects.values()).sort((a, b) => a.label.localeCompare(b.label, 'ko'));
-                        if (this.graphProjectSlug && !this.graphProjects.some(project => project.slug === this.graphProjectSlug)) {
-                            this.graphProjectSlug = '';
-                        }
-                        this.graphProjectsLoaded = true;
-                    } catch (_) {
-                        this.graphProjects = [];
-                        this.graphProjectError = '프로젝트 목록을 불러오지 못했습니다.';
-                        this.graphProjectsLoaded = true;
-                    } finally {
-                        this.graphProjectsLoading = false;
-                    }
-                },
-
-                async loadWorkGraph(refreshProjects = true) {
+                async loadWorkGraph(refreshNamespaces = true) {
                     this.activeNav = 'graph';
-                    this.resultTitle = '작업 그래프';
-                    this.resultDescription = '작업의 선행 관계를 확인합니다.';
+                    this.resultTitle = '작업 흐름';
+                    this.resultDescription = '작업의 선후 관계와 상하 구조를 봅니다.';
                     this.view = 'graph';
                     this.graphError = '';
                     this.loading = true;
-                    await this.loadGraphProjects(refreshProjects);
+                    await this.loadMapNamespaces(refreshNamespaces);
                     await this.loadWorkView('graph');
                 }
             };
@@ -1651,8 +1634,9 @@
 
         function createGoalMapViewModel() {
             const layout = window.StashGoalMap || {
-                emptyLayout: () => ({ width: 0, height: 0, canvasStyle: '', nodes: [], edges: [], columns: [], counts: { resource: 0, memory: 0, work: 0, goal: 0 } }),
-                buildGoalMapLayout: () => ({ width: 0, height: 0, canvasStyle: '', nodes: [], edges: [], columns: [], counts: { resource: 0, memory: 0, work: 0, goal: 0 } })
+                emptyLayout: () => ({ width: 0, height: 0, canvasStyle: '', nodes: [], edges: [], rings: [], focusKey: '', counts: { resource: 0, memory: 0, work: 0, goal: 0 } }),
+                filterGoalMap: value => value,
+                buildGoalMapLayout: () => ({ width: 0, height: 0, canvasStyle: '', nodes: [], edges: [], rings: [], focusKey: '', counts: { resource: 0, memory: 0, work: 0, goal: 0 } })
             };
             const emptyMap = () => ({
                 goal_tree: { root_goal_id: null, goals: [] },
@@ -1662,7 +1646,12 @@
             });
             return {
                 goalMap: emptyMap(),
+                goalMapVisible: emptyMap(),
                 goalMapLayout: layout.emptyLayout(),
+                goalMapFilters: {
+                    query: '', status: '', agent: '', memoryType: '',
+                    kinds: { goal: true, work: true, memory: true, resource: true }
+                },
                 goalMapError: '',
                 goalMapRootCandidates: [],
                 goalMapRootGoalId: '',
@@ -1690,7 +1679,7 @@
                     if (!this.goalMapRootCandidates.some(goal => String(goal.id) === String(this.goalMapRootGoalId))) {
                         this.goalMapRootGoalId = '';
                     }
-                    this.goalMapLayout = layout.buildGoalMapLayout(this.goalMap);
+                    this.refreshGoalMapLayout();
                 },
 
                 clearGoalMap() {
@@ -1701,19 +1690,56 @@
                     return this.goalMap.goal_tree.root_goal_id !== null && this.goalMap.goal_tree.goals.length > 0;
                 },
 
+                refreshGoalMapLayout() {
+                    this.goalMapVisible = layout.filterGoalMap(this.goalMap, this.goalMapFilters);
+                    this.goalMapLayout = layout.buildGoalMapLayout(this.goalMapVisible);
+                },
+
+                goalMapAgents() {
+                    const values = this.goalMap.work_items.map(item => String(item.agent_id || item.owner || '').trim()).filter(Boolean);
+                    return Array.from(new Set(values)).sort((left, right) => left.localeCompare(right, 'ko'));
+                },
+
+                toggleGoalMapKind(kind) {
+                    if (!Object.prototype.hasOwnProperty.call(this.goalMapFilters.kinds, kind)) return;
+                    this.goalMapFilters = {
+                        ...this.goalMapFilters,
+                        kinds: { ...this.goalMapFilters.kinds, [kind]: !this.goalMapFilters.kinds[kind] }
+                    };
+                    this.refreshGoalMapLayout();
+                },
+
+                goalMapHasFilters() {
+                    const filters = this.goalMapFilters;
+                    return Boolean(
+                        String(filters.query || '').trim() || String(filters.status || '').trim() ||
+                        String(filters.agent || '').trim() || String(filters.memoryType || '').trim() ||
+                        Object.values(filters.kinds).some(value => !value)
+                    );
+                },
+
+                resetGoalMapFilters() {
+                    if (!this.goalMapHasFilters()) return;
+                    this.goalMapFilters = {
+                        query: '', status: '', agent: '', memoryType: '',
+                        kinds: { goal: true, work: true, memory: true, resource: true }
+                    };
+                    this.refreshGoalMapLayout();
+                },
+
                 goalMapScopeLabel() {
-                    if (!this.graphProjectSlug) return '기본 작업 공간의 목표입니다.';
-                    const project = this.graphProjects.find(item => item.slug === this.graphProjectSlug);
-                    return (project ? project.label : this.graphProjectSlug) + '의 목표입니다.';
+                    if (!this.mapNamespaceSlug) return '기본 공간(/)의 목표와 연결 근거입니다.';
+                    const namespace = this.mapNamespaces.find(item => item.slug === this.mapNamespaceSlug);
+                    return (namespace ? namespace.label : this.mapNamespaceSlug) + ' 범위의 목표와 연결 근거입니다.';
                 },
 
                 goalMapStatusCount(status) {
-                    if (status === 'doing') return this.goalMap.work_items.filter(item => item.status === 'doing' || item.status === 'review').length;
-                    return this.goalMap.work_items.filter(item => item.status === status).length;
+                    if (status === 'doing') return this.goalMapVisible.work_items.filter(item => item.status === 'doing' || item.status === 'review').length;
+                    return this.goalMapVisible.work_items.filter(item => item.status === status).length;
                 },
 
                 goalMapAttentionItems() {
-                    return this.goalMap.work_items
+                    return this.goalMapVisible.work_items
                         .filter(item => item.status === 'doing' || item.status === 'review' || item.status === 'blocked')
                         .sort((left, right) => {
                             const rank = value => value === 'blocked' ? 0 : 1;
@@ -1723,7 +1749,8 @@
                 },
 
                 goalMapGoalKind(goal) {
-                    return Number(goal && goal.id) === Number(this.goalMap.goal_tree.root_goal_id) ? '공통 목표' : '하위 목표';
+                    if (Number(goal && goal.id) === Number(this.goalMap.goal_tree.root_goal_id)) return '공통 목표';
+                    return Math.max(1, Number(goal && goal.depth) || 1) + '단계 목표';
                 },
 
                 goalMapProgressPercent(value) {
@@ -1783,7 +1810,7 @@
                     this.goalMapRootSaving = true;
                     try {
                         await this.invokeTool('set_project_goal', {
-                            namespace: this.graphProjectSlug || '/', goal_id: goalId
+                            namespace: this.mapNamespaceSlug || '/', goal_id: goalId
                         });
                         await this.loadGoalMap(false);
                         this.setNotice('공통 목표를 정했습니다.', 'success');
@@ -1801,7 +1828,8 @@
                         'is-root': node && node.kind === 'goal' && Number(item.id) === Number(this.goalMap.goal_tree.root_goal_id),
                         'is-complete': item.status === 'completed' || item.status === 'done',
                         'is-ready': Boolean(item.ready_to_complete),
-                        'is-mismatch': Boolean(item.completion_mismatch)
+                        'is-mismatch': Boolean(item.completion_mismatch),
+                        'is-context': Boolean(item.__filter_context)
                     };
                 },
 
@@ -1833,17 +1861,17 @@
                     return `${this.goalMapScopeLabel()} 목표 ${counts.goal}개, 작업 ${counts.work}개, 연결 자료 ${counts.resource}개, 기억 ${counts.memory}개, 막힌 작업 ${this.goalMapStatusCount('blocked')}개.`;
                 },
 
-                async loadGoalMap(refreshProjects = true) {
+                async loadGoalMap(refreshNamespaces = true) {
                     this.activeNav = 'goal-map';
-                    this.resultTitle = '목표 지도';
-                    this.resultDescription = '자료와 기억이 작업을 거쳐 공통 목표에 어떻게 이어지는지 봅니다.';
+                    this.resultTitle = '목표·지식 지도';
+                    this.resultDescription = '공통 목표를 중심으로 세부 목표, 작업, 사실과 자료를 봅니다.';
                     this.view = 'goal-map';
                     this.goalMapError = '';
                     this.loading = true;
                     try {
-                        await this.loadGraphProjects(refreshProjects);
+                        await this.loadMapNamespaces(refreshNamespaces);
                         const data = await this.invokeTool('get_goal_map', {
-                            namespace: this.graphProjectSlug || '/', include_done: true
+                            namespace: this.mapNamespaceSlug || '/', include_done: true
                         });
                         const value = this.toolValue(data) || {};
                         this.setGoalMap(value);
@@ -1854,7 +1882,7 @@
                         this.setNotice('', 'success', 0);
                     } catch (error) {
                         this.clearGoalMap();
-                        this.goalMapError = error.message || '목표 지도를 불러오지 못했습니다.';
+                        this.goalMapError = error.message || '목표·지식 지도를 불러오지 못했습니다.';
                         this.result = '오류: ' + this.goalMapError;
                     } finally {
                         this.loading = false;
@@ -1870,14 +1898,24 @@
                 planComponentFormOpen: false,
                 planTaskFormOpen: false,
                 planDecisionFormOpen: false,
-                planPathEditorComponentId: null,
-                planPathEditorValue: '',
-	                planComponentForm: { componentId: null, goalId: '', title: '', description: '', technicalDetails: '', ownedPaths: '', priority: 0 },
+                planScopeEditorComponentId: null,
+                planScopeEditorValue: '',
+	                planComponentForm: { componentId: null, goalId: '', title: '', description: '', technicalDetails: '', ownedScopes: '', priority: 0 },
 	                planTaskForm: { taskId: null, componentId: null, goalId: '', title: '', description: '', technicalDetails: '', provenance: 'agent' },
                 planDecisionForm: { componentId: '', title: '', rationale: '' },
 
-                async fetchWorkPlan() {
-                    const data = await this.invokeTool('get_work_plan', { namespace: '/' });
+                planNamespace() {
+                    return this.mapNamespaceSlug || '/';
+                },
+
+                planScopeLabel() {
+                    if (!this.mapNamespaceSlug) return '기본 공간 (/)';
+                    const namespace = this.mapNamespaces.find(item => item.slug === this.mapNamespaceSlug);
+                    return namespace ? namespace.label : this.mapNamespaceSlug;
+                },
+
+	                async fetchWorkPlan() {
+	                    const data = await this.invokeTool('get_work_plan', { namespace: this.planNamespace() });
                     const value = this.toolValue(data) || {};
 	                    this.plan = {
 	                        goal_tree: value.goal_tree && typeof value.goal_tree === 'object' ? {
@@ -1895,14 +1933,16 @@
                     this.markLoaded();
                 },
 
-                async loadWorkPlan() {
-                    this.activeNav = 'plan';
-                    this.resultTitle = '작업 계획';
-                    this.resultDescription = '구성 요소와 실제 할 일을 함께 관리합니다.';
-                    this.view = 'plan';
-                    this.loading = true;
-                    try {
-                        await this.fetchWorkPlan();
+	                async loadWorkPlan(refreshNamespaces = true) {
+	                    this.activeNav = 'plan';
+	                    this.resultTitle = '작업 계획';
+	                    this.resultDescription = this.planScopeLabel() + '의 구성 요소와 실제 할 일을 관리합니다.';
+	                    this.view = 'plan';
+	                    this.loading = true;
+	                    try {
+	                        await this.loadMapNamespaces(refreshNamespaces);
+	                        this.resultDescription = this.planScopeLabel() + '의 구성 요소와 실제 할 일을 관리합니다.';
+	                        await this.fetchWorkPlan();
                         this.setNotice('', 'success', 0);
                     } catch (e) {
                         this.result = '오류: ' + e.message;
@@ -1973,10 +2013,8 @@
                     const component = this.plan.components.find(candidate => Number(candidate.id) === Number(warning.component_id));
                     const task = this.plan.components.flatMap(candidate => candidate.tasks || []).find(candidate => Number(candidate.id) === Number(warning.task_id));
                     return {
-                        no_components: '구성 요소를 먼저 만드세요. 전체 계획은 5~9개 구성을 권장합니다.',
-                        component_count_low: `구성 요소가 ${warning.count}개입니다. 5~9개 구성을 권장합니다.`,
-                        component_count_high: `구성 요소가 ${warning.count}개입니다. 새 카드를 늘리기보다 기존 구성 요소의 작업을 나누세요.`,
-                        component_without_paths: `${component ? component.title : '구성 요소'}에 맡는 경로가 없습니다.`,
+                        no_components: '구성 요소를 먼저 만드세요.',
+                        component_without_paths: `${component ? component.title : '구성 요소'}에 맡는 범위가 없습니다.`,
                         open_task_without_provenance: `${task ? task.title : '작업'}의 출처를 기록하세요.`,
 	                        active_task_without_starter: `${task ? task.title : '작업'}의 시작 작업자가 없습니다.`,
 						no_project_goal: '공통 목표를 먼저 정하세요.',
@@ -2025,7 +2063,7 @@
 
 	                async validateWorkPlan() {
 	                    await this.runPlanMutation(
-	                        () => this.invokeTool('validate_work_plan', { namespace: '/' }),
+	                        () => this.invokeTool('validate_work_plan', { namespace: this.planNamespace() }),
 	                        '계획을 검사했습니다.',
 	                        '계획을 검사하지 못했습니다.'
 	                    );
@@ -2039,15 +2077,15 @@
 	                        title: component.title || '',
 	                        description: component.description || '',
 	                        technicalDetails: component.technical_details || '',
-	                        ownedPaths: Array.isArray(component.owned_paths) ? component.owned_paths.join(', ') : '',
+	                        ownedScopes: Array.isArray(component.owned_paths) ? component.owned_paths.join(', ') : '',
 	                        priority: Number(component.priority) || 0
-	                    } : { componentId: null, goalId: '', title: '', description: '', technicalDetails: '', ownedPaths: '', priority: 0 };
+	                    } : { componentId: null, goalId: '', title: '', description: '', technicalDetails: '', ownedScopes: '', priority: 0 };
 	                    this.planComponentFormOpen = true;
 	                },
 
 	                closePlanComponentForm() {
 	                    this.planComponentFormOpen = false;
-	                    this.planComponentForm = { componentId: null, goalId: '', title: '', description: '', technicalDetails: '', ownedPaths: '', priority: 0 };
+	                    this.planComponentForm = { componentId: null, goalId: '', title: '', description: '', technicalDetails: '', ownedScopes: '', priority: 0 };
 	                },
 
 	                async savePlanComponent() {
@@ -2058,14 +2096,14 @@
 	                        if (componentID) {
 	                            const args = {
 	                                component_id: componentID, title: form.title, description: form.description,
-	                                technical_details: form.technicalDetails, owned_paths: form.ownedPaths
+	                                technical_details: form.technicalDetails, owned_paths: form.ownedScopes
 	                            };
 	                            if (goalID) args.goal_id = goalID;
 	                            await this.invokeTool('update_plan_component', args);
 	                        } else {
 	                            const args = {
-	                                namespace: '/', title: form.title, description: form.description,
-	                                technical_details: form.technicalDetails, owned_paths: form.ownedPaths,
+	                                namespace: this.planNamespace(), title: form.title, description: form.description,
+	                                technical_details: form.technicalDetails, owned_paths: form.ownedScopes,
 	                                priority: Number(form.priority) || 0, owner: this.planActorName()
 	                            };
 	                            if (goalID) args.goal_id = goalID;
@@ -2111,7 +2149,7 @@
 	                            await this.invokeTool('update_plan_task', args);
 	                        } else {
 	                            const args = {
-	                                namespace: '/', component_id: componentID, title: form.title, description: form.description,
+	                                namespace: this.planNamespace(), component_id: componentID, title: form.title, description: form.description,
 	                                technical_details: form.technicalDetails, provenance: form.provenance
 	                            };
 	                            if (goalID) args.goal_id = goalID;
@@ -2147,28 +2185,28 @@
                     await this.runPlanMutation(() => this.invokeTool('unblock_plan_task', { task_id: taskID }), '막힘을 해제했습니다.', '막힘을 해제하지 못했습니다.');
                 },
 
-                openPlanPathEditor(component) {
-                    this.planPathEditorComponentId = Number(component.id);
-                    this.planPathEditorValue = Array.isArray(component.owned_paths) ? component.owned_paths.join(', ') : '';
+                openPlanScopeEditor(component) {
+                    this.planScopeEditorComponentId = Number(component.id);
+                    this.planScopeEditorValue = Array.isArray(component.owned_paths) ? component.owned_paths.join(', ') : '';
                 },
 
-                closePlanPathEditor() {
-                    this.planPathEditorComponentId = null;
-                    this.planPathEditorValue = '';
+                closePlanScopeEditor() {
+                    this.planScopeEditorComponentId = null;
+                    this.planScopeEditorValue = '';
                 },
 
-                async savePlanComponentPaths(componentID) {
+                async savePlanComponentScopes(componentID) {
                     await this.runPlanMutation(async () => {
-                        await this.invokeTool('set_plan_component_paths', { component_id: componentID, owned_paths: this.planPathEditorValue });
-                        this.closePlanPathEditor();
-                    }, '맡는 경로를 저장했습니다.', '맡는 경로를 저장하지 못했습니다.');
+                        await this.invokeTool('set_plan_component_paths', { component_id: componentID, owned_paths: this.planScopeEditorValue });
+                        this.closePlanScopeEditor();
+                    }, '맡는 범위를 저장했습니다.', '맡는 범위를 저장하지 못했습니다.');
                 },
 
                 async recordPlanDecision() {
                     const form = this.planDecisionForm;
                     const componentID = Number(form.componentId);
                     await this.runPlanMutation(async () => {
-                        const args = { namespace: '/', title: form.title, rationale: form.rationale, author: this.planActorName() };
+	                        const args = { namespace: this.planNamespace(), title: form.title, rationale: form.rationale, author: this.planActorName() };
                         if (componentID) args.component_id = componentID;
                         await this.invokeTool('record_plan_decision', args);
                         this.planDecisionForm = { componentId: '', title: '', rationale: '' };
@@ -2880,6 +2918,7 @@
             return {
                 ...createPlanViewModel(),
                 ...createIssueExecutionViewModel(),
+                ...createMapScopeViewModel(),
                 ...createWorkGraphViewModel(),
 				...createGoalMapViewModel(),
                 token: '',
@@ -2935,7 +2974,7 @@
 	                    '- Call `resume_project(namespace, agent_id, capabilities)` at session start. It requires no local path, Git repository, or MCP Roots.',
 	                    '- Keep `context_digest` and send it as `known_context_digest` on later resume calls. Use `detail: full` only for a specific missing record.',
 	                    '- Continue active work first. Otherwise choose one of the returned ready items whose `required_capabilities` you can satisfy.',
-	                    '- Call `resume_work` for that item, then call `claim_work` immediately before acting.',
+	                    '- Call `resume_work` for that item. Read its goal path, parent plan component, owned scopes, and next action, then call `claim_work` immediately before acting.',
 	                    '- Keep the returned `lease_token` private. Never bypass another live lease or create replacement work because the previous chat is unavailable.',
 	                    '- Call `checkpoint_work` after each meaningful action with the observed result and exactly one concrete `next_action`.',
 	                    '- Use `spawn_work` when the current task reveals a child or prerequisite. It prepares the new item and links it to the current task atomically.',
@@ -2946,7 +2985,7 @@
 	                    '## Shared outcome tree',
 	                    '',
 	                    '- Treat the selected top-level goal as the project outcome. A-1, A-2, and deeper results are child goals that combine into it.',
-	                    '- Read `goal_context.path` before acting and attach each component or task to the narrowest matching goal with `goal_id`.',
+	                    '- Read `goal_context.path` and `plan_context` before acting. Attach each component or task to the narrowest matching goal with `goal_id`.',
 	                    '- Do not start detached work or work assigned outside the shared tree. A start or claim returns the same compact goal path.',
 	                    '- Link only durable context, constraints, decisions, failures, evidence, and results. Omit routine narration.',
 	                    '- Verified leaf work completes eligible child and parent goals. Never complete a parent while child work remains unfinished.',
@@ -2954,9 +2993,9 @@
                     '## Component map',
                     '',
                     '- Plan nodes are **components of the system being built**, not phases, sprints, or a chronological to-do list. Create them with `create_plan_component`.',
-                    '- Keep the map at **5 to 9 components** regardless of repository size. Grow child tasks instead of adding cards. Split a component only when one agent could no longer own it for a session.',
+	                    '- Create one component for each independently owned part of the system. Put executable work in child tasks.',
                     '- A component\'s `issue_key` is its stable identifier. Do not reuse it for a different component. Add or remove nodes instead of changing their identity.',
-	                    '- Use `update_plan_component` to clarify a component\'s wording, completion condition, implementation note, or owned paths without changing its stable identity.',
+	                    '- Use `update_plan_component` to clarify a component\'s wording, completion condition, implementation note, or owned scope without changing its stable identity.',
                     '- Use `delete_plan_component` or `delete_plan_task` to remove an obsolete node. Do not recycle it by changing its purpose.',
                     '- Titles are verb-led, plain-language, and concrete enough for the owner to recognize completion. Prefer `Read alerts out loud` over `Audio pipeline`, and never use vague labels such as `Decide what matters`.',
                     '- Put implementation wording in `technical_details`, not in the title. Put the owner-facing scope and done condition in `description`.',
@@ -3519,7 +3558,7 @@
                         this.resultDescription = '작업을 상태별로 정리합니다.';
                         this.boardError = '';
                     } else if (view === 'graph') {
-                        this.resultTitle = '작업 그래프';
+                        this.resultTitle = '작업 흐름';
                         this.resultDescription = this.graphScopeLabel();
                         this.graphError = '';
                     }
@@ -3542,8 +3581,8 @@
                             graph = { nodes: page.items, edges: [], worktrees: [] };
                         } else {
                             const graphArgs = { include_done: true };
-                            if (this.graphProjectSlug) graphArgs.project = this.graphProjectSlug;
-                            else graphArgs.namespaces = this.graphProjects.length ? '/projects' : '/';
+                            if (this.mapNamespaceSlug) graphArgs.project = this.mapNamespaceSlug;
+                            else graphArgs.namespaces = '/';
                             const data = await this.invokeTool('get_work_graph', graphArgs);
                             graph = this.toolValue(data);
                         }

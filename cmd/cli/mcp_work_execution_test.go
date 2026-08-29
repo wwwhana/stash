@@ -316,7 +316,12 @@ func TestRecordWorkExecutionHandlerExportsTransitionMetric(t *testing.T) {
 func TestWorkResumeResultKeepsCoreAndReportsTruncationWithinLimit(t *testing.T) {
 	const maxBytes = 32 * 1024
 	bundle := &models.WorkResumeBundle{
-		WorkItem:         models.WorkItem{ID: 71, Title: "bounded resume", Description: strings.Repeat("d", 10000)},
+		WorkItem: models.WorkItem{ID: 71, Title: "bounded resume", Description: strings.Repeat("d", 10000)},
+		PlanContext: &models.WorkPlanExecutionContext{
+			Component: models.WorkPlanReference{ID: 70, IssueKey: "W-000070", Title: "상위 구성 작업"},
+			Outcome:   strings.Repeat("o", 10000), Guidance: strings.Repeat("g", 10000), TaskDetails: strings.Repeat("t", 10000),
+			OwnedScopes: []string{"jira://team/**", "confluence://team/**"},
+		},
 		NextAction:       strings.Repeat("n", 10000),
 		LatestAttempt:    &models.WorkAttempt{ID: 9, WorkItemID: 71, AgentID: "agent-a", PrincipalID: namespaceOwnerKey("subject-a"), Status: "active"},
 		LatestCheckpoint: &models.WorkCheckpoint{ID: 8, AttemptID: 9, Summary: strings.Repeat("s", 10000), Result: strings.Repeat("r", 10000)},
@@ -354,6 +359,9 @@ func TestWorkResumeResultKeepsCoreAndReportsTruncationWithinLimit(t *testing.T) 
 	}
 	if compact.WorkItem.ID != 71 || compact.LatestAttempt == nil || compact.LatestAttempt.ID != 9 {
 		t.Fatalf("compact resume lost core state: %#v", compact)
+	}
+	if compact.PlanContext == nil || compact.PlanContext.Component.ID != 70 || len(compact.PlanContext.OwnedScopes) != 2 {
+		t.Fatalf("compact resume lost plan context: %#v", compact.PlanContext)
 	}
 	if compact.Totals.Evidence != 60 || compact.Totals.MemoryLinks != 1 || compact.Totals.RecentEvents != 60 || !compact.Truncated.Evidence || !compact.Truncated.MemoryLinks || !compact.Truncated.RecentEvents || !compact.Truncated.Core {
 		t.Fatalf("compact resume bounds = totals:%#v truncated:%#v", compact.Totals, compact.Truncated)

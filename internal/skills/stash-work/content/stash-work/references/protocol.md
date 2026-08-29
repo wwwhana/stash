@@ -6,14 +6,14 @@ Tool names may carry a client-specific MCP prefix. Match them by the final Stash
 
 1. `resume_project(namespace, agent_id?, capabilities?, known_context_digest?)` is the universal Web MCP entry point. It returns the shared goal, this agent's active work, at most three runnable candidates, project counts, one next action, and a digest.
 2. Continue active work first. Otherwise choose one candidate whose required capabilities are available.
-3. `resume_work(work_item_id, detail="brief", known_context_digest?)` returns the focused goal path, next action, pending conditions, relevant memory, linked resource summaries, final prerequisite results, and blockers.
+3. `resume_work(work_item_id, detail="brief", known_context_digest?)` returns the focused goal path, parent plan component, owned scopes, next action, pending conditions, relevant memory, linked resource summaries, final prerequisite results, and blockers.
 4. Search or create work only when these bounded responses do not already contain the intended outcome.
 
 No local path, Git repository, or MCP Roots are required. Store each returned `context_digest`. A later call with the same value returns an unchanged receipt when the relevant view is identical.
 
 `get_goal_map` is an owner-facing overview. Worker agents should not load it during routine turns.
 
-The selected top-level goal is shared by every agent. Child goals divide that outcome into smaller results. Components and executable tasks carry `goal_id`; attempt start is rejected when that goal is outside the selected tree. Every claim response repeats the compact goal path.
+The selected top-level goal is shared by every agent. Child goals divide that outcome into smaller results. Components and executable tasks carry `goal_id`; attempt start is rejected when that goal is outside the selected tree. Every work resume includes a compact `plan_context` for the current component, and every claim response repeats the compact goal path.
 
 Capabilities, URLs, paths, provider IDs, and agent IDs never grant access. The authenticated MCP principal determines which namespace can be read or changed.
 
