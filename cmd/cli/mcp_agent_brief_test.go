@@ -19,7 +19,12 @@ func TestBuildWorkResumeBriefBoundsAgentInputAndSupportsDigestReceipt(t *testing
 			Siblings: []models.GoalBrief{},
 		},
 		NextAction: strings.Repeat("다음 행동 ", 300),
-		Totals:     models.WorkResumeTotals{CompletionConditions: 30, MemoryLinks: 10, Blockers: 10},
+		LatestAttempt: &models.WorkAttempt{
+			ID: 42, AgentID: strings.Repeat("에이전트", 3000), Status: "active",
+		},
+		Totals: models.WorkResumeTotals{
+			CompletionConditions: 30, MemoryLinks: 10, Resources: 10, DependencyResults: 10, Blockers: 10,
+		},
 	}
 	for index := 0; index < 30; index++ {
 		bundle.CompletionConditions = append(bundle.CompletionConditions, models.WorkCompletionCondition{
@@ -30,6 +35,15 @@ func TestBuildWorkResumeBriefBoundsAgentInputAndSupportsDigestReceipt(t *testing
 		bundle.MemoryLinks = append(bundle.MemoryLinks, models.WorkMemorySnapshot{
 			MemoryType: "fact", MemoryID: int64(index + 1), Relation: "constraint", Content: strings.Repeat("제약 ", 300), Status: "active",
 		})
+		bundle.Resources = append(bundle.Resources, models.WorkResourceRef{
+			ID: int64(200 + index), ResourceKey: fmt.Sprintf("jira:APP-%d", index), Kind: "ticket",
+			Source: "jira", Authority: "external", Title: strings.Repeat("연결 자료 ", 80),
+			URI: fmt.Sprintf("https://jira.example.test/browse/APP-%d", index), Summary: strings.Repeat("요약 ", 300), Role: "input",
+		})
+		bundle.DependencyResults = append(bundle.DependencyResults, models.WorkDependencyResult{
+			WorkItem: models.AgentWorkItem{ID: int64(300 + index), IssueKey: fmt.Sprintf("W-%06d", 300+index), Title: strings.Repeat("선행 작업 ", 80), Status: "done"},
+			Summary:  strings.Repeat("완료 내용 ", 120), Result: strings.Repeat("확인 결과 ", 160),
+		})
 		bundle.Blockers = append(bundle.Blockers, models.WorkItem{ID: int64(100 + index), IssueKey: fmt.Sprintf("W-%06d", 100+index), Title: strings.Repeat("막힌 작업 ", 80), Status: "blocked"})
 	}
 
@@ -37,15 +51,22 @@ func TestBuildWorkResumeBriefBoundsAgentInputAndSupportsDigestReceipt(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(brief.CompletionConditions) != agentBriefConditionLimit || !brief.MoreConditions || len(brief.RelevantMemory) != agentBriefMemoryLimit || !brief.MoreMemory || len(brief.Blockers) != agentBriefBlockerLimit || !brief.MoreBlockers {
-		t.Fatalf("brief limits = conditions:%d memory:%d blockers:%d flags:%v/%v/%v", len(brief.CompletionConditions), len(brief.RelevantMemory), len(brief.Blockers), brief.MoreConditions, brief.MoreMemory, brief.MoreBlockers)
+	if len(brief.CompletionConditions) < 1 || len(brief.CompletionConditions) > agentBriefConditionLimit || !brief.MoreConditions ||
+		len(brief.RelevantMemory) < 1 || len(brief.RelevantMemory) > agentBriefMemoryLimit || !brief.MoreMemory ||
+		len(brief.Resources) < 1 || len(brief.Resources) > agentBriefResourceLimit || !brief.MoreResources ||
+		len(brief.DependencyResults) < 1 || len(brief.DependencyResults) > agentBriefDependencyLimit || !brief.MoreDependencyResults ||
+		len(brief.Blockers) < 1 || len(brief.Blockers) > agentBriefBlockerLimit || !brief.MoreBlockers {
+		t.Fatalf("brief limits = conditions:%d memory:%d resources:%d dependencies:%d blockers:%d", len(brief.CompletionConditions), len(brief.RelevantMemory), len(brief.Resources), len(brief.DependencyResults), len(brief.Blockers))
 	}
 	payload, err := json.Marshal(brief)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(payload) > 16*1024 {
+	if len(payload) > agentBriefMaxBytes {
 		t.Fatalf("brief payload = %d bytes", len(payload))
+	}
+	if len(brief.LatestAttempt.AgentID) > 128 {
+		t.Fatalf("agent ID = %d bytes", len(brief.LatestAttempt.AgentID))
 	}
 	repeated, err := buildWorkResumeBrief(bundle)
 	if err != nil || repeated.ContextDigest != brief.ContextDigest {

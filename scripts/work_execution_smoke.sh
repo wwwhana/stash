@@ -282,6 +282,37 @@ else:
 ' "$path"
 }
 
+json_get_optional() {
+    local payload=$1
+    local path=$2
+    printf '%s' "$payload" | python3 -c '
+import json
+import sys
+
+value = json.load(sys.stdin)
+for part in sys.argv[1].split("."):
+    if not part:
+        continue
+    if isinstance(value, list):
+        index = int(part)
+        value = value[index] if 0 <= index < len(value) else None
+    elif isinstance(value, dict):
+        value = value.get(part)
+    else:
+        value = None
+    if value is None:
+        break
+if value is None:
+    print("")
+elif isinstance(value, bool):
+    print("true" if value else "false")
+elif isinstance(value, (dict, list)):
+    print(json.dumps(value, separators=(",", ":")))
+else:
+    print(value)
+' "$path"
+}
+
 canonical_json() {
     printf '%s' "$1" | python3 -c '
 import json
@@ -301,7 +332,17 @@ if "error" in response:
 tools = {tool.get("name"): tool for tool in response.get("result", {}).get("tools", [])}
 expected = {
     "create_namespace": {"slug", "name"},
+    "create_goal": {"content"},
+    "set_project_goal": {"goal_id"},
     "create_work_item": {"namespace", "title"},
+    "resume_project": {"namespace", "agent_id", "capabilities", "known_context_digest"},
+    "claim_work": {"work_item_id", "agent_id", "lease_seconds", "action_key"},
+    "set_work_capabilities": {"work_item_id", "capabilities"},
+    "spawn_work": {"attempt_id", "lease_token", "action_key", "title", "relationship", "next_action", "conditions", "capabilities"},
+    "attach_work_resource": {"work_item_id", "resource_key", "kind", "source", "authority", "title", "uri", "summary", "role", "metadata"},
+    "list_work_resources": {"work_item_id"},
+    "get_work_resource": {"resource_id"},
+    "get_goal_map": {"namespace"},
     "resolve_workspace": {"cwd", "repository_instance_id", "git_common_dir", "git_dir", "worktree_path"},
     "resume_workspace": {"namespace"},
     "claim_workspace": {"work_item_id", "cwd", "repository_instance_id", "git_common_dir", "git_dir", "worktree_path", "agent_id", "lease_seconds", "action_key"},
@@ -335,6 +376,26 @@ for name in expected:
     schema = tools[name].get("inputSchema", {})
     print(name + " " + json.dumps(schema, sort_keys=True, separators=(",", ":")))
 ' >"$TMP_DIR/work-execution-tool-schemas.txt"
+}
+
+validate_resource_templates() {
+    python3 -c '
+import json
+import sys
+
+response = json.load(sys.stdin)
+if "error" in response:
+    raise SystemExit("resources/templates/list failed: {}".format(response["error"]))
+templates = {
+    template.get("uriTemplate")
+    for template in response.get("result", {}).get("resourceTemplates", [])
+}
+expected = {"stash://work/{id}/brief", "stash://work-resource/{id}"}
+missing = sorted(expected - templates)
+if missing:
+    raise SystemExit("server is missing work resource templates: " + ", ".join(missing))
+print("\n".join(sorted(templates)))
+' >"$TMP_DIR/work-resource-templates.txt"
 }
 
 REQUEST_ID=0
@@ -500,6 +561,12 @@ if ! printf '%s' "$MCP_RESPONSE" | validate_tool_schemas; then
     die "work-execution tool schemas are not available or do not match the harness"
 fi
 
+say "reading live MCP resource templates"
+mcp_request resources/templates/list '{}'
+if ! printf '%s' "$MCP_RESPONSE" | validate_resource_templates; then
+    die "work resource templates are not available"
+fi
+
 PROJECT_NAMESPACE="/projects/work-execution-smoke-${RUN_SUFFIX}"
 AGENT_A="smoke-agent-a-${RUN_SUFFIX}"
 AGENT_B="smoke-agent-b-${RUN_SUFFIX}"
@@ -513,7 +580,231 @@ ARGS="$(json_object \
     s description "Isolated namespace created by scripts/work_execution_smoke.sh")"
 mcp_call create_namespace "$ARGS"
 
+say "creating the shared project goal"
+ARGS="$(json_object \
+    s namespace "$PROJECT_NAMESPACE" \
+    s content "Complete project A through coordinated work" \
+    n priority 10)"
+mcp_call create_goal "$ARGS"
+ROOT_GOAL_ID="$(json_get "$MCP_VALUE" id)"
+mcp_call set_project_goal "$(json_object s namespace "$PROJECT_NAMESPACE" n goal_id "$ROOT_GOAL_ID" s set_by smoke-owner)"
+
+say "creating Git-independent prepared work"
+GENERIC_CONDITIONS='[{"kind":"custom","description":"The generic Web MCP coordination path is observed","verification":{"check":"resume, claim, spawn, resource, and map agree"},"required":true}]'
+ARGS="$(json_object \
+    s namespace "$PROJECT_NAMESPACE" \
+    n goal_id "$ROOT_GOAL_ID" \
+    s title "Coordinate project A without a local workspace" \
+    s description "Disposable generic work used by the isolated Web MCP smoke harness" \
+    s issue_type task \
+    s status ready \
+    s reporter "$AGENT_A" \
+    j capabilities '["code","browser"]')"
+mcp_call create_work_item "$ARGS"
+GENERIC_WORK_ITEM_ID="$(json_get "$MCP_VALUE" id)"
+mcp_call prepare_work "$(json_object \
+    n work_item_id "$GENERIC_WORK_ITEM_ID" \
+    s next_action "Claim this item without Git facts" \
+    j conditions "$GENERIC_CONDITIONS" \
+    s action_key "${ACTION_PREFIX}:prepare-generic")"
+
+say "resuming the project without Git, a path, or MCP Roots"
+mcp_call resume_project "$(json_object \
+    s namespace "$PROJECT_NAMESPACE" \
+    s agent_id "$AGENT_A" \
+    j capabilities '["code","browser"]')"
+if [[ "$(json_get "$MCP_VALUE" shared_goal.id)" != "$ROOT_GOAL_ID" || "$(json_get "$MCP_VALUE" ready_work.0.id)" != "$GENERIC_WORK_ITEM_ID" ]]; then
+    die "resume_project did not return the shared goal and generic runnable item"
+fi
+PROJECT_CONTEXT_DIGEST="$(json_get "$MCP_VALUE" context_digest)"
+mcp_call resume_project "$(json_object \
+    s namespace "$PROJECT_NAMESPACE" \
+    s agent_id "$AGENT_A" \
+    j capabilities '["code","browser"]' \
+    s known_context_digest "$PROJECT_CONTEXT_DIGEST")"
+if [[ "$(json_get "$MCP_VALUE" unchanged)" != "true" ]]; then
+    die "resume_project did not return an unchanged digest receipt"
+fi
+
+say "claiming generic work without workspace metadata"
+mcp_call claim_work "$(json_object \
+    n work_item_id "$GENERIC_WORK_ITEM_ID" \
+    s agent_id "$AGENT_A" \
+    n lease_seconds 600 \
+    s action_key "${ACTION_PREFIX}:generic-claim")"
+GENERIC_ATTEMPT_ID="$(json_get "$MCP_VALUE" attempt.id)"
+GENERIC_LEASE_TOKEN="$(json_get "$MCP_VALUE" lease_token)"
+if [[ -n "$(json_get_optional "$MCP_VALUE" attempt.worktree_id)" ]]; then
+    die "generic claim unexpectedly attached a worktree"
+fi
+
+say "attaching an external human-work reference"
+ARGS="$(json_object \
+    n work_item_id "$GENERIC_WORK_ITEM_ID" \
+    s resource_key jira:APP-12 \
+    s kind ticket \
+    s source jira \
+    s authority external \
+    s title "APP-12 human review" \
+    s uri https://jira.example.invalid/browse/APP-12 \
+    s summary "Human review state remains authoritative in Jira" \
+    s external_id APP-12 \
+    s revision 7 \
+    s role input \
+    j metadata '{"status":"In Progress"}')"
+mcp_call attach_work_resource "$ARGS"
+GENERIC_RESOURCE_ID="$(json_get "$MCP_VALUE" resource.id)"
+mcp_call list_work_resources "$(json_object n work_item_id "$GENERIC_WORK_ITEM_ID")"
+if [[ "$(json_get "$MCP_VALUE" 0.id)" != "$GENERIC_RESOURCE_ID" || "$(json_get "$MCP_VALUE" 0.authority)" != "external" ]]; then
+    die "the external resource reference was not returned for generic work"
+fi
+
+say "spawning a prerequisite under the active generic attempt"
+SPAWN_CONDITIONS='[{"kind":"custom","description":"The source fact is recorded","verification":{"check":"source and observed result are present"},"required":true}]'
+mcp_call spawn_work "$(json_object \
+    n attempt_id "$GENERIC_ATTEMPT_ID" \
+    s lease_token "$GENERIC_LEASE_TOKEN" \
+    s action_key "${ACTION_PREFIX}:spawn-research" \
+    s relationship prerequisite \
+    s title "Research the prerequisite" \
+    s next_action "Read the official source and record the result" \
+    j capabilities '["research"]' \
+    j conditions "$SPAWN_CONDITIONS")"
+GENERIC_PREREQUISITE_ID="$(json_get "$MCP_VALUE" work_item.id)"
+GENERIC_PREREQUISITE_CONDITION_ID="$(json_get "$MCP_VALUE" preparation.completion_conditions.0.id)"
+if [[ "$(json_get "$MCP_VALUE" edge.from_item_id)" != "$GENERIC_PREREQUISITE_ID" || "$(json_get "$MCP_VALUE" edge.to_item_id)" != "$GENERIC_WORK_ITEM_ID" || "$(json_get "$MCP_VALUE" edge.edge_type)" != "blocks" ]]; then
+    die "spawn_work did not create the prerequisite blocker edge"
+fi
+
+mcp_call resume_work "$(json_object n work_item_id "$GENERIC_WORK_ITEM_ID")"
+GENERIC_PARENT_CONDITION_ID="$(json_get "$MCP_VALUE" completion_conditions.0.id)"
+if [[ "$(json_get "$MCP_VALUE" blockers.0.id)" != "$GENERIC_PREREQUISITE_ID" || "$(json_get "$MCP_VALUE" resources.0.id)" != "$GENERIC_RESOURCE_ID" ]]; then
+    die "the generic work brief omitted its blocker or bounded resource"
+fi
+
+say "reading the bounded work and resource templates"
+mcp_request "resources/read" "$(json_object s uri "stash://work/${GENERIC_WORK_ITEM_ID}/brief")"
+if ! printf '%s' "$MCP_RESPONSE" | python3 -c '
+import json, sys
+response = json.load(sys.stdin)
+brief = json.loads(response["result"]["contents"][0]["text"])
+if not brief.get("blockers") or not brief.get("resources"):
+    raise SystemExit(1)
+'; then
+    die "the work brief resource template omitted its blocker or resource"
+fi
+mcp_request "resources/read" "$(json_object s uri "stash://work-resource/${GENERIC_RESOURCE_ID}")"
+if ! printf '%s' "$MCP_RESPONSE" | python3 -c '
+import json, sys
+response = json.load(sys.stdin)
+resource = json.loads(response["result"]["contents"][0]["text"])
+if resource.get("authority") != "external" or resource.get("source") != "jira":
+    raise SystemExit(1)
+'; then
+    die "the work resource template did not return the external Jira pointer"
+fi
+
+mcp_call get_goal_map "$(json_object s namespace "$PROJECT_NAMESPACE")"
+if [[ "$(json_get "$MCP_VALUE" goal_tree.root_goal_id)" != "$ROOT_GOAL_ID" || "$(json_get "$MCP_VALUE" resource_total)" != "1" ]]; then
+    die "the owner goal map omitted the shared goal or external resource"
+fi
+
+say "recording the parent result and proving its prerequisite blocks completion"
+mcp_call submit_work_evidence "$(json_object \
+    n attempt_id "$GENERIC_ATTEMPT_ID" \
+    s lease_token "$GENERIC_LEASE_TOKEN" \
+    s evidence_type test \
+    s summary "The generic Web MCP coordination path was observed" \
+    s reference scripts/work_execution_smoke.sh \
+    j payload '{"transport":"streamable-http","git_required":false}' \
+    j condition_ids "[$GENERIC_PARENT_CONDITION_ID]" \
+    s action_key "${ACTION_PREFIX}:generic-parent-evidence")"
+GENERIC_PARENT_EVIDENCE_ID="$(json_get "$MCP_VALUE" id)"
+mcp_call verify_work_condition "$(json_object \
+    n attempt_id "$GENERIC_ATTEMPT_ID" \
+    s lease_token "$GENERIC_LEASE_TOKEN" \
+    n condition_id "$GENERIC_PARENT_CONDITION_ID" \
+    s status passed \
+    j evidence_ids "[$GENERIC_PARENT_EVIDENCE_ID]" \
+    s action_key "${ACTION_PREFIX}:generic-parent-verify")"
+mcp_call_expect_error finish_work "$(json_object \
+    n attempt_id "$GENERIC_ATTEMPT_ID" \
+    s lease_token "$GENERIC_LEASE_TOKEN" \
+    s summary "The generic path was verified before its prerequisite finished" \
+    s result "This finish must remain blocked" \
+    s action_key "${ACTION_PREFIX}:generic-parent-finish-blocked")"
+MCP_ERROR_LOWER="$(printf '%s' "$MCP_ERROR" | tr '[:upper:]' '[:lower:]')"
+if ! [[ "$MCP_ERROR_LOWER" =~ block|prerequisite|unfinished ]]; then
+    die "the parent finish failed for an unrelated reason: $MCP_ERROR"
+fi
+
+say "claiming and completing the spawned prerequisite"
+GENERIC_RESEARCH_AGENT="smoke-research-${RUN_SUFFIX}"
+mcp_call resume_project "$(json_object \
+    s namespace "$PROJECT_NAMESPACE" \
+    s agent_id "$GENERIC_RESEARCH_AGENT" \
+    j capabilities '["research"]')"
+if [[ "$(json_get "$MCP_VALUE" ready_work.0.id)" != "$GENERIC_PREREQUISITE_ID" ]]; then
+    die "the research agent did not receive the runnable prerequisite"
+fi
+mcp_call claim_work "$(json_object \
+    n work_item_id "$GENERIC_PREREQUISITE_ID" \
+    s agent_id "$GENERIC_RESEARCH_AGENT" \
+    n lease_seconds 600 \
+    s action_key "${ACTION_PREFIX}:generic-child-claim")"
+GENERIC_PREREQUISITE_ATTEMPT_ID="$(json_get "$MCP_VALUE" attempt.id)"
+GENERIC_PREREQUISITE_LEASE_TOKEN="$(json_get "$MCP_VALUE" lease_token)"
+mcp_call submit_work_evidence "$(json_object \
+    n attempt_id "$GENERIC_PREREQUISITE_ATTEMPT_ID" \
+    s lease_token "$GENERIC_PREREQUISITE_LEASE_TOKEN" \
+    s evidence_type observation \
+    s summary "The official source fact was recorded" \
+    s reference "https://example.test/source" \
+    j payload '{"observed":true}' \
+    j condition_ids "[$GENERIC_PREREQUISITE_CONDITION_ID]" \
+    s action_key "${ACTION_PREFIX}:generic-child-evidence")"
+GENERIC_PREREQUISITE_EVIDENCE_ID="$(json_get "$MCP_VALUE" id)"
+mcp_call verify_work_condition "$(json_object \
+    n attempt_id "$GENERIC_PREREQUISITE_ATTEMPT_ID" \
+    s lease_token "$GENERIC_PREREQUISITE_LEASE_TOKEN" \
+    n condition_id "$GENERIC_PREREQUISITE_CONDITION_ID" \
+    s status passed \
+    j evidence_ids "[$GENERIC_PREREQUISITE_EVIDENCE_ID]" \
+    s action_key "${ACTION_PREFIX}:generic-child-verify")"
+mcp_call finish_work "$(json_object \
+    n attempt_id "$GENERIC_PREREQUISITE_ATTEMPT_ID" \
+    s lease_token "$GENERIC_PREREQUISITE_LEASE_TOKEN" \
+    s summary "The source fact was checked" \
+    s result "The required source fact was confirmed" \
+    s action_key "${ACTION_PREFIX}:generic-child-finish")"
+
+say "feeding the prerequisite result back into the parent and completing it"
+mcp_call resume_work "$(json_object n work_item_id "$GENERIC_WORK_ITEM_ID")"
+GENERIC_BLOCKER_COUNT="$(printf '%s' "$MCP_VALUE" | python3 -c 'import json, sys; print(len(json.load(sys.stdin).get("blockers", [])))')"
+if [[ "$GENERIC_BLOCKER_COUNT" != "0" || "$(json_get "$MCP_VALUE" dependency_results.0.work_item.id)" != "$GENERIC_PREREQUISITE_ID" || "$(json_get "$MCP_VALUE" dependency_results.0.result)" != "The required source fact was confirmed" ]]; then
+    die "the completed prerequisite result did not flow back into the parent brief"
+fi
+mcp_call finish_work "$(json_object \
+    n attempt_id "$GENERIC_ATTEMPT_ID" \
+    s lease_token "$GENERIC_LEASE_TOKEN" \
+    s summary "The generic project path and prerequisite were verified" \
+    s result "The parent received the bounded prerequisite result and completed" \
+    s action_key "${ACTION_PREFIX}:generic-parent-finish")"
+mcp_call resume_work "$(json_object n work_item_id "$GENERIC_WORK_ITEM_ID")"
+if [[ "$(json_get "$MCP_VALUE" work_item.status)" != "done" ]]; then
+    die "the generic parent did not finish after its prerequisite completed"
+fi
+
 say "checking the legacy worktree registration path"
+mcp_call create_goal "$(json_object \
+    s namespace "$PROJECT_NAMESPACE" \
+    s content "Verify optional Git compatibility" \
+    n priority 5)"
+LEGACY_GOAL_ID="$(json_get "$MCP_VALUE" id)"
+mcp_call set_project_goal "$(json_object \
+    s namespace "$PROJECT_NAMESPACE" \
+    n goal_id "$LEGACY_GOAL_ID" \
+    s set_by smoke-owner)"
 LEGACY_WORKTREE_PATH="/smoke/legacy-worktree-${RUN_SUFFIX}"
 ARGS="$(json_object \
     s namespace "$PROJECT_NAMESPACE" \
@@ -585,7 +876,7 @@ fi
 
 say "reading the project-wide resume bundle"
 mcp_call resume_workspace "$(json_object s namespace "$PROJECT_NAMESPACE" n worktree_id "$WORKTREE_ID" n recent_limit 20)"
-if [[ "$(json_get "$MCP_VALUE" namespace.slug)" != "$PROJECT_NAMESPACE" ]]; then
+if [[ "$(json_get "$MCP_VALUE" namespace)" != "$PROJECT_NAMESPACE" ]]; then
     die "resume_workspace returned the wrong project"
 fi
 
@@ -766,10 +1057,10 @@ if [[ "$HANDOFF_STATUS" != "handed_off" || "$HANDOFF_NEXT_ACTION" != "Reclaim th
 fi
 
 mcp_call resume_workspace "$(json_object s namespace "$PROJECT_NAMESPACE" n worktree_id "$WORKTREE_ID" n recent_limit 20)"
-WORKSPACE_HANDOFF_STATUS="$(json_get "$MCP_VALUE" current_work.latest_attempt.status)"
-WORKSPACE_HANDOFF_NEXT_ACTION="$(json_get "$MCP_VALUE" latest_checkpoint.next_action)"
-if [[ "$WORKSPACE_HANDOFF_STATUS" != "handed_off" || "$WORKSPACE_HANDOFF_NEXT_ACTION" != "Reclaim the handed-off issue and finish it" ]]; then
-    die "handoff was not preserved by resume_workspace: status=$WORKSPACE_HANDOFF_STATUS next_action=$WORKSPACE_HANDOFF_NEXT_ACTION"
+WORKSPACE_HANDOFF_ITEM_ID="$(json_get "$MCP_VALUE" current_work.id)"
+WORKSPACE_HANDOFF_NEXT_ACTION="$(json_get "$MCP_VALUE" next_action)"
+if [[ "$WORKSPACE_HANDOFF_ITEM_ID" != "$WORK_ITEM_ID" || "$WORKSPACE_HANDOFF_NEXT_ACTION" != "Reclaim the handed-off issue and finish it" ]]; then
+    die "handoff was not preserved by resume_workspace: work_item=$WORKSPACE_HANDOFF_ITEM_ID next_action=$WORKSPACE_HANDOFF_NEXT_ACTION"
 fi
 
 say "reclaiming the handed-off issue"
@@ -812,12 +1103,15 @@ FINAL_ITEM_STATUS="$(json_get "$MCP_VALUE" work_item.status)"
 FINAL_ATTEMPT_STATUS="$(json_get "$MCP_VALUE" latest_attempt.status)"
 FINAL_CONDITION_STATUS="$(json_get "$MCP_VALUE" completion_conditions.0.status)"
 FINAL_EVIDENCE_TOTAL="$(json_get "$MCP_VALUE" totals.evidence)"
-FINAL_EVIDENCE_TRUNCATED="$(json_get "$MCP_VALUE" truncated.evidence)"
 if [[ "$FINAL_ITEM_STATUS" != "done" || "$FINAL_ATTEMPT_STATUS" != "completed" || "$FINAL_CONDITION_STATUS" != "passed" ]]; then
     die "unexpected final state: item=$FINAL_ITEM_STATUS attempt=$FINAL_ATTEMPT_STATUS condition=$FINAL_CONDITION_STATUS"
 fi
-if [[ "$FINAL_EVIDENCE_TOTAL" != "1" || "$FINAL_EVIDENCE_TRUNCATED" != "false" ]]; then
-    die "resume totals/truncation were not preserved: evidence_total=$FINAL_EVIDENCE_TOTAL evidence_truncated=$FINAL_EVIDENCE_TRUNCATED"
+if [[ "$FINAL_EVIDENCE_TOTAL" != "1" ]]; then
+    die "the brief did not preserve the full evidence total: evidence_total=$FINAL_EVIDENCE_TOTAL"
+fi
+mcp_call resume_work "$(json_object n work_item_id "$WORK_ITEM_ID" s detail full)"
+if [[ "$(json_get "$MCP_VALUE" evidence.0.id)" != "$EVIDENCE_ID" || "$(json_get "$MCP_VALUE" truncated.evidence)" != "false" ]]; then
+    die "the explicit full view did not preserve the evidence record"
 fi
 
 say "checking execution metrics"
@@ -828,5 +1122,11 @@ fi
 if ! printf '%s' "$METRICS" | grep -Fq 'stash_work_execution_transitions_total{action="claim_workspace",result="rejected"}'; then
     die "the rejected competing workspace claim metric was not exported"
 fi
+if ! printf '%s' "$METRICS" | grep -Fq 'stash_work_execution_transitions_total{action="claim",result="success"}'; then
+    die "the successful generic work claim metric was not exported"
+fi
+if ! printf '%s' "$METRICS" | grep -Fq 'stash_work_execution_transitions_total{action="spawn",result="success"}'; then
+    die "the successful spawned work metric was not exported"
+fi
 
-say "passed: workspace binding, stable moves, atomic claims, checkout exclusion, handoff, evidence, bounded resume, and metrics were verified"
+say "passed: generic Web MCP resume, bounded resource templates, prerequisite result flow, owner map, optional Git workspace binding, lease exclusion, handoff, evidence, and metrics were verified"

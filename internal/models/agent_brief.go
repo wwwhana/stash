@@ -5,12 +5,14 @@ import "time"
 // AgentWorkItem is the minimum work identity needed to choose or continue an
 // item. The full tracker record remains available from the explicit full view.
 type AgentWorkItem struct {
-	ID       int64  `json:"id"`
-	GoalID   *int64 `json:"goal_id,omitempty"`
-	IssueKey string `json:"issue_key"`
-	Title    string `json:"title"`
-	Status   string `json:"status"`
-	Owner    string `json:"owner,omitempty"`
+	ID                   int64    `json:"id"`
+	GoalID               *int64   `json:"goal_id,omitempty"`
+	IssueKey             string   `json:"issue_key"`
+	Title                string   `json:"title"`
+	Status               string   `json:"status"`
+	Owner                string   `json:"owner,omitempty"`
+	NextAction           string   `json:"next_action,omitempty"`
+	RequiredCapabilities []string `json:"required_capabilities,omitempty"`
 }
 
 type AgentAttempt struct {
@@ -48,19 +50,23 @@ type AgentMemory struct {
 // WorkResumeBrief is the default, quota-conscious work context. Lists with
 // full evidence, events, and worktree metadata are opt-in through detail=full.
 type WorkResumeBrief struct {
-	ContextDigest        string           `json:"context_digest"`
-	WorkItem             AgentWorkItem    `json:"work_item"`
-	GoalContext          *WorkGoalContext `json:"goal_context,omitempty"`
-	NextAction           string           `json:"next_action"`
-	LatestAttempt        *AgentAttempt    `json:"latest_attempt,omitempty"`
-	LatestCheckpoint     *AgentCheckpoint `json:"latest_checkpoint,omitempty"`
-	CompletionConditions []AgentCondition `json:"completion_conditions"`
-	RelevantMemory       []AgentMemory    `json:"relevant_memory"`
-	Blockers             []AgentWorkItem  `json:"blockers"`
-	Totals               WorkResumeTotals `json:"totals"`
-	MoreConditions       bool             `json:"more_conditions,omitempty"`
-	MoreMemory           bool             `json:"more_memory,omitempty"`
-	MoreBlockers         bool             `json:"more_blockers,omitempty"`
+	ContextDigest         string                 `json:"context_digest"`
+	WorkItem              AgentWorkItem          `json:"work_item"`
+	GoalContext           *WorkGoalContext       `json:"goal_context,omitempty"`
+	NextAction            string                 `json:"next_action"`
+	LatestAttempt         *AgentAttempt          `json:"latest_attempt,omitempty"`
+	LatestCheckpoint      *AgentCheckpoint       `json:"latest_checkpoint,omitempty"`
+	CompletionConditions  []AgentCondition       `json:"completion_conditions"`
+	RelevantMemory        []AgentMemory          `json:"relevant_memory"`
+	Resources             []WorkResourceRef      `json:"resources"`
+	DependencyResults     []WorkDependencyResult `json:"dependency_results"`
+	Blockers              []AgentWorkItem        `json:"blockers"`
+	Totals                WorkResumeTotals       `json:"totals"`
+	MoreConditions        bool                   `json:"more_conditions,omitempty"`
+	MoreMemory            bool                   `json:"more_memory,omitempty"`
+	MoreResources         bool                   `json:"more_resources,omitempty"`
+	MoreDependencyResults bool                   `json:"more_dependency_results,omitempty"`
+	MoreBlockers          bool                   `json:"more_blockers,omitempty"`
 }
 
 type AgentWorkspaceCounts struct {

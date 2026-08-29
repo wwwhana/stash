@@ -10,6 +10,8 @@
     const PADDING_BOTTOM = 24;
     const COLUMN_GAP = 52;
     const ROW_GAP = 18;
+    const RESOURCE_WIDTH = 190;
+    const RESOURCE_HEIGHT = 80;
     const MEMORY_WIDTH = 190;
     const MEMORY_HEIGHT = 74;
     const WORK_WIDTH = 194;
@@ -18,7 +20,7 @@
     const GOAL_HEIGHT = 96;
 
     function emptyLayout() {
-        return { width: 0, height: 0, canvasStyle: '', nodes: [], edges: [], columns: [], counts: { memory: 0, work: 0, goal: 0 } };
+        return { width: 0, height: 0, canvasStyle: '', nodes: [], edges: [], columns: [], counts: { resource: 0, memory: 0, work: 0, goal: 0 } };
     }
 
     function key(value) {
@@ -29,6 +31,7 @@
         if (!node) return '';
         if (node.kind === 'goal') return String(node.item.content || `목표 #${node.item.id}`);
         if (node.kind === 'work') return String(node.item.title || node.item.issue_key || `작업 #${node.item.id}`);
+        if (node.kind === 'resource') return String(node.item.title || `${node.item.source || '자료'} #${node.item.id}`);
         return String(node.item.content || `${node.item.memory_type} #${node.item.memory_id}`);
     }
 
@@ -48,6 +51,8 @@
         switch (relation) {
         case 'contributes_to': return { stroke: '#818cf8', dashArray: null, marker: true };
         case 'blocks': return { stroke: '#fb7185', dashArray: null, marker: true };
+        case 'input': case 'target': case 'reference': return { stroke: '#38bdf8', dashArray: '4 4', marker: true };
+        case 'output': return { stroke: '#22d3ee', dashArray: null, marker: true };
         case 'result': case 'evidence': case 'supersedes': return { stroke: '#34d399', dashArray: '6 5', marker: true };
         case 'part_of': return { stroke: '#94a3b8', dashArray: '5 5', marker: false };
         default: return { stroke: '#fbbf24', dashArray: '6 5', marker: true };
@@ -59,7 +64,8 @@
             contributes_to: '결과가 목표에 합쳐짐', blocks: '먼저 끝나야 함', relates_to: '관련 있음',
             part_of: '상위 작업에 포함됨', context: '배경을 제공함', constraint: '제한 조건을 제공함',
             decision: '결정 근거를 제공함', failure: '실패 경험을 제공함', evidence: '확인 결과를 남김',
-            result: '결과를 남김', supersedes: '이전 기억을 바꿈'
+            result: '결과를 남김', supersedes: '이전 기억을 바꿈', input: '입력 자료로 사용함',
+            target: '수정 대상을 가리킴', reference: '참고 자료로 연결됨', output: '작업 결과로 남김'
         })[relation] || relation;
     }
 
@@ -68,11 +74,13 @@
         const goalTree = goalMap.goal_tree && typeof goalMap.goal_tree === 'object' ? goalMap.goal_tree : {};
         const goals = (Array.isArray(goalTree.goals) ? goalTree.goals : []).filter(goal => goal && goal.id !== undefined && goal.id !== null);
         const workItems = (Array.isArray(goalMap.work_items) ? goalMap.work_items : []).filter(item => item && item.id !== undefined && item.id !== null);
+        const resources = (Array.isArray(goalMap.resources) ? goalMap.resources : []).filter(resource => resource && resource.key);
         const memories = (Array.isArray(goalMap.memories) ? goalMap.memories : []).filter(memory => memory && memory.key);
-        if (!goals.length && !workItems.length && !memories.length) return emptyLayout();
+        if (!goals.length && !workItems.length && !resources.length && !memories.length) return emptyLayout();
 
         const maxDepth = goals.reduce((value, goal) => Math.max(value, Number(goal.depth) || 0), 0);
         const columnSpecs = [];
+        if (resources.length) columnSpecs.push({ key: 'resource', kind: 'resource', label: '연결 자료', width: RESOURCE_WIDTH, items: resources });
         if (memories.length) columnSpecs.push({ key: 'memory', kind: 'memory', label: '기억', width: MEMORY_WIDTH, items: memories });
         if (workItems.length) columnSpecs.push({ key: 'work', kind: 'work', label: '작업', width: WORK_WIDTH, items: workItems });
         for (let depth = maxDepth; depth >= 0; depth -= 1) {
@@ -88,7 +96,7 @@
         const columns = [];
         const nodes = [];
         for (const spec of columnSpecs) {
-            const heightForKind = spec.kind === 'goal' ? GOAL_HEIGHT : (spec.kind === 'work' ? WORK_HEIGHT : MEMORY_HEIGHT);
+            const heightForKind = spec.kind === 'goal' ? GOAL_HEIGHT : (spec.kind === 'work' ? WORK_HEIGHT : (spec.kind === 'resource' ? RESOURCE_HEIGHT : MEMORY_HEIGHT));
             const wrapped = spec.items.map(item => ({
                 kind: spec.kind,
                 key: spec.kind === 'goal' ? `goal:${item.id}` : (spec.kind === 'work' ? `work:${item.id}` : String(item.key)),
@@ -124,12 +132,12 @@
         }).filter(Boolean);
 
         const rowCount = Math.max(1, ...columnSpecs.map(spec => spec.items.length));
-        const rowHeight = Math.max(MEMORY_HEIGHT, WORK_HEIGHT, GOAL_HEIGHT);
+        const rowHeight = Math.max(RESOURCE_HEIGHT, MEMORY_HEIGHT, WORK_HEIGHT, GOAL_HEIGHT);
         const height = PADDING_TOP + rowCount * rowHeight + Math.max(0, rowCount - 1) * ROW_GAP + PADDING_BOTTOM;
         const width = Math.max(360, cursorX - COLUMN_GAP + PADDING_X);
         return {
             width, height, canvasStyle: `width:${width}px;height:${height}px`, nodes, edges, columns,
-            counts: { memory: memories.length, work: workItems.length, goal: goals.length }
+            counts: { resource: resources.length, memory: memories.length, work: workItems.length, goal: goals.length }
         };
     }
 

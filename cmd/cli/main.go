@@ -504,7 +504,7 @@ func main() {
 				Commands: []*cli.Command{
 					{
 						Name:   "facts",
-						Usage:  "Print Git facts for resolve_workspace without opening the database",
+						Usage:  "Print optional Git connector facts without opening the database",
 						Action: workspaceFactsCmd,
 						Flags: []cli.Flag{
 							&cli.StringFlag{Name: "cwd", Value: ".", Usage: "Current directory inside a Git worktree"},

@@ -122,6 +122,8 @@ type WorkResumeTotals struct {
 	Evidence             int `json:"evidence"`
 	WorktreeLinks        int `json:"worktree_links"`
 	MemoryLinks          int `json:"memory_links"`
+	Resources            int `json:"resources"`
+	DependencyResults    int `json:"dependency_results"`
 	Blockers             int `json:"blockers"`
 	RecentEvents         int `json:"recent_events"`
 }
@@ -133,6 +135,8 @@ type WorkResumeTruncated struct {
 	Evidence             bool `json:"evidence"`
 	WorktreeLinks        bool `json:"worktree_links"`
 	MemoryLinks          bool `json:"memory_links"`
+	Resources            bool `json:"resources"`
+	DependencyResults    bool `json:"dependency_results"`
 	Blockers             bool `json:"blockers"`
 	RecentEvents         bool `json:"recent_events"`
 	Core                 bool `json:"core"`
@@ -150,6 +154,8 @@ type WorkResumeBundle struct {
 	Evidence             []WorkEvidence            `json:"evidence"`
 	WorktreeLinks        []WorktreeLink            `json:"worktree_links"`
 	MemoryLinks          []WorkMemorySnapshot      `json:"memory_links"`
+	Resources            []WorkResourceRef         `json:"resources"`
+	DependencyResults    []WorkDependencyResult    `json:"dependency_results"`
 	Blockers             []WorkItem                `json:"blockers"`
 	RecentEvents         []WorkEvent               `json:"recent_events"`
 	Totals               WorkResumeTotals          `json:"totals"`

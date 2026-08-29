@@ -73,7 +73,13 @@ claude mcp add stash http://localhost:8080/mcp
 
 ### 2. Codex
 
-For a local process, use the `stdio` transport and point it to the stash CLI binary:
+For the local Web MCP server started by Docker Compose:
+
+```bash
+codex mcp add stash-local --url http://127.0.0.1:8080/mcp
+```
+
+With the bundled `STASH_AUTH_MODE=none` local setting, no MCP login is needed. You can also use the `stdio` transport and point it to the stash CLI binary:
 
 ```json
 "stash": {
@@ -122,9 +128,9 @@ Configure via `~/.gemini/config/mcp_config.json`:
 }
 ```
 
-### 4. General SSE Clients (Cursor, Windsurf, OpenCode, Pi, etc.)
+### 4. General MCP Clients (Cursor, Windsurf, OpenCode, Pi, etc.)
 
-Point any MCP-compatible client at the SSE URL: `http://localhost:8080/sse`
+Prefer the Streamable HTTP URL `http://localhost:8080/mcp`. Use the SSE URL `http://localhost:8080/sse` only when the client does not support Streamable HTTP.
 
 **Cursor** — `~/.cursor/mcp.json`
 
@@ -132,7 +138,7 @@ Point any MCP-compatible client at the SSE URL: `http://localhost:8080/sse`
 {
   "mcpServers": {
     "stash": {
-      "url": "http://localhost:8080/sse"
+      "url": "http://localhost:8080/mcp"
     }
   }
 }
@@ -144,7 +150,7 @@ Point any MCP-compatible client at the SSE URL: `http://localhost:8080/sse`
 {
   "mcpServers": {
     "stash": {
-      "url": "http://localhost:8080/sse"
+      "url": "http://localhost:8080/mcp"
     }
   }
 }
@@ -178,17 +184,21 @@ Stash is a cognitive layer between your AI agent and the world. Episodes become 
 
 A 9-stage consolidation pipeline turns raw observations into structured knowledge — facts, relationships, causal links, patterns, contradictions, goal tracking, failure patterns, and hypothesis verification. Each stage only processes new data since the last run.
 
-## Work Graphs and Git Worktrees
+## Shared Work Map and Optional Connectors
 
-Work cards live separately from memory data and connect goals, tasks, dependencies, worktrees, and activity events in one graph. A project can select one shared top-level goal, decompose it into child outcomes, and show memory → work → child goal → project goal in the Goal Map. The map also shows progress, active agents, blockers, next actions, and recent results. Work cards can link to facts, failures, and hypotheses so an agent can pick up the evidence it needs in a later session.
+Work cards live separately from memory data and connect goals, tasks, dependencies, resources, and activity events in one graph. A project can select one shared top-level goal, decompose it into A-1, A-2, and deeper outcomes, and show memory and external resources flowing through work into that shared outcome. The Goal Map shows progress, active agents, blockers, next actions, recent results, and the Jira, Confluence, Git, browser, document, API, data, or device references attached to each item.
 
 The web console's Work Graph lists `/projects/<name>` namespaces as project scopes. Selecting a project limits the graph to that project and its descendants; `All projects` shows work under `/projects` together. MCP clients can pass `project: "/projects/myapp"` to `get_work_graph` to retrieve one project explicitly.
 
-For an owner-facing living plan, use the Work Plan API instead of a changing `PLAN.md`. Its 5–9 stable component cards own repository paths and hold executable child tasks, directed prerequisites, worktree links, and decisions made before implementation. `get_work_plan` is the shared current plan; `create_plan_component`, `update_plan_component`, `create_plan_task`, `update_plan_task`, task-state tools, `link_plan_components`, and `record_plan_decision` update it. `validate_work_plan` runs an explicit semantic review with the configured Reasoner model and stores the latest result; it does not use the embedding model. When plan content changes, `get_work_plan.validation.stale` marks the saved review as outdated. The ordinary issue board remains for ad-hoc local issues and does not mix in plan-managed cards.
+For an owner-facing living plan, use the Work Plan API instead of a changing `PLAN.md`. Its stable component cards hold executable child tasks, directed prerequisites, optional connector references, and decisions made before implementation. `get_work_plan` is the shared current plan; `create_plan_component`, `update_plan_component`, `create_plan_task`, `update_plan_task`, task-state tools, `link_plan_components`, and `record_plan_decision` update it. `validate_work_plan` runs an explicit semantic review with the configured Reasoner model and stores the latest result; it does not use the embedding model. When plan content changes, `get_work_plan.validation.stale` marks the saved review as outdated. The ordinary issue board remains for ad-hoc local issues and does not mix in plan-managed cards.
 
-Tracked work has a resumable execution record. `resolve_workspace` maps locally observed Git facts to the bound project and a stable worktree identity. `resume_workspace` and `resume_work` default to quota-conscious briefs containing only the shared goal path, current action, pending conditions, relevant memory, and blockers; callers can reuse `context_digest` to receive a tiny unchanged receipt or request `detail: full` when needed. `claim_workspace` attaches the worktree, returns the same goal path, and grants one exclusive lease in the same transaction. `finish_work` is rejected until every required condition has linked evidence and every blocking item is finished, then rolls eligible child goals into their parents.
+Every Web MCP agent starts with `resume_project(namespace, agent_id, capabilities)`. It returns that agent's active work and at most three runnable candidates without a local path, Git repository, or MCP Roots. After choosing an item, `resume_work` returns a bounded brief containing only its goal path, next action, pending conditions, relevant memory, linked resource summaries, completed prerequisite results, and blockers. Reusing `context_digest` returns a tiny unchanged receipt. `claim_work` grants one exclusive lease immediately before action.
 
-An agent-side bridge can sync the repository's local Git worktrees into Stash. Git remains the source for code and diffs; Stash stores paths, branches, commits, status, and work history.
+During an active lease, `spawn_work` creates a child, prerequisite, or related item with its first action and completion conditions. Child and prerequisite items block the parent until they finish, so many agents can decompose A-1 and A-2 without losing the common outcome. `finish_work` is rejected until every required condition has linked evidence and every blocker is finished, then eligible child goals roll into their parents.
+
+`attach_work_resource` stores a small reference instead of copying an entire source. A Jira issue or Confluence page can remain authoritative for human work while Stash records AI work, links the two, and shows both in the Goal Map. The current build provides the neutral resource model; connector polling and write-back are optional add-ons and are not required for the work loop.
+
+Git worktree commands remain available as an optional connector for code projects. They are never a prerequisite for Web MCP work.
 
 ```bash
 stash workspace facts --cwd . --agent-id codex --project-namespace /projects/myapp
@@ -199,7 +209,7 @@ stash issue list --namespaces / --status doing --label auth
 stash issue comment add W-000001 --body "Reproduction confirmed"
 ```
 
-An agent rules sample is available at [docs/AGENT.md](docs/AGENT.md). Workspace-aware clients should use `resolve_workspace`, `resume_workspace`, and `claim_workspace`, followed by the checkpoint, evidence, verification, handoff, and finish tools. Plan, issue, graph, comments, memory links, worktrees, and work events remain available for project planning and local issue tracking. Create the chosen project namespace before its first repository binding.
+An agent rules sample is available at [docs/AGENT.md](docs/AGENT.md). The default sequence is `resume_project` → `resume_work` → `claim_work`, followed by checkpoints, evidence, verification, handoff, or finish. Use `spawn_work` when execution reveals another result that must be delivered. Create the project namespace and shared goal before assigning work; attach Git or another external system only when that project needs it.
 
 ### Work plan skill
 

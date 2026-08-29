@@ -1013,6 +1013,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 	registerGoalMapTools(mcpServer, bc)
 	registerWorkPlanTools(mcpServer, bc)
 	registerWorkExecutionTools(mcpServer, bc)
+	registerProjectCoordinationTools(mcpServer, bc)
 	registerWorkspaceTools(mcpServer, bc)
 	registerStashSkills(mcpServer)
 	return mcpServer

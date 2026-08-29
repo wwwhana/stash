@@ -29,6 +29,8 @@ const (
 	resumeWorktreeLimit      = 20
 	resumeMemoryLimit        = 50
 	resumeMemoryContentLimit = 2048
+	resumeResourceLimit      = 20
+	resumeDependencyLimit    = 20
 	resumeBlockerLimit       = 50
 )
 
@@ -1916,6 +1918,8 @@ func (b *Brain) GetWorkResumeBundle(ctx context.Context, workItemID int64, recen
 	evidenceLimit := b.boundedWorkResumeLimit(resumeEvidenceLimit)
 	worktreeLimit := b.boundedWorkResumeLimit(resumeWorktreeLimit)
 	memoryLimit := b.boundedWorkResumeLimit(resumeMemoryLimit)
+	resourceLimit := b.boundedWorkResumeLimit(resumeResourceLimit)
+	dependencyLimit := b.boundedWorkResumeLimit(resumeDependencyLimit)
 	blockerLimit := b.boundedWorkResumeLimit(resumeBlockerLimit)
 	tx, err := b.pool.Begin(ctx)
 	if err != nil {
@@ -1961,6 +1965,12 @@ func (b *Brain) GetWorkResumeBundle(ctx context.Context, workItemID int64, recen
 	).Scan(&item.WorktreeIDs); err != nil {
 		return nil, fmt.Errorf("read work item worktree IDs for resume: %w", err)
 	}
+	if err := tx.QueryRow(ctx,
+		`SELECT coalesce(array_agg(capability ORDER BY capability), '{}'::text[])
+		 FROM work_item_capabilities WHERE work_item_id = $1`, workItemID,
+	).Scan(&item.RequiredCapabilities); err != nil {
+		return nil, fmt.Errorf("read work capabilities for resume: %w", err)
+	}
 
 	bundle := &models.WorkResumeBundle{
 		WorkItem:             *item,
@@ -1968,6 +1978,8 @@ func (b *Brain) GetWorkResumeBundle(ctx context.Context, workItemID int64, recen
 		Evidence:             make([]models.WorkEvidence, 0),
 		WorktreeLinks:        make([]models.WorktreeLink, 0),
 		MemoryLinks:          make([]models.WorkMemorySnapshot, 0),
+		Resources:            make([]models.WorkResourceRef, 0),
+		DependencyResults:    make([]models.WorkDependencyResult, 0),
 		Blockers:             make([]models.WorkItem, 0),
 		RecentEvents:         make([]models.WorkEvent, 0),
 	}
@@ -2004,6 +2016,15 @@ func (b *Brain) GetWorkResumeBundle(ctx context.Context, workItemID int64, recen
 		               WHERE memory.id = linked.memory_id AND memory.namespace_id = $2 AND memory.deleted_at IS NULL
 		           ))
 		       )),
+		    (SELECT count(*) FROM work_resource_links linked
+		     JOIN work_resources resource ON resource.id = linked.resource_id
+		     WHERE linked.work_item_id = $1 AND linked.namespace_id = $2
+		       AND resource.namespace_id = $2 AND resource.deleted_at IS NULL),
+		    (SELECT count(*) FROM work_item_edges edge
+		     JOIN work_items dependency ON dependency.id = edge.from_item_id
+		     WHERE edge.to_item_id = $1 AND edge.edge_type = 'blocks' AND edge.deleted_at IS NULL
+		       AND edge.namespace_id = $2 AND dependency.namespace_id = $2
+		       AND dependency.deleted_at IS NULL AND dependency.status = 'done'),
 		    (SELECT count(*) FROM work_item_edges edge
 		     JOIN work_items blocker ON blocker.id = edge.from_item_id
 		     WHERE edge.to_item_id = $1 AND edge.edge_type = 'blocks' AND edge.deleted_at IS NULL
@@ -2021,6 +2042,8 @@ func (b *Brain) GetWorkResumeBundle(ctx context.Context, workItemID int64, recen
 		&bundle.Totals.Evidence,
 		&bundle.Totals.WorktreeLinks,
 		&bundle.Totals.MemoryLinks,
+		&bundle.Totals.Resources,
+		&bundle.Totals.DependencyResults,
 		&bundle.Totals.Blockers,
 		&bundle.Totals.RecentEvents,
 	); err != nil {
@@ -2250,6 +2273,81 @@ func (b *Brain) GetWorkResumeBundle(ctx context.Context, workItemID int64, recen
 	}
 	memoryRows.Close()
 
+	resourceRows, err := tx.Query(ctx,
+		`SELECT resource.id, resource.resource_key, resource.kind, resource.source, resource.authority,
+		        resource.title, resource.uri, resource.summary, resource.external_id, resource.revision,
+		        resource.content_digest, linked.role
+		 FROM work_resource_links linked
+		 JOIN work_resources resource ON resource.id = linked.resource_id
+		   AND resource.namespace_id = linked.namespace_id AND resource.deleted_at IS NULL
+		 WHERE linked.work_item_id = $1 AND linked.namespace_id = $2
+		 ORDER BY CASE linked.role WHEN 'input' THEN 0 WHEN 'target' THEN 1 WHEN 'reference' THEN 2 WHEN 'output' THEN 3 ELSE 4 END,
+		          linked.created_at DESC, linked.id DESC
+		 LIMIT $3`, workItemID, namespaceID, resourceLimit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("read work resources for resume: %w", err)
+	}
+	for resourceRows.Next() {
+		var resource models.WorkResourceRef
+		if err := resourceRows.Scan(
+			&resource.ID, &resource.ResourceKey, &resource.Kind, &resource.Source, &resource.Authority,
+			&resource.Title, &resource.URI, &resource.Summary, &resource.ExternalID, &resource.Revision,
+			&resource.ContentDigest, &resource.Role,
+		); err != nil {
+			resourceRows.Close()
+			return nil, fmt.Errorf("scan work resource for resume: %w", err)
+		}
+		bundle.Resources = append(bundle.Resources, resource)
+	}
+	if err := resourceRows.Err(); err != nil {
+		resourceRows.Close()
+		return nil, fmt.Errorf("read work resource rows for resume: %w", err)
+	}
+	resourceRows.Close()
+
+	dependencyRows, err := tx.Query(ctx,
+		`SELECT dependency.id, dependency.goal_id, dependency.issue_key, dependency.title,
+		        dependency.status, dependency.owner,
+		        coalesce(ARRAY(SELECT capability FROM work_item_capabilities required
+		                       WHERE required.work_item_id = dependency.id ORDER BY capability), '{}'::text[]),
+		        coalesce(checkpoint.summary, ''), coalesce(checkpoint.result, '')
+		 FROM work_item_edges edge
+		 JOIN work_items dependency ON dependency.id = edge.from_item_id
+		 LEFT JOIN LATERAL (
+		   SELECT saved.summary, saved.result
+		   FROM work_checkpoints saved
+		   JOIN work_attempts attempt ON attempt.id = saved.attempt_id
+		   WHERE attempt.work_item_id = dependency.id
+		   ORDER BY saved.created_at DESC, saved.id DESC LIMIT 1
+		 ) checkpoint ON true
+		 WHERE edge.to_item_id = $1 AND edge.edge_type = 'blocks' AND edge.deleted_at IS NULL
+		   AND edge.namespace_id = $2 AND dependency.namespace_id = $2
+		   AND dependency.deleted_at IS NULL AND dependency.status = 'done'
+		 ORDER BY dependency.completed_at DESC NULLS LAST, dependency.id
+		 LIMIT $3`, workItemID, namespaceID, dependencyLimit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("read completed work dependencies for resume: %w", err)
+	}
+	for dependencyRows.Next() {
+		var dependency models.WorkDependencyResult
+		if err := dependencyRows.Scan(
+			&dependency.WorkItem.ID, &dependency.WorkItem.GoalID, &dependency.WorkItem.IssueKey,
+			&dependency.WorkItem.Title, &dependency.WorkItem.Status, &dependency.WorkItem.Owner,
+			&dependency.WorkItem.RequiredCapabilities, &dependency.Summary, &dependency.Result,
+		); err != nil {
+			dependencyRows.Close()
+			return nil, fmt.Errorf("scan completed work dependency for resume: %w", err)
+		}
+		bundle.DependencyResults = append(bundle.DependencyResults, dependency)
+	}
+	if err := dependencyRows.Err(); err != nil {
+		dependencyRows.Close()
+		return nil, fmt.Errorf("read completed work dependency rows for resume: %w", err)
+	}
+	dependencyRows.Close()
+
 	blockerRows, err := tx.Query(ctx,
 		`SELECT blocker.id, blocker.namespace_id, blocker.goal_id, blocker.parent_id,
 		        blocker.issue_key, blocker.issue_type, blocker.labels, blocker.reporter,
@@ -2269,6 +2367,10 @@ func (b *Brain) GetWorkResumeBundle(ctx context.Context, workItemID int64, recen
 		return nil, fmt.Errorf("read work blockers for resume: %w", err)
 	}
 	bundle.Blockers, err = scanWorkItemRows(blockerRows)
+	if err != nil {
+		return nil, err
+	}
+	bundle.Blockers, err = b.attachWorkCapabilities(ctx, bundle.Blockers)
 	if err != nil {
 		return nil, err
 	}
@@ -2312,6 +2414,8 @@ func (b *Brain) GetWorkResumeBundle(ctx context.Context, workItemID int64, recen
 	for _, memory := range bundle.MemoryLinks {
 		bundle.Truncated.MemoryLinks = bundle.Truncated.MemoryLinks || memory.ContentTruncated
 	}
+	bundle.Truncated.Resources = bundle.Totals.Resources > len(bundle.Resources)
+	bundle.Truncated.DependencyResults = bundle.Totals.DependencyResults > len(bundle.DependencyResults)
 	bundle.Truncated.Blockers = bundle.Totals.Blockers > len(bundle.Blockers)
 	bundle.Truncated.RecentEvents = bundle.Totals.RecentEvents > len(bundle.RecentEvents)
 

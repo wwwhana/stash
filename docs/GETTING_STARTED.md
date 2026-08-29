@@ -9,10 +9,10 @@ docker compose ps
 docker compose logs stash | tail -20
 ```
 
-You should see the MCP server listening on port **8080**. The SSE endpoint is:
+You should see the MCP server listening on port **8080**. The primary Web MCP endpoint is:
 
 ```
-http://localhost:8080/sse
+http://localhost:8080/mcp
 ```
 
 At the default `STASH_LOG_LEVEL=info`, `docker compose logs stash` also shows
@@ -20,15 +20,21 @@ completed MCP/API and model-provider calls. Use `STASH_LOG_LEVEL=debug` for
 ordinary web requests; failed calls are shown at `warn`. Request bodies,
 authorization headers, cookies, and query strings are not logged.
 
-Quick check (expects HTTP 200 or SSE handshake):
+Quick server check:
 
 ```bash
-curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080/sse
+curl -sS http://localhost:8080/healthz
 ```
 
 ## 2. Connect your MCP client
 
-Point any MCP-over-SSE client at `http://localhost:8080/sse`.
+Point a Streamable HTTP client at `http://localhost:8080/mcp`. The older `/sse` endpoint remains available for clients that only support MCP over SSE.
+
+**Codex**:
+
+```bash
+codex mcp add stash-local --url http://127.0.0.1:8080/mcp
+```
 
 **Cursor** — create or edit `~/.cursor/mcp.json`:
 
@@ -36,7 +42,7 @@ Point any MCP-over-SSE client at `http://localhost:8080/sse`.
 {
   "mcpServers": {
     "stash": {
-      "url": "http://localhost:8080/sse"
+      "url": "http://localhost:8080/mcp"
     }
   }
 }
@@ -64,13 +70,17 @@ Example prompts to your agent:
 - *"Use Stash `recall` to find what you know about this project's stack."*
 - *"Run Stash `consolidate` to process recent episodes into facts."*
 
-For project work in a Git checkout, collect facts without opening the database:
+For shared project work, first create a namespace such as `/projects/myapp`, create the top-level outcome, and select it as that project's shared goal. Then have every agent follow this sequence:
 
-```bash
-stash workspace facts --cwd . --agent-id codex --project-namespace /projects/myapp
-```
+1. Call `resume_project` with the exact namespace, its `agent_id`, and a short capability list.
+2. Continue active work or choose one of the returned candidates, then call `resume_work` for that item.
+3. Call `claim_work` immediately before acting.
+4. Record observed results with `checkpoint_work`. Use `spawn_work` when a child or prerequisite is discovered.
+5. Submit and verify completion evidence, then call `finish_work`; use `handoff_work` when stopping unfinished work.
 
-Pass that JSON to `resolve_workspace`, then call `resume_workspace` with the returned namespace and worktree ID. Prepare an existing item's completion conditions only when needed, and call `claim_workspace` immediately before implementation. Later sessions omit `project_namespace`; Stash resolves the saved repository binding.
+This flow is entirely Web MCP based and does not require a local path, Git repository, or MCP Roots. For code projects, `stash workspace facts`, `resolve_workspace`, `resume_workspace`, and `claim_workspace` remain optional Git connector helpers.
+
+Use `attach_work_resource` to add a short Jira, Confluence, Git, browser, document, API, data, or device reference to the relevant work item. Keep external bodies and credentials in their original systems.
 
 ## 4. Background consolidation
 
@@ -145,7 +155,7 @@ Atlas Cloud docs: [https://www.atlascloud.ai/docs](https://www.atlascloud.ai/doc
 **MCP client can't connect**
 
 - Confirm `docker compose up` finished and port 8080 is not in use elsewhere.
-- Use `http://localhost:8080/sse` (not `https`) for local Docker.
+- Use `http://localhost:8080/mcp` (not `https`) for local Docker. Try `/sse` only for a client that does not support Streamable HTTP.
 
 **Empty recall results**
 

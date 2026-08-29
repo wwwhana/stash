@@ -57,11 +57,27 @@ type GoalMapWork struct {
 	Position float64 `json:"position"`
 	Owner    string  `json:"owner,omitempty"`
 
-	AgentID       string     `json:"agent_id,omitempty"`
-	AttemptStatus string     `json:"attempt_status,omitempty"`
-	LeaseExpires  *time.Time `json:"lease_expires_at,omitempty"`
-	LatestResult  string     `json:"latest_result,omitempty"`
-	NextAction    string     `json:"next_action,omitempty"`
+	AgentID              string     `json:"agent_id,omitempty"`
+	AttemptStatus        string     `json:"attempt_status,omitempty"`
+	LeaseExpires         *time.Time `json:"lease_expires_at,omitempty"`
+	LatestResult         string     `json:"latest_result,omitempty"`
+	NextAction           string     `json:"next_action,omitempty"`
+	RequiredCapabilities []string   `json:"required_capabilities,omitempty"`
+}
+
+// GoalMapResource lets the owner see where human work and agent work meet.
+// It is a reference only; external page or issue bodies are not copied here.
+type GoalMapResource struct {
+	Key        string `json:"key"`
+	ID         int64  `json:"id"`
+	Kind       string `json:"kind"`
+	Source     string `json:"source"`
+	Authority  string `json:"authority"`
+	Title      string `json:"title"`
+	URI        string `json:"uri,omitempty"`
+	Summary    string `json:"summary,omitempty"`
+	ExternalID string `json:"external_id,omitempty"`
+	Revision   string `json:"revision,omitempty"`
 }
 
 // GoalMapGoal omits notes, timestamps, and the repeated namespace ID. The map
@@ -99,13 +115,16 @@ type GoalMapEdge struct {
 // GoalMap projects durable memory through executable work into the shared
 // hierarchical outcome. Work items without a goal stay visible as warnings.
 type GoalMap struct {
-	GoalTree                GoalMapTree     `json:"goal_tree"`
-	RootCandidates          []GoalBrief     `json:"root_candidates"`
-	RootCandidatesTruncated bool            `json:"root_candidates_truncated,omitempty"`
-	WorkItems               []GoalMapWork   `json:"work_items"`
-	Memories                []GoalMapMemory `json:"memories"`
-	Edges                   []GoalMapEdge   `json:"edges"`
-	UnassignedWork          []GoalMapWork   `json:"unassigned_work"`
+	GoalTree                GoalMapTree       `json:"goal_tree"`
+	RootCandidates          []GoalBrief       `json:"root_candidates"`
+	RootCandidatesTruncated bool              `json:"root_candidates_truncated,omitempty"`
+	WorkItems               []GoalMapWork     `json:"work_items"`
+	Resources               []GoalMapResource `json:"resources"`
+	ResourceTotal           int               `json:"resource_total"`
+	ResourcesTruncated      bool              `json:"resources_truncated,omitempty"`
+	Memories                []GoalMapMemory   `json:"memories"`
+	Edges                   []GoalMapEdge     `json:"edges"`
+	UnassignedWork          []GoalMapWork     `json:"unassigned_work"`
 }
 
 // GoalBrief deliberately omits notes, timestamps, and unrelated goal fields.

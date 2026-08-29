@@ -68,7 +68,13 @@ claude mcp add stash http://localhost:8080/mcp
 ```
 
 ### 2. Codex
-로컬 프로세스는 `stdio` 전송 방식으로 stash CLI 바이너리를 직접 가리킵니다:
+Docker Compose로 실행한 로컬 Web MCP 서버는 다음처럼 등록합니다.
+
+```bash
+codex mcp add stash-local --url http://127.0.0.1:8080/mcp
+```
+
+기본 로컬 설정인 `STASH_AUTH_MODE=none`에서는 MCP 로그인이 필요하지 않습니다. `stdio` 방식으로 stash CLI 바이너리를 직접 실행할 수도 있습니다.
 ```json
 "stash": {
   "command": "stash",
@@ -130,15 +136,15 @@ MCP 도구 결과에는 기본 32KB 안전 상한이 있습니다. 이 값은 �
 }
 ```
 
-### 4. 범용 SSE 클라이언트 (Cursor, Windsurf, OpenCode, Pi 등)
-MCP를 지원하는 모든 클라이언트의 SSE URL을 `http://localhost:8080/sse`로 지정하세요.
+### 4. 범용 MCP 클라이언트 (Cursor, Windsurf, OpenCode, Pi 등)
+Streamable HTTP를 지원하면 `http://localhost:8080/mcp`를 사용하세요. 지원하지 않는 클라이언트만 `http://localhost:8080/sse`를 사용합니다.
 
 **Cursor** — `~/.cursor/mcp.json`
 ```json
 {
   "mcpServers": {
     "stash": {
-      "url": "http://localhost:8080/sse"
+      "url": "http://localhost:8080/mcp"
     }
   }
 }
@@ -149,7 +155,7 @@ MCP를 지원하는 모든 클라이언트의 SSE URL을 `http://localhost:8080/
 {
   "mcpServers": {
     "stash": {
-      "url": "http://localhost:8080/sse"
+      "url": "http://localhost:8080/mcp"
     }
   }
 }
@@ -164,17 +170,21 @@ Stash는 AI 에이전트와 현실 세계 사이의 인지적 계층(Cognitive l
 
 9단계의 기억 통합(Consolidation) 파이프라인이 원시 관측 데이터를 팩트, 관계, 인과 고리(Causal links), 패턴, 모순(Contradictions), 목표 추적(Goal tracking), 실패 패턴(Failure patterns), 가설 검증(Hypothesis verification)과 같은 구조화된 지식으로 변환합니다. 각 단계는 마지막 실행 이후의 새로운 데이터만을 처리합니다.
 
-## 작업 그래프와 Git 워크트리
+## 공통 작업 지도와 선택형 연결 기능
 
-작업 카드는 기억 데이터와 분리해 저장하고, 목표·작업·의존성·워크트리·작업 이벤트를 연결합니다. 프로젝트마다 공통 최상위 목표 하나를 정하고 A-1·A-2 같은 자식 목표로 나눌 수 있습니다. 목표 지도는 `기억 → 작업 → 하위 목표 → 공통 목표` 흐름과 진행률, 작업 중인 에이전트, 막힌 지점, 다음 행동, 최근 결과를 함께 보여줍니다. 작업 카드는 관련 사실·실패·가설에도 연결할 수 있어 다음 에이전트가 필요한 내용만 이어받습니다.
+작업 카드는 기억 데이터와 분리해 저장하고 목표·작업·의존성·연결 자료·작업 기록을 한 그래프로 묶습니다. 프로젝트마다 공통 최상위 목표 하나를 정하고 A-1·A-2와 더 작은 결과로 나눌 수 있습니다. 목표 지도는 기억과 외부 자료가 각 작업을 거쳐 공통 목표로 모이는 흐름, 진행률, 작업 중인 에이전트, 막힌 지점, 다음 행동, 최근 결과를 함께 보여줍니다. Jira, Confluence, Git, 브라우저, 문서, API, 데이터, 장치도 필요한 작업에만 연결할 수 있습니다.
 
 웹 콘솔의 작업 그래프는 `/projects/<프로젝트명>` 네임스페이스를 프로젝트 목록으로 보여줍니다. 프로젝트를 고르면 그 프로젝트와 하위 네임스페이스만 그래프에 표시하고, `모든 프로젝트`를 고르면 `/projects` 아래 작업을 한 그래프로 표시합니다. MCP에서는 `get_work_graph`에 `project: "/projects/myapp"`를 넘겨 한 프로젝트만 조회할 수 있습니다.
 
-소유자가 읽는 작업 계획은 바뀌는 `PLAN.md` 대신 작업 계획 API에 저장합니다. 계획은 5~9개의 고정된 구성 요소로 만들고, 각 구성 요소에는 맡는 경로, 실제 작업, 선행 관계, 워크트리, 구현 전 결정 내용을 넣습니다. `get_work_plan`이 모두가 보는 현재 계획이며, `create_plan_component`, `update_plan_component`, `create_plan_task`, `update_plan_task`, 작업 상태 도구, `link_plan_components`, `record_plan_decision`으로 갱신합니다. `validate_work_plan`은 설정된 Reasoner 모델로 계획의 의미를 검사하고 최신 결과를 저장합니다. 임베딩 모델은 이때 사용하지 않습니다. 계획 내용이 바뀌면 `get_work_plan.validation.stale`이 이전 검사 결과임을 표시합니다. 일반 이슈 보드는 별도의 로컬 이슈용이며 계획에 속한 카드를 섞어 보여주지 않습니다.
+소유자가 읽는 작업 계획은 바뀌는 `PLAN.md` 대신 작업 계획 API에 저장합니다. 고정된 구성 요소 아래에 실제 작업, 선행 관계, 선택형 연결 자료, 구현 전 결정 내용을 둡니다. `get_work_plan`이 모두가 보는 현재 계획이며, `create_plan_component`, `update_plan_component`, `create_plan_task`, `update_plan_task`, 작업 상태 도구, `link_plan_components`, `record_plan_decision`으로 갱신합니다. `validate_work_plan`은 설정된 Reasoner 모델로 계획의 의미를 검사하고 최신 결과를 저장합니다. 임베딩 모델은 이때 사용하지 않습니다. 계획 내용이 바뀌면 `get_work_plan.validation.stale`이 이전 검사 결과임을 표시합니다. 일반 이슈 보드는 별도의 로컬 이슈용이며 계획에 속한 카드를 섞어 보여주지 않습니다.
 
-실제 작업에는 이어받을 수 있는 실행 기록을 남깁니다. `resolve_workspace`가 로컬 Git 정보를 프로젝트와 안정적인 워크트리 식별자로 바꿉니다. `resume_workspace`와 `resume_work`는 기본으로 공통 목표 경로, 현재 행동, 남은 완료 조건, 관련 기억과 막는 작업만 담은 짧은 응답을 보냅니다. 같은 `context_digest`를 다시 보내면 바뀌지 않은 내용을 반복하지 않으며, 꼭 필요할 때만 `detail: full`로 전체 자료를 읽습니다. `claim_workspace`는 워크트리 연결, 작업권 발급과 같은 목표 경로 반환을 한 번에 처리합니다. `finish_work`는 조건과 근거를 확인한 뒤 충족된 하위 목표를 부모 목표에 반영합니다.
+모든 Web MCP 에이전트는 `resume_project(namespace, agent_id, capabilities)`로 시작합니다. 로컬 경로, Git 저장소, MCP Roots 없이도 자신이 진행 중인 작업과 지금 맡을 수 있는 후보를 최대 3개씩 받습니다. 항목을 고른 뒤 `resume_work`를 호출하면 공통 목표 경로, 다음 행동, 남은 완료 조건, 관련 기억, 짧은 자료 요약, 끝난 선행 작업의 결과, 막는 작업만 받습니다. 같은 `context_digest`를 다시 보내면 바뀌지 않은 내용을 반복하지 않습니다. 실제 행동 직전에는 `claim_work`로 작업권 하나를 받습니다.
 
-로컬 에이전트는 현재 저장소의 워크트리를 Stash에 동기화할 수 있습니다. 코드와 실제 변경 내용은 Git에 남고, Stash에는 경로·브랜치·커밋·상태·작업 기록이 저장됩니다.
+작업 중 새 결과가 필요해지면 `spawn_work`로 자식 작업, 선행 작업, 관련 작업을 만듭니다. 자식 작업과 선행 작업은 끝날 때까지 부모를 막으므로 여러 에이전트가 A-1·A-2를 나누어도 공통 목표를 놓치지 않습니다. `finish_work`는 필수 조건에 근거가 연결되고 막는 작업이 모두 끝난 뒤에만 성공하며, 충족된 자식 목표를 부모 목표에 반영합니다.
+
+`attach_work_resource`는 외부 원문 전체를 복사하지 않고 짧은 요약과 주소만 연결합니다. 사람의 Jira 작업과 Confluence 문서는 외부 시스템을 기준으로 유지하고, AI 작업은 Stash에 별도로 기록한 뒤 목표 지도에서 함께 볼 수 있습니다. 현재 버전은 어느 서비스에도 묶이지 않는 자료 연결 구조를 제공합니다. 외부 변경 감지와 다시 쓰기는 필요할 때 붙이는 부가 기능입니다.
+
+Git 워크트리 명령은 코드 프로젝트용 선택 기능으로 남아 있습니다. Web MCP 작업을 시작하기 위한 조건은 아닙니다.
 
 ```bash
 stash workspace facts --cwd . --agent-id codex --project-namespace /projects/myapp
@@ -185,7 +195,7 @@ stash issue list --namespaces / --status doing --label auth
 stash issue comment add W-000001 --body "재현 조건을 확인했습니다"
 ```
 
-영문 에이전트 규칙 예시는 [docs/AGENT.md](docs/AGENT.md)에서 복사할 수 있습니다. 워크트리를 쓰는 에이전트는 `resolve_workspace`, `resume_workspace`, `claim_workspace`로 프로젝트를 찾고 작업을 맡은 뒤, 중간 기록·근거·조건 확인·인계·완료 도구를 사용합니다. 계획, 일반 작업 카드, 의존 관계, 그래프, 댓글, 기억 연결, 워크트리, 작업 이벤트 도구도 함께 사용할 수 있습니다. 첫 저장소 연결 전에 사용할 프로젝트 네임스페이스를 만들어 두세요.
+영문 에이전트 규칙 예시는 [docs/AGENT.md](docs/AGENT.md)에서 복사할 수 있습니다. 기본 순서는 `resume_project` → `resume_work` → `claim_work`이며, 이후 중간 기록·근거·조건 확인·인계·완료 도구를 사용합니다. 작업 중 다른 결과가 필요해지면 `spawn_work`로 나눕니다. 먼저 프로젝트 네임스페이스와 공통 목표를 만들고, Git이나 외부 서비스는 프로젝트에 필요할 때만 연결하세요.
 
 ### 작업 계획 스킬
 

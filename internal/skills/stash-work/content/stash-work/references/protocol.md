@@ -1,64 +1,67 @@
-# Workspace and work execution protocol
+# Project and work execution protocol
 
 Tool names may carry a client-specific MCP prefix. Match them by the final Stash tool name.
 
-## Collect local Git facts
-
-Run:
-
-```bash
-stash workspace facts --cwd . --agent-id codex
-```
-
-The command does not open Stash's database. On first use it creates `stash.repositoryInstanceId` in the repository's local Git config. It reports:
-
-- `cwd`
-- `repository_instance_id`
-- `git_common_dir`
-- `git_dir`
-- `worktree_path`
-- `remote_url`
-- `repository_provider` and optional provider ID
-- branch, head, worktree status, agent ID, and an optional configured project namespace
-
-The repository instance ID separates clones. The server combines it with Git's stable worktree entry, so moving a checkout or worktree path does not create a duplicate.
-
 ## Start or resume a session
 
-1. `resolve_workspace(local facts, project_namespace?)` binds the first checkout or resolves an existing binding, refreshes its heartbeat, and returns namespace, worktree, active item and attempt, latest checkpoint, and next action. Omitting `project_namespace` for an unbound checkout returns an explicit binding error.
-2. `resume_workspace(namespace, worktree_id?, detail="brief", known_context_digest?)` returns the shared goal, current continuation, short work selection, and a digest. Use `detail="full"` only for a specific missing project detail. When more than one agent has active work, it lists the work but does not choose one arbitrary item as the current item.
-3. Search or create work only when the snapshot does not already contain the requested outcome.
+1. `resume_project(namespace, agent_id?, capabilities?, known_context_digest?)` is the universal Web MCP entry point. It returns the shared goal, this agent's active work, at most three runnable candidates, project counts, one next action, and a digest.
+2. Continue active work first. Otherwise choose one candidate whose required capabilities are available.
+3. `resume_work(work_item_id, detail="brief", known_context_digest?)` returns the focused goal path, next action, pending conditions, relevant memory, linked resource summaries, final prerequisite results, and blockers.
+4. Search or create work only when these bounded responses do not already contain the intended outcome.
 
-Store the returned `context_digest`. A later call with the same value in `known_context_digest` returns an unchanged receipt when the relevant state is identical. `resume_work` follows the same brief-first rule and includes only the current goal path, next action, pending conditions, relevant memory, and blockers by default.
+No local path, Git repository, or MCP Roots are required. Store each returned `context_digest`. A later call with the same value returns an unchanged receipt when the relevant view is identical.
 
-`get_goal_map` is an owner-facing overview. Worker agents should not load it during routine turns when the compact resume response already contains their goal path.
+`get_goal_map` is an owner-facing overview. Worker agents should not load it during routine turns.
 
-The selected top-level goal is shared by every agent. Child goals divide that outcome into smaller results. Components and executable tasks carry `goal_id`; attempt start is rejected when that goal is outside the selected tree. The start or claim response repeats the compact goal path so an agent cannot begin without seeing what its work contributes to.
+The selected top-level goal is shared by every agent. Child goals divide that outcome into smaller results. Components and executable tasks carry `goal_id`; attempt start is rejected when that goal is outside the selected tree. Every claim response repeats the compact goal path.
 
-Remote URL, paths, provider ID, and agent ID never grant access. The authenticated MCP principal determines which namespace bindings can be read or changed.
+Capabilities, URLs, paths, provider IDs, and agent IDs never grant access. The authenticated MCP principal determines which namespace can be read or changed.
 
 ## Prepare and claim
 
 1. `prepare_work(work_item_id, next_action, conditions, action_key)` replaces completion conditions and stores the first action. Use it only when conditions are absent or intentionally changed.
-2. `claim_workspace(work_item_id, local facts, agent_id, action_key, lease_seconds?)` performs workspace upsert, item attachment, attempt creation, and lease creation in one transaction.
+2. `claim_work(work_item_id, agent_id, action_key, lease_seconds?, worktree_id?)` creates the attempt and exclusive lease. `worktree_id` is optional Git connector metadata.
 
-The claim action key must contain a fresh random UUIDv4. An exact retry returns the same attempt with a fresh valid token. A work item can have only one live attempt, and one worktree cannot hold live attempts for two items.
+The claim action key contains a fresh random UUIDv4. An exact retry returns the same attempt with a fresh valid token. A work item can have only one live attempt.
 
-Use `start_work` only for tracked work that has no Git workspace.
+`start_work` remains a compatibility name for `claim_work`. New integrations use `claim_work`.
+
+## Split work under an active lease
+
+`spawn_work(attempt_id, lease_token, action_key, relationship, title, next_action, conditions, capabilities?)` creates and prepares one new item in the same namespace and goal tree.
+
+- `child` sets the new item's parent and blocks the current item.
+- `prerequisite` blocks the current item without making it a structural child.
+- `related` records a non-blocking relation.
+
+The action is retry-safe. Reusing the action key with changed input is rejected.
+
+## Link bounded resources
+
+`attach_work_resource` upserts a stable resource key and links it to one work item. Supported kinds include `git`, `document`, `url`, `browser`, `api`, `dataset`, `device`, `ticket`, `file`, and `other`.
+
+Use `authority: external` when Jira, Confluence, or another service remains authoritative. Store only bounded non-secret metadata, a short summary, revision, content digest, and URI. Credentials in a URI or metadata are rejected.
+
+Read references with `list_work_resources`, `get_work_resource`, `stash://work/{id}/brief`, or `stash://work-resource/{id}`. Fetch an external body only when its reference is needed for the next action.
 
 ## Mutate the active attempt
 
 These calls require the same `attempt_id`, private `lease_token`, and a stable action key unique to that mutation:
 
-- `checkpoint_work` records summary, observed result, and one next action, then extends the lease.
+- `checkpoint_work` records a summary, observed result, and one next action, then extends the lease.
 - `renew_work_lease` extends the lease when no new result exists.
 - `submit_work_evidence` stores an observed result and its condition links.
 - `verify_work_condition` accepts a passed or evidence-backed waived condition.
+- `spawn_work` decomposes newly discovered work.
 - `finish_work` stores the final result and completes verified work.
 - `handoff_work` stores the current result and next action, then releases unfinished work.
 
 ## Recover in a fresh session
 
-`workspace facts` → `resolve_workspace` → `resume_workspace` → inspect active work and the one next action → stop if another live lease exists → `prepare_work` only if needed → `claim_workspace` → checkpoint and verify observations → `finish_work` or `handoff_work`.
+`resume_project` → resume the same active item or choose one candidate → `resume_work` → stop if another live lease exists → `prepare_work` only if needed → `claim_work` → checkpoint and verify observations → `finish_work` or `handoff_work`.
 
 Keep the same project and work item. Missing chat history or an unavailable old token is not a reason to create replacements.
+
+## Optional Git connector
+
+For a code checkout, `stash workspace facts` can collect stable Git identity. `resolve_workspace`, `resume_workspace`, and `claim_workspace` attach that identity to the same project and attempt. They are optional connector helpers, not the project entry point.

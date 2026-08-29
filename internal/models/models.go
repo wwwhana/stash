@@ -160,27 +160,28 @@ type Goal struct {
 // WorkItem is a mutable piece of work. It is separate from Goal so operational
 // status changes do not overwrite the durable intent recorded in memory.
 type WorkItem struct {
-	ID          int64      `db:"id" json:"id"`
-	NamespaceID int64      `db:"namespace_id" json:"namespace_id"`
-	GoalID      *int64     `db:"goal_id" json:"goal_id,omitempty"`
-	ParentID    *int64     `db:"parent_id" json:"parent_id,omitempty"`
-	IssueKey    string     `db:"issue_key" json:"issue_key"`
-	IssueType   string     `db:"issue_type" json:"issue_type"`
-	Labels      []string   `db:"labels" json:"labels,omitempty"`
-	Reporter    string     `db:"reporter" json:"reporter,omitempty"`
-	Title       string     `db:"title" json:"title"`
-	Description string     `db:"description" json:"description"`
-	Status      string     `db:"status" json:"status"`
-	Priority    int        `db:"priority" json:"priority"`
-	Position    float64    `db:"position" json:"position"`
-	Owner       string     `db:"owner" json:"owner"`
-	DueAt       *time.Time `db:"due_at" json:"due_at,omitempty"`
-	StartedAt   *time.Time `db:"started_at" json:"started_at,omitempty"`
-	CompletedAt *time.Time `db:"completed_at" json:"completed_at,omitempty"`
-	CreatedAt   time.Time  `db:"created_at" json:"created_at"`
-	UpdatedAt   time.Time  `db:"updated_at" json:"updated_at"`
-	DeletedAt   *time.Time `db:"deleted_at" json:"deleted_at,omitempty"`
-	WorktreeIDs []int64    `db:"-" json:"worktree_ids,omitempty"`
+	ID                   int64      `db:"id" json:"id"`
+	NamespaceID          int64      `db:"namespace_id" json:"namespace_id"`
+	GoalID               *int64     `db:"goal_id" json:"goal_id,omitempty"`
+	ParentID             *int64     `db:"parent_id" json:"parent_id,omitempty"`
+	IssueKey             string     `db:"issue_key" json:"issue_key"`
+	IssueType            string     `db:"issue_type" json:"issue_type"`
+	Labels               []string   `db:"labels" json:"labels,omitempty"`
+	Reporter             string     `db:"reporter" json:"reporter,omitempty"`
+	Title                string     `db:"title" json:"title"`
+	Description          string     `db:"description" json:"description"`
+	Status               string     `db:"status" json:"status"`
+	Priority             int        `db:"priority" json:"priority"`
+	Position             float64    `db:"position" json:"position"`
+	Owner                string     `db:"owner" json:"owner"`
+	DueAt                *time.Time `db:"due_at" json:"due_at,omitempty"`
+	StartedAt            *time.Time `db:"started_at" json:"started_at,omitempty"`
+	CompletedAt          *time.Time `db:"completed_at" json:"completed_at,omitempty"`
+	CreatedAt            time.Time  `db:"created_at" json:"created_at"`
+	UpdatedAt            time.Time  `db:"updated_at" json:"updated_at"`
+	DeletedAt            *time.Time `db:"deleted_at" json:"deleted_at,omitempty"`
+	WorktreeIDs          []int64    `db:"-" json:"worktree_ids,omitempty"`
+	RequiredCapabilities []string   `db:"-" json:"required_capabilities,omitempty"`
 }
 
 // WorkItemComment is a human or agent note attached to an issue.

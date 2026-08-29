@@ -43,7 +43,7 @@ func registerGoalMapTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 	})
 
 	mcpServer.AddTool(mcp.NewTool("get_goal_map",
-		mcp.WithDescription("Owner-facing overview of the shared goal hierarchy, contributing work, linked memory, typed graph edges, and work that still lacks a goal. Worker agents should use resume_work or resume_workspace for a compact goal path."),
+		mcp.WithDescription("Owner-facing overview of shared goals, work, linked resources, memory, agents, blockers, and results. Worker agents should use resume_project and resume_work instead."),
 		mcp.WithString("namespace", mcp.Description("Exact project namespace path")),
 		mcp.WithBoolean("include_done", mcp.Description("Include completed and canceled work cards"), mcp.DefaultBool(true)),
 		mcp.WithReadOnlyHintAnnotation(true),

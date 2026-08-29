@@ -330,6 +330,10 @@ func (b *Brain) CreateWorkItem(ctx context.Context, namespaceID int64, goalID, p
 
 // CreateWorkItemWithDetails creates an issue/task with tracker metadata.
 func (b *Brain) CreateWorkItemWithDetails(ctx context.Context, namespaceID int64, input WorkItemInput) (*models.WorkItem, error) {
+	return b.CreateWorkItemWithCapabilities(ctx, namespaceID, input, nil)
+}
+
+func (b *Brain) createWorkItemWithCapabilities(ctx context.Context, namespaceID int64, input WorkItemInput, capabilities []string) (*models.WorkItem, error) {
 	if err := b.ensureOrdinaryWorkItem(ctx, input); err != nil {
 		return nil, err
 	}
@@ -349,9 +353,20 @@ func (b *Brain) CreateWorkItemWithDetails(ctx context.Context, namespaceID int64
 		return nil, err
 	}
 	input.GoalID = resolvedGoalID
-	item, err := b.insertWorkItem(ctx, b.pool, namespaceID, input)
+	tx, err := b.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin work item creation: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	item, err := b.insertWorkItem(ctx, tx, namespaceID, input)
 	if err != nil {
 		return nil, err
+	}
+	if err := setWorkCapabilitiesTx(ctx, tx, item.ID, capabilities); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit work item creation: %w", err)
 	}
 	items, err := b.attachWorktreeIDs(ctx, []models.WorkItem{*item})
 	if err != nil {
@@ -851,11 +866,11 @@ func (b *Brain) attachWorktreeIDs(ctx context.Context, items []models.WorkItem) 
 	if err != nil {
 		return nil, fmt.Errorf("list work item worktrees: %w", err)
 	}
-	defer rows.Close()
 	for rows.Next() {
 		var itemID int64
 		var worktreeIDs []int64
 		if err := rows.Scan(&itemID, &worktreeIDs); err != nil {
+			rows.Close()
 			return nil, fmt.Errorf("scan work item worktrees: %w", err)
 		}
 		if i, ok := byID[itemID]; ok {
@@ -863,9 +878,11 @@ func (b *Brain) attachWorktreeIDs(ctx context.Context, items []models.WorkItem) 
 		}
 	}
 	if err := rows.Err(); err != nil {
+		rows.Close()
 		return nil, fmt.Errorf("read work item worktrees: %w", err)
 	}
-	return items, nil
+	rows.Close()
+	return b.attachWorkCapabilities(ctx, items)
 }
 
 // AttachWorktreeToItem links a local worktree to an operational task.

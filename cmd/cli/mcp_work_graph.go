@@ -200,6 +200,7 @@ func registerWorkGraphTools(mcpServer *server.MCPServer, bc *bootstrap.Context) 
 		mcp.WithNumber("priority", mcp.DefaultNumber(0)),
 		mcp.WithNumber("position", mcp.DefaultNumber(0)),
 		mcp.WithString("owner"),
+		projectCapabilityOption(),
 		mcp.WithString("due_at", mcp.Description("Optional RFC3339 deadline")),
 		mcp.WithNumber("goal_id"),
 		mcp.WithNumber("parent_id"),
@@ -243,13 +244,17 @@ func registerWorkGraphTools(mcpServer *server.MCPServer, bc *bootstrap.Context) 
 		if err != nil {
 			return nil, err
 		}
-		item, err := bc.Brain.CreateWorkItemWithDetails(ctx, namespaceID, brain.WorkItemInput{
+		capabilities, err := stringListArgument(request, "capabilities")
+		if err != nil {
+			return nil, err
+		}
+		item, err := bc.Brain.CreateWorkItemWithCapabilities(ctx, namespaceID, brain.WorkItemInput{
 			GoalID: goalID, ParentID: parentID, IssueType: request.GetString("issue_type", "task"),
 			Labels: labels, Reporter: request.GetString("reporter", ""), Title: request.GetString("title", ""),
 			Description: request.GetString("description", ""), Status: request.GetString("status", "backlog"),
 			Priority: request.GetInt("priority", 0), Position: request.GetFloat("position", 0),
 			Owner: request.GetString("owner", ""), DueAt: dueAt,
-		})
+		}, capabilities)
 		if err != nil {
 			return nil, err
 		}

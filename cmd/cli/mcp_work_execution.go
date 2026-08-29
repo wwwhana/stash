@@ -566,8 +566,8 @@ func attemptMutationArguments(request mcp.CallToolRequest) (int64, string, strin
 
 func attemptMutationOptions(options ...mcp.ToolOption) []mcp.ToolOption {
 	base := []mcp.ToolOption{
-		mcp.WithNumber("attempt_id", mcp.Description("Active attempt ID returned by start_work"), mcp.Required()),
-		mcp.WithString("lease_token", mcp.Description("Secret returned once by start_work. Never log it or put it in evidence or handoff text."), mcp.Required()),
+		mcp.WithNumber("attempt_id", mcp.Description("Active attempt ID returned by claim_work"), mcp.Required()),
+		mcp.WithString("lease_token", mcp.Description("Secret returned once by claim_work. Never log it or put it in evidence or handoff text."), mcp.Required()),
 		mcp.WithString("action_key", mcp.Description("Stable unique key for this logical mutation. Reuse it only when retrying the same call."), mcp.Required()),
 		mcp.WithIdempotentHintAnnotation(true),
 	}
@@ -616,6 +616,63 @@ func conditionArraySchema() map[string]any {
 	}
 }
 
+func claimWorkToolOptions(description string) []mcp.ToolOption {
+	return []mcp.ToolOption{
+		mcp.WithDescription(description),
+		mcp.WithNumber("work_item_id", mcp.Description("Prepared work item to claim"), mcp.Required()),
+		mcp.WithString("agent_id", mcp.Description("Stable identifier for the agent doing the work"), mcp.Required()),
+		mcp.WithNumber("worktree_id", mcp.Description("Optional registered Git worktree used by a connector")),
+		mcp.WithNumber("lease_seconds", mcp.Description("Lease lifetime from now, from 1 to 86400 seconds"), mcp.DefaultNumber(900)),
+		mcp.WithString("action_key", mcp.Description("Unpredictable unique key containing a fresh random UUIDv4 for this claim; keep it private and reuse it only when retrying the same call"), mcp.MinLength(minStartActionKeyChars), mcp.Pattern(startActionUUIDPatternText), mcp.Required()),
+		mcp.WithIdempotentHintAnnotation(true),
+	}
+}
+
+func handleClaimWork(ctx context.Context, request mcp.CallToolRequest, bc *bootstrap.Context) (*mcp.CallToolResult, error) {
+	workItemID, err := requiredPositiveID(request, "work_item_id")
+	if err != nil {
+		return nil, err
+	}
+	item, err := authorizeWorkItem(ctx, bc, workItemID)
+	if err != nil {
+		return nil, err
+	}
+	agentID, err := requiredWorkString(request, "agent_id")
+	if err != nil {
+		return nil, err
+	}
+	actionKey, err := requiredStartActionKey(request)
+	if err != nil {
+		return nil, err
+	}
+	principalID, err := workExecutionPrincipal(ctx)
+	if err != nil {
+		return nil, err
+	}
+	worktreeID, err := optionalID(request, "worktree_id")
+	if err != nil {
+		return nil, err
+	}
+	if worktreeID != nil {
+		worktree, err := authorizeWorktree(ctx, bc, *worktreeID)
+		if err != nil {
+			return nil, err
+		}
+		if worktree.NamespaceID != item.NamespaceID {
+			return nil, fmt.Errorf("work item and worktree must share a namespace")
+		}
+	}
+	leaseDuration, err := workLeaseDuration(request)
+	if err != nil {
+		return nil, err
+	}
+	lease, err := bc.Brain.StartWorkAttemptForPrincipal(ctx, workItemID, agentID, principalID, worktreeID, leaseDuration, actionKey)
+	if err != nil {
+		return nil, err
+	}
+	return jsonToolResult(bc, lease)
+}
+
 func registerWorkExecutionTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 	mcpServer.AddTool(mcp.NewTool("prepare_work",
 		mcp.WithDescription("Call before starting tracked work to set one concrete next action and replace the work item's observable completion conditions. At least one condition must be required."),
@@ -651,63 +708,16 @@ func registerWorkExecutionTools(mcpServer *server.MCPServer, bc *bootstrap.Conte
 		return jsonToolResult(bc, prepared)
 	}))
 
-	mcpServer.AddTool(mcp.NewTool("start_work",
-		mcp.WithDescription("Call immediately before beginning an available prepared work item. It returns lease_token once; keep that token private for later attempt mutations."),
-		mcp.WithNumber("work_item_id", mcp.Description("Prepared work item to claim"), mcp.Required()),
-		mcp.WithString("agent_id", mcp.Description("Stable identifier for the agent doing the work"), mcp.Required()),
-		mcp.WithNumber("worktree_id", mcp.Description("Optional registered worktree used for this attempt")),
-		mcp.WithNumber("lease_seconds", mcp.Description("Lease lifetime from now, from 1 to 86400 seconds"), mcp.DefaultNumber(900)),
-		mcp.WithString("action_key", mcp.Description("Unpredictable unique key containing a fresh random UUIDv4 for this start request; keep it private and reuse it only when retrying the same call"), mcp.MinLength(minStartActionKeyChars), mcp.Pattern(startActionUUIDPatternText), mcp.Required()),
-		mcp.WithIdempotentHintAnnotation(true),
-	), recordWorkExecutionHandler("start", func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		workItemID, err := requiredPositiveID(request, "work_item_id")
-		if err != nil {
-			return nil, err
-		}
-		item, err := authorizeWorkItem(ctx, bc, workItemID)
-		if err != nil {
-			return nil, err
-		}
-		agentID, err := requiredWorkString(request, "agent_id")
-		if err != nil {
-			return nil, err
-		}
-		actionKey, err := requiredStartActionKey(request)
-		if err != nil {
-			return nil, err
-		}
-		principalID, err := workExecutionPrincipal(ctx)
-		if err != nil {
-			return nil, err
-		}
-		worktreeID, err := optionalID(request, "worktree_id")
-		if err != nil {
-			return nil, err
-		}
-		if worktreeID != nil {
-			worktree, err := authorizeWorktree(ctx, bc, *worktreeID)
-			if err != nil {
-				return nil, err
-			}
-			if worktree.NamespaceID != item.NamespaceID {
-				return nil, fmt.Errorf("work item and worktree must share a namespace")
-			}
-		}
-		leaseDuration, err := workLeaseDuration(request)
-		if err != nil {
-			return nil, err
-		}
-		lease, err := bc.Brain.StartWorkAttemptForPrincipal(ctx, workItemID, agentID, principalID, worktreeID, leaseDuration, actionKey)
-		if err != nil {
-			return nil, err
-		}
-		return jsonToolResult(bc, lease)
+	mcpServer.AddTool(mcp.NewTool("start_work", claimWorkToolOptions(
+		"Compatibility name for claim_work. Call immediately before acting on an available prepared item; Git worktree metadata is optional.",
+	)...), recordWorkExecutionHandler("start", func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return handleClaimWork(ctx, request, bc)
 	}))
 
 	mcpServer.AddTool(mcp.NewTool("resume_work",
-		mcp.WithDescription("Call before acting on tracked work and after a handoff. The default brief view returns only the shared goal path, current action, pending conditions, relevant memory, and blockers. Use detail=full only when those references are insufficient."),
+		mcp.WithDescription("Call before acting on tracked work and after a handoff. The default brief returns the goal path, current action, pending conditions, small resource references, completed dependency results, relevant memory, and blockers."),
 		mcp.WithNumber("work_item_id", mcp.Description("Work item to resume"), mcp.Required()),
-		mcp.WithString("detail", mcp.Description("brief minimizes model input; full includes evidence, events, and worktree metadata"), mcp.DefaultString("brief"), mcp.Enum("brief", "full")),
+		mcp.WithString("detail", mcp.Description("brief minimizes model input; full also includes evidence, events, and optional Git worktree metadata"), mcp.DefaultString("brief"), mcp.Enum("brief", "full")),
 		mcp.WithString("known_context_digest", mcp.Description("Digest from the previous brief response; matching state returns only an unchanged receipt"), mcp.Pattern(`sha256:[0-9a-f]{64}`)),
 		mcp.WithNumber("recent_event_limit", mcp.Description("Maximum recent events when detail is full"), mcp.DefaultNumber(8), mcp.Min(1), mcp.Max(100)),
 		mcp.WithReadOnlyHintAnnotation(false),

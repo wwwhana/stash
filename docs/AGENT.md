@@ -1,19 +1,19 @@
 # Stash Work Plan Convention
 
-Use Stash as the living, owner-facing plan. Git remains the source for code and diffs. Load the `stash-work-plan` skill before changing plan state when it is available.
+Use Stash as the living, owner-facing AI work plan. Human work may remain authoritative in Jira, Confluence, or another external system. Git and every external connector are optional. Load the `stash-work-plan` skill before changing plan state when it is available.
 
-## Resolve the workspace first
+## Resume the project first
 
-1. Collect local facts with `stash workspace facts --cwd . --agent-id <agent>`. A hook may provide the same fields.
-2. Call `resolve_workspace` with those facts. Supply `project_namespace` only for the first binding or an explicit owner choice. Never infer it from a folder or worktree name.
-3. Call `resume_workspace` with the returned namespace and worktree ID before creating or changing work. Use its default `brief` view first.
-4. Continue an existing matching item. Create new work only after the project snapshot and any required paginated search show no match.
+1. Call `resume_project` with the exact project namespace, a stable `agent_id`, and the small set of capabilities available in this session.
+2. Continue this agent's active work first. Otherwise choose one of the returned runnable items whose `required_capabilities` it can satisfy.
+3. Call `resume_work` for that one item before acting. Continue an existing matching item instead of creating a replacement.
+4. Call `claim_work` immediately before the first external or local action.
 
-Paths, remote URLs, provider IDs, and agent IDs are identity hints. They never replace MCP authentication or grant namespace access.
+Namespace paths, remote URLs, provider IDs, capabilities, and agent IDs are routing hints. They never replace MCP authentication or grant namespace access.
 
 ## Follow the shared goal tree
 
-- Read the shared root and `goal_context.path` from every workspace or work resume response. The path runs from the project outcome to the specific outcome this item contributes to.
+- Read the shared root from `resume_project` and `goal_context.path` from `resume_work`. The path runs from the project outcome to the specific outcome this item contributes to.
 - Model A-1, A-2, and deeper outcomes as child goals under A. Attach each component and task to the narrowest matching goal with `goal_id`.
 - Never start detached work. When a project root exists, Stash binds legacy unassigned work to the root and rejects work assigned outside that tree.
 - Link only durable context, constraints, decisions, failures, evidence, and results to goals or work. Routine narration stays out of memory.
@@ -21,7 +21,7 @@ Paths, remote URLs, provider IDs, and agent IDs are identity hints. They never r
 
 ## Keep agent input small
 
-- The default `resume_workspace` and `resume_work` responses are briefs. Request `detail: full` only when a referenced plan, event, evidence record, or worktree detail is necessary for the next action.
+- `resume_project` returns at most three active items and three runnable candidates. The default `resume_work` response is a brief. Request `detail: full` only when a referenced plan, event, evidence record, or connector detail is necessary for the next action.
 - Save `context_digest`. Send it back as `known_context_digest`; an unchanged project or work item returns a small receipt instead of repeating the same context.
 - Read only the current goal path, current action, pending conditions, relevant memory, and blockers. Use IDs to fetch one missing record rather than loading every list.
 - `get_goal_map` is for owner monitoring. Routine worker turns must not load the full map when a resume brief already contains their goal path.
@@ -29,10 +29,23 @@ Paths, remote URLs, provider IDs, and agent IDs are identity hints. They never r
 ## Claim work atomically
 
 - Call `prepare_work` only when observable completion conditions are missing or intentionally changed.
-- Call `claim_workspace` immediately before implementation with the work item ID, the same Git facts, agent ID, and a fresh random UUIDv4 action key.
+- Call `claim_work` immediately before acting with the work item ID, agent ID, and a fresh random UUIDv4 action key. A `worktree_id` is optional connector metadata.
 - Keep the returned lease token private. Never store it or the action key in a checkpoint, memory, evidence, event, comment, or log.
-- Do not replace `claim_workspace` with a manual register, attach, and start sequence. Use `start_work` only when no Git workspace is involved.
-- If another live attempt owns the item or worktree, stop and follow the server response. Do not bypass it or create replacement work.
+- If another live attempt owns the item, stop and follow the server response. Do not bypass it or create replacement work.
+
+## Decompose work during execution
+
+- Call `spawn_work` when the active item reveals a child, prerequisite, or related result that another agent can own.
+- Give the new item one concrete first action, observable completion conditions, and only the capabilities it actually requires.
+- Child and prerequisite items block the current item until they finish. Do not finish the parent by copying a child's expected result into a checkpoint.
+- Use `set_work_capabilities` to correct routing hints. Capabilities do not grant tool or namespace access.
+
+## Link only the material needed next
+
+- Use `attach_work_resource` for Jira issues, Confluence pages, Git checkouts, documents, browser targets, APIs, datasets, devices, and result artifacts.
+- Keep external document bodies and connector credentials in their original systems. Store a stable key, short summary, revision, and URI.
+- Read only the resource needed for the current `next_action`. The `stash://work/{id}/brief` and `stash://work-resource/{id}` resources expose bounded MCP views.
+- Treat `authority: external` as a clear ownership boundary: Stash records the AI work and reference; it does not silently become the source of human status.
 
 ## Maintain the component map
 
@@ -49,7 +62,7 @@ Paths, remote URLs, provider IDs, and agent IDs are identity hints. They never r
 - Record a plan-changing decision before implementing it.
 - Call `checkpoint_work` after each meaningful action with the observed result and exactly one concrete `next_action`.
 - Call `renew_work_lease` before a long action could cross the lease deadline.
-- Call `resolve_workspace` again after a long pause or worktree move to refresh its heartbeat.
+- Call `resume_project` again when project state may have changed. Send the prior `context_digest` so unchanged state returns a small receipt.
 - Do not batch plan updates at session end.
 
 ## Prove and finish

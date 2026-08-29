@@ -12,14 +12,14 @@
       "name": "stash-work-plan",
       "displayName": "Stash Work Plan",
       "source": "./plugins/stash-work-plan",
-      "description": "Manage a shared component-oriented work plan through a configured Stash MCP server.",
-      "version": "0.1.0",
+      "description": "Resume and coordinate shared work through Stash; Git and external connectors are optional.",
+      "version": "0.3.0",
       "author": {
         "name": "wwwhana",
         "url": "https://github.com/wwwhana"
       },
       "category": "productivity",
-      "tags": ["mcp", "planning", "worktrees"]
+      "tags": ["mcp", "planning", "agents", "goals"]
     }
   ]
 }

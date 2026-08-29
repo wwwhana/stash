@@ -274,7 +274,7 @@ func workspaceResumeToolResult(bc *bootstrap.Context, bundle *models.WorkspaceRe
 
 func registerWorkspaceTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 	resolveOptions := append([]mcp.ToolOption{
-		mcp.WithDescription("Call once at session start with locally observed Git facts. Stash resolves the bound project, refreshes the worktree heartbeat, and returns its current continuation state."),
+		mcp.WithDescription("Optional Git connector helper. Resolve a checkout already observed by a local bridge; ordinary Web MCP work should start with resume_project instead."),
 		mcp.WithString("project_namespace", mcp.Description("Exact project namespace; required only for the first binding")),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -307,7 +307,7 @@ func registerWorkspaceTools(mcpServer *server.MCPServer, bc *bootstrap.Context) 
 	})
 
 	mcpServer.AddTool(mcp.NewTool("resume_workspace",
-		mcp.WithDescription("Call after resolve_workspace and at handoff. The default brief view returns the shared goal, current continuation, and a short work selection. Use detail=full only when the complete plan or graph is required."),
+		mcp.WithDescription("Optional Git-specific project view after resolve_workspace. Ordinary agents should use resume_project and resume_work."),
 		mcp.WithString("namespace", mcp.Description("Exact project namespace returned by resolve_workspace"), mcp.Required()),
 		mcp.WithNumber("worktree_id", mcp.Description("Optional resolved worktree ID")),
 		mcp.WithString("detail", mcp.Description("brief minimizes model input; full includes the complete bounded project snapshot"), mcp.DefaultString("brief"), mcp.Enum("brief", "full")),
@@ -358,7 +358,7 @@ func registerWorkspaceTools(mcpServer *server.MCPServer, bc *bootstrap.Context) 
 	})
 
 	claimOptions := append([]mcp.ToolOption{
-		mcp.WithDescription("Call immediately before work to resolve or register the checkout and acquire its exclusive work lease in one transaction."),
+		mcp.WithDescription("Optional Git convenience helper that attaches a checkout while claiming work. Use claim_work when no Git checkout is involved."),
 		mcp.WithNumber("work_item_id", mcp.Description("Prepared work item to claim"), mcp.Required()),
 		mcp.WithString("project_namespace", mcp.Description("Optional exact project namespace; the work item namespace is authoritative")),
 		mcp.WithNumber("lease_seconds", mcp.Description("Lease lifetime from 1 to 86400 seconds"), mcp.DefaultNumber(900)),

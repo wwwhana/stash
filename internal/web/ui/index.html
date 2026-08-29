@@ -452,6 +452,7 @@
         .stash-goal-map__legend span { display: inline-flex; align-items: center; gap: 5px; }
         .stash-goal-map__legend i { width: 18px; border-top: 2px solid #818cf8; }
         .stash-goal-map__legend i.is-memory { border-top-style: dashed; border-top-color: #fbbf24; }
+        .stash-goal-map__legend i.is-resource { border-top-style: dashed; border-top-color: #38bdf8; }
         .stash-goal-map__toolbar { display: flex; align-items: end; justify-content: space-between; gap: 10px; margin-bottom: 9px; padding: 8px; border: 1px solid rgba(148,163,184,.2); border-radius: 8px; background: rgba(15,23,42,.68); }
         .stash-goal-map__summary { display: flex; gap: 7px; }
         .stash-goal-map__summary span { padding: 5px 8px; border-radius: 7px; color: #cbd5e1; background: #1e293b; font-size: 9px; }
@@ -493,6 +494,8 @@
         .stash-goal-node__progress i { display: block; height: 100%; border-radius: inherit; background: #818cf8; }
         .stash-goal-node.is-memory { border-color: rgba(251,191,36,.45); background: #272318; }
         .stash-goal-node.is-memory .stash-goal-node__top strong { color: #fde68a; }
+        .stash-goal-node.is-resource { border-color: rgba(56,189,248,.5); background: #132638; }
+        .stash-goal-node.is-resource .stash-goal-node__top strong { color: #7dd3fc; }
         .stash-goal-node.is-work { background: #172033; }
         .stash-goal-map__unassigned { margin-top: 9px; padding: 10px; border: 1px solid rgba(251,191,36,.3); border-radius: 9px; background: rgba(120,53,15,.14); }
         .stash-goal-map__unassigned > strong { color: #fde68a; font-size: 10px; }
@@ -734,7 +737,7 @@
                         <button @click="loadWorkPlan()" :class="{'is-active': activeNav === 'plan'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">◇</span>작업 계획</button>
                         <button @click="loadWorkBoard()" :class="{'is-active': activeNav === 'board'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">▦</span>이슈 보드</button>
                         <button @click="loadWorkGraph()" :class="{'is-active': activeNav === 'graph'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">⌁</span>작업 그래프</button>
-                        <button @click="loadWorktrees()" :class="{'is-active': activeNav === 'worktrees'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">⌘</span>워크트리</button>
+                        <button @click="loadWorktrees()" :class="{'is-active': activeNav === 'worktrees'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">⌘</span>Git 연결</button>
                         <button x-show="isAdmin" x-cloak @click="showMaintenance()" :class="{'is-active': activeNav === 'maintenance'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">⚙</span>임베딩 관리</button>
                         <div class="stash-nav-divider"></div>
                         <button @click="callTool('list_namespaces', {limit: 100})" :class="{'is-active': activeNav === 'list_namespaces'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">◌</span>네임스페이스</button>
@@ -845,7 +848,7 @@
                                                 <div class="flex items-center justify-between gap-2"><span class="stash-issue-card-key" x-text="item.issue_key || '#' + item.id"></span><span class="stash-issue-card-badges"><span x-show="hasActiveIssueAttempt(item)" class="stash-issue-card-state">실행 중</span><span class="stash-issue-card-type" x-text="issueTypeLabel(item.issue_type)"></span></span></div>
                                                 <div class="stash-issue-card-title" x-text="item.title"></div>
                                                 <div x-show="itemLabels(item).length" class="mt-2 flex flex-wrap gap-1"><template x-for="label in itemLabels(item)" :key="label"><span class="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 text-[11px]" x-text="label"></span></template></div>
-                                                <div class="stash-issue-card-meta"><span x-show="item.owner" class="stash-issue-card-owner" x-text="item.owner"></span><span x-show="item.worktree_ids && item.worktree_ids.length" x-text="'워크트리 ' + ((item.worktree_ids && item.worktree_ids.length) || 0)"></span></div>
+                                                <div class="stash-issue-card-meta"><span x-show="item.owner" class="stash-issue-card-owner" x-text="item.owner"></span><span x-show="item.worktree_ids && item.worktree_ids.length" x-text="'Git 연결 ' + ((item.worktree_ids && item.worktree_ids.length) || 0)"></span></div>
                                             </button>
                                         </template>
                                     </div>
@@ -898,7 +901,7 @@
                                                 <dl class="stash-execution-summary">
                                                     <div><dt>실행 번호</dt><dd x-text="executionAttemptLabel()"></dd></div>
                                                     <div><dt>에이전트</dt><dd x-text="executionAgentLabel()"></dd></div>
-                                                    <div><dt>워크트리</dt><dd :title="executionWorktreeLabel()" x-text="executionWorktreeLabel()"></dd></div>
+                                                    <div><dt>Git 작업 공간</dt><dd :title="executionWorktreeLabel()" x-text="executionWorktreeLabel()"></dd></div>
                                                     <div><dt>작업권</dt><dd :class="{'is-expired': executionLeaseExpired()}" x-text="executionLeaseLabel()"></dd></div>
                                                 </dl>
                                                 <div class="stash-execution-next"><span>다음 행동</span><div x-text="workExecution.nextAction || '아직 정하지 않았습니다.'"></div></div>
@@ -969,10 +972,10 @@
                                             <div class="stash-execution-form__actions"><button type="button" class="stash-btn" @click="closeExecutionForm()">닫기</button><button type="submit" class="stash-btn stash-btn-primary" :disabled="executionBusy()">저장</button></div>
                                         </form>
 
-                                        <form x-show="executionFormMode === 'start'" x-cloak @submit.prevent="startWork" class="stash-execution-form">
+                                        <form x-show="executionFormMode === 'start'" x-cloak @submit.prevent="claimWork" class="stash-execution-form">
                                             <h5>작업 시작</h5>
                                             <div class="stash-field"><label for="execution-agent">에이전트</label><input id="execution-agent" x-model="executionForm.agent" required placeholder="담당 에이전트"></div>
-                                            <div class="stash-field"><label for="execution-worktree">워크트리 번호</label><input id="execution-worktree" type="number" min="1" step="1" x-model="executionForm.worktreeId" placeholder="선택 입력"></div>
+                                            <div class="stash-field"><label for="execution-worktree">Git 작업 공간 번호</label><input id="execution-worktree" type="number" min="1" step="1" x-model="executionForm.worktreeId" placeholder="선택 입력"></div>
                                             <div class="stash-field"><label for="execution-lease">작업권(분)</label><input id="execution-lease" type="number" min="5" max="1440" step="5" x-model="executionForm.leaseMinutes"></div>
                                             <div class="stash-execution-form__actions"><button type="button" class="stash-btn" @click="closeExecutionForm()">닫기</button><button type="submit" class="stash-btn stash-btn-primary" :disabled="executionBusy()">시작</button></div>
                                         </form>
@@ -1022,7 +1025,7 @@
                     <div x-show="view === 'goal-map'" x-cloak class="stash-goal-map" aria-label="목표 지도">
                         <div class="stash-goal-map__header">
                             <div><div class="stash-goal-map__title">목표 흐름</div><div class="stash-goal-map__scope" x-text="goalMapScopeLabel()"></div></div>
-                            <div class="stash-goal-map__legend" aria-label="목표 지도 범례"><span><i></i>결과가 목표에 합쳐짐</span><span><i class="is-memory"></i>기억 연결</span></div>
+                            <div class="stash-goal-map__legend" aria-label="목표 지도 범례"><span><i></i>결과가 목표에 합쳐짐</span><span><i class="is-resource"></i>자료 연결</span><span><i class="is-memory"></i>기억 연결</span></div>
                         </div>
                         <div class="stash-goal-map__toolbar">
                             <label class="stash-graph-project"><span>프로젝트</span><select x-model="graphProjectSlug" @change="loadGoalMap(false)" :disabled="graphProjectsLoading || loading" aria-label="목표 지도 프로젝트 선택"><option value="">기본 작업 공간</option><template x-for="project in graphProjects" :key="'goal-map-' + project.slug"><option :value="project.slug" x-text="project.label"></option></template></select></label>
@@ -1031,6 +1034,7 @@
                                 <span><strong x-text="goalMapLayout.counts.work"></strong>작업</span>
                                 <span><strong x-text="goalMapStatusCount('doing')"></strong>진행</span>
                                 <span><strong x-text="goalMapStatusCount('blocked')"></strong>막힘</span>
+                                <span><strong x-text="goalMapLayout.counts.resource"></strong>연결 자료</span>
                                 <span><strong x-text="goalMapLayout.counts.memory"></strong>기억</span>
                             </div>
                         </div>
@@ -1042,7 +1046,7 @@
                         <div x-show="loading" class="stash-goal-map__empty" role="status">목표 지도를 불러오는 중</div>
                         <div x-show="!loading && goalMapError" class="stash-goal-map__empty is-error" role="alert"><div><span x-text="goalMapError"></span><br><button type="button" class="stash-btn" @click="loadGoalMap(false)">다시 시도</button></div></div>
                         <div x-show="!loading && !goalMapError && !goalMapHasRoot()" class="stash-goal-map__empty"><div><strong>공통 목표가 아직 없습니다.</strong><div x-show="goalMapRootCandidates.length" class="stash-goal-map__setup"><label class="sr-only" for="goal-map-root">공통 목표</label><select id="goal-map-root" x-model="goalMapRootGoalId" :disabled="goalMapRootSaving"><option value="">목표 선택</option><template x-for="goal in goalMapRootCandidates" :key="'goal-map-root-' + goal.id"><option :value="String(goal.id)" x-text="goal.content"></option></template></select><button type="button" class="stash-btn stash-btn-primary" @click="setProjectGoal()" :disabled="!goalMapRootGoalId || goalMapRootSaving" x-text="goalMapRootSaving ? '저장 중' : '공통 목표로 정하기'"></button></div><span x-show="!goalMapRootCandidates.length">먼저 최상위 목표를 만드세요.</span><br><span x-show="goalMap.unassigned_work.length" x-text="'목표에 연결할 작업 ' + goalMap.unassigned_work.length + '개'"></span></div></div>
-                        <div x-show="!loading && !goalMapError && goalMapHasRoot()" class="stash-goal-map__scroll" tabindex="0" aria-label="기억에서 작업을 거쳐 공통 목표로 이어지는 지도">
+                        <div x-show="!loading && !goalMapError && goalMapHasRoot()" class="stash-goal-map__scroll" tabindex="0" aria-label="자료와 기억에서 작업을 거쳐 공통 목표로 이어지는 지도">
                             <div class="stash-goal-map__canvas" :style="goalMapLayout.canvasStyle" role="region" :aria-label="goalMapAriaLabel()">
                                 <div class="stash-goal-map__columns" aria-hidden="true"><template x-for="column in goalMapLayout.columns" :key="column.key"><div class="stash-goal-map__column" :style="column.style"><strong><span x-text="column.count + '개'"></span><b x-text="column.label"></b></strong></div></template></div>
                                 <template x-for="edge in goalMapLayout.edges" :key="edge.key">
@@ -1052,6 +1056,7 @@
                                     <article class="stash-goal-node" :class="goalMapNodeClasses(node)" :style="node.style">
                                         <template x-if="node.kind === 'goal'"><div class="stash-goal-node__body" :aria-label="goalMapNodeAriaLabel(node)"><span class="stash-goal-node__top"><strong x-text="goalMapGoalKind(node.item)"></strong><span x-text="statusLabel(node.item.status)"></span></span><span class="stash-goal-node__title" x-text="node.item.content"></span><span class="stash-goal-node__meta"><span x-text="goalMapGoalProgressText(node.item)"></span><span x-text="goalMapProgressPercent(node.item.progress)"></span></span><span class="stash-goal-node__progress"><i :style="'width:' + goalMapProgressPercent(node.item.progress)"></i></span></div></template>
                                         <template x-if="node.kind === 'work'"><button type="button" class="stash-goal-node__body" @click="openIssue(node.item.id, $event.currentTarget)" :aria-label="goalMapNodeAriaLabel(node)" :title="goalMapWorkDetail(node.item)"><span class="stash-goal-node__top"><strong x-text="node.item.issue_key || '#' + node.item.id"></strong><span x-text="statusLabel(node.item.status)"></span></span><span class="stash-goal-node__title" x-text="node.item.title"></span><span class="stash-goal-node__detail" x-text="goalMapWorkMonitorText(node.item)"></span><span class="stash-goal-node__detail" x-text="goalMapWorkDetail(node.item)"></span></button></template>
+                                        <template x-if="node.kind === 'resource'"><div class="stash-goal-node__body" :aria-label="goalMapNodeAriaLabel(node)"><span class="stash-goal-node__top"><strong x-text="goalMapResourceSourceLabel(node.item)"></strong><span x-text="goalMapResourceAuthorityLabel(node.item)"></span></span><span class="stash-goal-node__title" x-text="node.item.title"></span><span class="stash-goal-node__detail" x-text="node.item.summary"></span></div></template>
                                         <template x-if="node.kind === 'memory'"><div class="stash-goal-node__body" :aria-label="goalMapNodeAriaLabel(node)"><span class="stash-goal-node__top"><strong x-text="goalMapMemoryTypeLabel(node.item.memory_type)"></strong><span x-text="goalMapMemoryStatusLabel(node.item.status)"></span></span><span class="stash-goal-node__title" x-text="node.item.content"></span></div></template>
                                     </article>
                                 </template>
@@ -1144,7 +1149,7 @@
                     </div>
 
                     <div x-show="view === 'worktrees'" x-cloak class="stash-worktrees min-w-[760px] min-h-[560px] p-4 bg-gray-100 text-gray-800">
-                        <div class="stash-worktree-summary"><strong x-text="graph.worktrees.length"></strong><span>개의 워크트리</span></div>
+                        <div class="stash-worktree-summary"><strong x-text="graph.worktrees.length"></strong><span>개의 Git 작업 공간</span></div>
                         <div class="stash-worktree-grid grid gap-3 md:grid-cols-2">
                             <template x-for="worktree in graph.worktrees" :key="worktree.id">
                                 <article class="rounded-lg bg-white border border-gray-200 p-4 shadow-sm">
@@ -1154,7 +1159,7 @@
                                 </article>
                             </template>
                         </div>
-                        <p x-show="!graph.worktrees.length" class="text-sm text-gray-500">등록된 워크트리가 없습니다.</p>
+                        <p x-show="!graph.worktrees.length" class="text-sm text-gray-500">연결된 Git 작업 공간이 없습니다.</p>
                         <div x-show="worktreePage.offset > 0 || worktreePage.hasNext" class="stash-pagination">
                             <button type="button" @click="previousWorktreePage()" :disabled="loading || worktreePage.offset === 0">이전</button>
                             <span class="stash-pagination__page" x-text="pageLabel(worktreePage)"></span>
@@ -1278,7 +1283,7 @@
                                             <div x-show="!component.tasks.length" class="stash-plan-empty">아직 등록된 작업이 없습니다.</div>
                                             <template x-for="task in component.tasks" :key="task.id">
                                                 <article class="stash-plan-task">
-                                                    <div class="stash-plan-task__copy"><div class="stash-plan-task__title" x-text="task.title"></div><div x-show="task.description" class="stash-plan-task__detail" x-text="task.description"></div><div x-show="task.technical_details" class="stash-plan-task__detail" x-text="'구현: ' + task.technical_details"></div><div class="stash-plan-task__meta"><span x-show="task.goal_id" class="stash-plan-chip is-edge" x-text="'목표 ' + planGoalShortLabel(task.goal_id)"></span><span x-show="task.provenance" class="stash-plan-chip" x-text="'출처 ' + planProvenanceLabel(task.provenance)"></span><span x-show="task.started_by" class="stash-plan-chip" x-text="'시작 ' + task.started_by"></span><span x-show="task.completed_by" class="stash-plan-chip" x-text="'완료 ' + task.completed_by"></span><span x-show="task.worktree_ids && task.worktree_ids.length" class="stash-plan-chip" x-text="'워크트리 ' + task.worktree_ids.length"></span></div></div>
+                                                    <div class="stash-plan-task__copy"><div class="stash-plan-task__title" x-text="task.title"></div><div x-show="task.description" class="stash-plan-task__detail" x-text="task.description"></div><div x-show="task.technical_details" class="stash-plan-task__detail" x-text="'구현: ' + task.technical_details"></div><div class="stash-plan-task__meta"><span x-show="task.goal_id" class="stash-plan-chip is-edge" x-text="'목표 ' + planGoalShortLabel(task.goal_id)"></span><span x-show="task.provenance" class="stash-plan-chip" x-text="'출처 ' + planProvenanceLabel(task.provenance)"></span><span x-show="task.started_by" class="stash-plan-chip" x-text="'시작 ' + task.started_by"></span><span x-show="task.completed_by" class="stash-plan-chip" x-text="'완료 ' + task.completed_by"></span><span x-show="task.worktree_ids && task.worktree_ids.length" class="stash-plan-chip" x-text="'Git 연결 ' + task.worktree_ids.length"></span></div></div>
                                                     <div><span class="stash-plan-task__state" :class="'is-' + task.status" x-text="statusLabel(task.status)"></span><div class="stash-plan-task__actions"><button type="button" class="stash-btn" @click="openPlanTaskForm(component.id, task)">수정</button><button x-show="task.status === 'ready' || task.status === 'backlog'" type="button" class="stash-btn stash-btn-primary" @click="startPlanTask(task.id)">시작</button><button x-show="task.status === 'doing'" type="button" class="stash-btn stash-btn-success" @click="completePlanTask(task.id)">완료</button><button x-show="task.status === 'doing' || task.status === 'ready' || task.status === 'backlog'" type="button" class="stash-btn" @click="blockPlanTask(task.id)">막힘</button><button x-show="task.status === 'blocked'" type="button" class="stash-btn stash-btn-primary" @click="unblockPlanTask(task.id)">재개</button></div></div>
                                                 </article>
                                             </template>
@@ -1646,13 +1651,14 @@
 
         function createGoalMapViewModel() {
             const layout = window.StashGoalMap || {
-                emptyLayout: () => ({ width: 0, height: 0, canvasStyle: '', nodes: [], edges: [], columns: [], counts: { memory: 0, work: 0, goal: 0 } }),
-                buildGoalMapLayout: () => ({ width: 0, height: 0, canvasStyle: '', nodes: [], edges: [], columns: [], counts: { memory: 0, work: 0, goal: 0 } })
+                emptyLayout: () => ({ width: 0, height: 0, canvasStyle: '', nodes: [], edges: [], columns: [], counts: { resource: 0, memory: 0, work: 0, goal: 0 } }),
+                buildGoalMapLayout: () => ({ width: 0, height: 0, canvasStyle: '', nodes: [], edges: [], columns: [], counts: { resource: 0, memory: 0, work: 0, goal: 0 } })
             };
             const emptyMap = () => ({
                 goal_tree: { root_goal_id: null, goals: [] },
                 root_candidates: [], root_candidates_truncated: false,
-                work_items: [], memories: [], edges: [], unassigned_work: []
+                work_items: [], resources: [], resource_total: 0, resources_truncated: false,
+                memories: [], edges: [], unassigned_work: []
             });
             return {
                 goalMap: emptyMap(),
@@ -1673,6 +1679,9 @@
                         root_candidates: Array.isArray(source.root_candidates) ? source.root_candidates : [],
                         root_candidates_truncated: Boolean(source.root_candidates_truncated),
                         work_items: Array.isArray(source.work_items) ? source.work_items : [],
+                        resources: Array.isArray(source.resources) ? source.resources : [],
+                        resource_total: Number(source.resource_total) || 0,
+                        resources_truncated: Boolean(source.resources_truncated),
                         memories: Array.isArray(source.memories) ? source.memories : [],
                         edges: Array.isArray(source.edges) ? source.edges : [],
                         unassigned_work: Array.isArray(source.unassigned_work) ? source.unassigned_work : []
@@ -1736,6 +1745,15 @@
                     return ({ active: '유효', recorded: '기록됨', proposed: '검토 전', confirmed: '확인됨', rejected: '기각' })[value] || value || '기록됨';
                 },
 
+                goalMapResourceSourceLabel(item) {
+                    const source = String(item && item.source || '').trim();
+                    return ({ jira: 'Jira', confluence: 'Confluence', git: 'Git', web: '웹', stash: 'Stash' })[source] || source || '연결 자료';
+                },
+
+                goalMapResourceAuthorityLabel(item) {
+                    return item && item.authority === 'external' ? '외부 기준' : 'Stash 기준';
+                },
+
                 goalMapWorkMonitorText(item) {
                     const agent = String(item && (item.agent_id || item.owner) || '').trim();
                     const status = this.statusLabel(item && item.status);
@@ -1754,6 +1772,8 @@
                     const details = [];
                     if (next) details.push('다음 행동: ' + next);
                     if (result) details.push('최근 결과: ' + result);
+                    const capabilities = Array.isArray(item && item.required_capabilities) ? item.required_capabilities : [];
+                    if (capabilities.length) details.push('필요 능력: ' + capabilities.join(', '));
                     return details.join(' · ');
                 },
 
@@ -1792,6 +1812,7 @@
                         const detail = this.goalMapWorkDetail(item);
                         return `${item.issue_key || '#' + item.id}: ${item.title}. ${this.goalMapWorkMonitorText(item)}.${detail ? ' ' + detail + '.' : ''}`;
                     }
+                    if (node.kind === 'resource') return `${this.goalMapResourceSourceLabel(item)} 자료: ${item.title}. ${this.goalMapResourceAuthorityLabel(item)}.`;
                     return `${this.goalMapMemoryTypeLabel(item.memory_type)}: ${item.content}.`;
                 },
 
@@ -1809,13 +1830,13 @@
 
                 goalMapAriaLabel() {
                     const counts = this.goalMapLayout.counts;
-                    return `${this.goalMapScopeLabel()} 목표 ${counts.goal}개, 작업 ${counts.work}개, 기억 ${counts.memory}개, 막힌 작업 ${this.goalMapStatusCount('blocked')}개.`;
+                    return `${this.goalMapScopeLabel()} 목표 ${counts.goal}개, 작업 ${counts.work}개, 연결 자료 ${counts.resource}개, 기억 ${counts.memory}개, 막힌 작업 ${this.goalMapStatusCount('blocked')}개.`;
                 },
 
                 async loadGoalMap(refreshProjects = true) {
                     this.activeNav = 'goal-map';
                     this.resultTitle = '목표 지도';
-                    this.resultDescription = '기억과 작업이 공통 목표에 어떻게 이어지는지 봅니다.';
+                    this.resultDescription = '자료와 기억이 작업을 거쳐 공통 목표에 어떻게 이어지는지 봅니다.';
                     this.view = 'goal-map';
                     this.goalMapError = '';
                     this.loading = true;
@@ -2382,7 +2403,7 @@
                 executionFailureMessage(error, fallback = '작업을 처리하지 못했습니다.') {
                     const message = String(error && error.message || '').trim();
                     const lower = message.toLowerCase();
-                    if (lower.includes('worktree already has an active attempt')) return '이 워크트리에서 다른 작업이 진행 중입니다. 해당 작업을 끝내거나 인계한 뒤 다시 시도하세요.';
+                    if (lower.includes('worktree already has an active attempt')) return '이 Git 작업 공간에서 다른 작업이 진행 중입니다. 해당 작업을 끝내거나 인계한 뒤 다시 시도하세요.';
                     if (lower.includes('already has an active attempt')) return '다른 에이전트가 작업 중입니다. 작업권이 끝난 뒤 다시 시도하세요.';
                     if (lower.includes('lease is invalid or expired')) return '작업권이 없거나 만료되었습니다. 실행 상태를 다시 불러오세요.';
                     if (lower.includes('requires at least one required completion condition')) return '필수 완료 조건을 하나 이상 입력하세요.';
@@ -2737,7 +2758,7 @@
                     this.executionPendingMutation = { fingerprint, actionKey };
                     const requestArgs = { ...args, action_key: actionKey };
                     const leaseToken = this.currentExecutionLeaseToken();
-                    if (leaseToken && !['prepare_work', 'start_work'].includes(toolName)) {
+                    if (leaseToken && !['prepare_work', 'claim_work'].includes(toolName)) {
                         requestArgs.lease_token = leaseToken;
                     }
                     try {
@@ -2781,14 +2802,14 @@
                     if (saved) this.closeExecutionForm();
                 },
 
-                async startWork() {
+                async claimWork() {
                     const args = this.executionMutationArgs({
                         agent_id: String(this.executionForm.agent || '').trim(),
                         lease_seconds: Math.max(5, Number(this.executionForm.leaseMinutes) || 30) * 60
                     }, false);
                     const worktreeID = Number(this.executionForm.worktreeId) || 0;
                     if (worktreeID) args.worktree_id = worktreeID;
-                    const saved = await this.runExecutionMutation('start_work', args, '작업을 시작했습니다.');
+                    const saved = await this.runExecutionMutation('claim_work', args, '작업을 시작했습니다.');
                     if (saved) this.closeExecutionForm();
                 },
 
@@ -2905,20 +2926,19 @@
                 agentGuide: [
                     '# Stash Work Plan Convention',
                     '',
-	                    'Maintain the Stash work plan as the living plan. The project owner reads the Plan view, not an agent\'s private checklist, so write it for the owner. Stash is the source of current plan state; Git remains the source of code and diffs.',
+	                    'Maintain the Stash goal and work map as the shared AI execution record. Human work may remain authoritative in Jira, Confluence, or another external system. Git and external connectors are optional.',
 	                    '',
 	                    'If the `stash-work-plan` skill is installed, load it before changing plan state. It contains the MCP workflow and the same convention described here.',
 	                    '',
 	                    '## Work execution continuity',
 	                    '',
-	                    '- Collect local Git facts with `stash workspace facts --cwd . --agent-id <agent>` or use the facts supplied by a lifecycle hook.',
-	                    '- Call `resolve_workspace` with those facts, then call brief `resume_workspace` with the returned namespace and worktree ID before creating or changing work.',
+	                    '- Call `resume_project(namespace, agent_id, capabilities)` at session start. It requires no local path, Git repository, or MCP Roots.',
 	                    '- Keep `context_digest` and send it as `known_context_digest` on later resume calls. Use `detail: full` only for a specific missing record.',
-	                    '- Supply `project_namespace` only for the first binding or an explicit owner choice. Never infer it from a folder or worktree name.',
-	                    '- Continue a matching existing item. Prepare completion conditions only when they are missing or the owner deliberately changes them, then call `claim_workspace` immediately before implementation.',
+	                    '- Continue active work first. Otherwise choose one of the returned ready items whose `required_capabilities` you can satisfy.',
+	                    '- Call `resume_work` for that item, then call `claim_work` immediately before acting.',
 	                    '- Keep the returned `lease_token` private. Never bypass another live lease or create replacement work because the previous chat is unavailable.',
-	                    '- `claim_workspace` resolves the worktree, attaches it, and creates the attempt in one transaction. Do not use a manual register, attach, and start sequence.',
 	                    '- Call `checkpoint_work` after each meaningful action with the observed result and exactly one concrete `next_action`.',
+	                    '- Use `spawn_work` when the current task reveals a child or prerequisite. It prepares the new item and links it to the current task atomically.',
 	                    '- Submit observable results with `submit_work_evidence`, link them to the relevant condition, and call `verify_work_condition`.',
 	                    '- Call `finish_work` only after every required condition has accepted evidence and every blocker is finished.',
 	                    '- Before stopping unfinished work, call `handoff_work`. A fresh agent resumes from the same work item ID and its recorded next action.',
@@ -2946,22 +2966,18 @@
 	                    '- Create executable child tasks with `create_plan_task`, its `component_id`, and the narrowest matching `goal_id`. A component is the map; its tasks are the work.',
 	                    '- Use `update_plan_task` when a task\'s outcome, completion condition, implementation note, or provenance needs clarification. It keeps the component, issue key, state, agents, and worktree links intact.',
                     '- Map task state as follows: `ready` is not started, `doing` is in progress, `done` is complete, and `blocked` is stuck. Use `review` only when the owner explicitly needs a review state.',
-	                    '- Prepare completion conditions and call `claim_workspace` **before** implementation. It records the worktree, `doing`, the task\'s `owner`, and immutable `started_by` data together.',
+	                    '- Prepare completion conditions and call `claim_work` before acting. It records `doing`, the task owner, and immutable starter data together.',
 	                    '- Call `finish_work` the moment the verified task is complete. If work is stuck, checkpoint the blocker, hand off the active attempt, and then use `block_plan_task`.',
                     '- Never batch plan updates at the end of a session. Every state change is an API write when it happens.',
                     '- For an open task, set `provenance` to `agent` when an agent is declaring its imminent build intent, or `roadmap` when the task comes from durable planning material. Leave it empty only when neither is true.',
                     '',
-                    '## Dependencies, paths, and worktrees',
+                    '## Dependencies and linked resources',
                     '',
                     '- Connect components with `link_plan_components`. `needs` means the component must come after the related component; `links` means the two components are connected. The underlying `blocks` edge remains directed.',
-                    '- Put repository paths and glob patterns owned by a component in `owned_paths`. Keep them current with `set_plan_component_paths`; this tells the owner which component an agent is actually changing, including follow-up work on a completed component.',
-	                    '- Use a complete repository sync when worktrees were added, moved, or removed:',
-                    '',
-                    '```bash',
-                    'stash worktree sync --repo . --namespace /projects/myapp --agent-id my-agent',
-                    '```',
-                    '',
-	                    '`claim_workspace` attaches the current worktree atomically. The full sync is for heartbeat and missing-worktree reconciliation.',
+                    '- Add required routing hints with `set_work_capabilities`; these hints never grant authorization.',
+	                    '- Use `attach_work_resource` for Jira issues, Confluence pages, Git checkouts, documents, browser targets, APIs, datasets, devices, and result artifacts.',
+	                    '- Keep external bodies and credentials in their original system. Store only a short summary, stable key, revision, and URI in Stash.',
+	                    '- Git users may optionally use `resolve_workspace`, `resume_workspace`, and `claim_workspace`; other work never needs them.',
                     '',
                     '## Decisions and evidence',
                     '',
@@ -2980,8 +2996,8 @@
 	                    '',
 	                    '## Session start and end',
                     '',
-	                    '1. Collect local Git facts, call `resolve_workspace`, and then call brief `resume_workspace`.',
-	                    '2. Follow the returned goal path and next action. Search only when the short work selection does not identify the intended item.',
+	                    '1. Call `resume_project` with the exact project namespace and your capabilities.',
+	                    '2. Resume active work or select one returned candidate, then call `resume_work`.',
 	                    '3. Run `validate_work_plan` when the plan meaning changed or its saved validation is stale.',
 	                    '4. Before ending an active attempt, either finish it with verified evidence or call `handoff_work` with one concrete next action. Save durable facts with `remember_work`.',
                     '',
@@ -3338,7 +3354,7 @@
                         query_facts: '사실',
                         list_hypotheses: '가설',
                         list_goals: '목표',
-                        list_worktrees: '워크트리'
+                        list_worktrees: 'Git 작업 공간'
                     }[this.resultKind] || '항목';
                 },
 
@@ -3415,7 +3431,7 @@
 
                 async loadWorktrees(resetPage = true) {
                     this.activeNav = 'worktrees';
-                    this.resultTitle = '워크트리';
+                    this.resultTitle = 'Git 작업 공간';
                     this.resultDescription = '연결된 Git 작업 공간의 현재 상태입니다.';
                     this.view = 'worktrees';
                     if (resetPage) {
@@ -3444,7 +3460,7 @@
                         this.resultValue = null;
                         this.result = '오류: ' + e.message;
                         this.view = 'text';
-                        this.setNotice('워크트리를 불러오지 못했습니다.', 'error', 0);
+                        this.setNotice('Git 작업 공간을 불러오지 못했습니다.', 'error', 0);
                     } finally {
                         this.loading = false;
                     }

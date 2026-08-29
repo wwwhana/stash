@@ -18,6 +18,7 @@ var ErrProjectGoalNotSet = fmt.Errorf("brain: project goal is not set")
 
 const goalMapMemoryContentLimit = 256
 const goalMapRootCandidateLimit = 20
+const goalMapResourceLimit = 200
 
 const (
 	goalBriefContentLimit = 512
@@ -497,6 +498,10 @@ func goalMapMemoryKey(memoryType string, memoryID int64) string {
 	return fmt.Sprintf("memory:%s:%d", memoryType, memoryID)
 }
 
+func goalMapResourceKey(resourceID int64) string {
+	return fmt.Sprintf("resource:%d", resourceID)
+}
+
 func goalMapEdgeDirection(ownerKey, memoryKey, relation string) (string, string) {
 	switch relation {
 	case "evidence", "result", "supersedes":
@@ -518,6 +523,7 @@ func (b *Brain) GetGoalMap(ctx context.Context, namespaceID int64, includeDone b
 		GoalTree:       models.GoalMapTree{RootGoalID: tree.RootGoalID, Goals: make([]models.GoalMapGoal, 0, len(tree.Goals))},
 		RootCandidates: make([]models.GoalBrief, 0),
 		WorkItems:      make([]models.GoalMapWork, 0),
+		Resources:      make([]models.GoalMapResource, 0),
 		Memories:       make([]models.GoalMapMemory, 0),
 		Edges:          make([]models.GoalMapEdge, 0),
 		UnassignedWork: make([]models.GoalMapWork, 0),
@@ -592,7 +598,9 @@ func (b *Brain) GetGoalMap(ctx context.Context, namespaceID int64, includeDone b
 			`SELECT item.id,
 			        coalesce(attempt.agent_id, ''), coalesce(attempt.status, ''), attempt.lease_expires_at,
 			        coalesce(checkpoint.result, ''),
-			        coalesce(nullif(state.current_next_action, ''), checkpoint.next_action, '')
+			        coalesce(nullif(state.current_next_action, ''), checkpoint.next_action, ''),
+			        coalesce(ARRAY(SELECT capability FROM work_item_capabilities required
+			                       WHERE required.work_item_id = item.id ORDER BY capability), '{}'::text[])
 			 FROM work_items item
 			 LEFT JOIN LATERAL (
 			     SELECT candidate.id, candidate.agent_id, candidate.status, candidate.lease_expires_at
@@ -616,7 +624,8 @@ func (b *Brain) GetGoalMap(ctx context.Context, namespaceID int64, includeDone b
 			var id int64
 			var agentID, attemptStatus, latestResult, nextAction string
 			var leaseExpires *time.Time
-			if err := monitorRows.Scan(&id, &agentID, &attemptStatus, &leaseExpires, &latestResult, &nextAction); err != nil {
+			var requiredCapabilities []string
+			if err := monitorRows.Scan(&id, &agentID, &attemptStatus, &leaseExpires, &latestResult, &nextAction, &requiredCapabilities); err != nil {
 				monitorRows.Close()
 				return nil, fmt.Errorf("scan goal map execution summary: %w", err)
 			}
@@ -626,6 +635,7 @@ func (b *Brain) GetGoalMap(ctx context.Context, namespaceID int64, includeDone b
 			entry.LeaseExpires = leaseExpires
 			entry.LatestResult = compactGoalMapText(latestResult, 384)
 			entry.NextAction = compactGoalMapText(nextAction, 384)
+			entry.RequiredCapabilities = requiredCapabilities
 			monitorByID[id] = entry
 		}
 		if err := monitorRows.Err(); err != nil {
@@ -695,6 +705,68 @@ func (b *Brain) GetGoalMap(ctx context.Context, namespaceID int64, includeDone b
 			return nil, fmt.Errorf("read goal map work edges: %w", err)
 		}
 		edgeRows.Close()
+
+		if err := b.pool.QueryRow(ctx,
+			`SELECT count(DISTINCT resource.id) FROM work_resource_links linked
+			 JOIN work_resources resource ON resource.id = linked.resource_id
+			 WHERE linked.work_item_id = ANY($1) AND linked.namespace_id = $2
+			   AND resource.namespace_id = $2 AND resource.deleted_at IS NULL`,
+			workIDs, namespaceID,
+		).Scan(&result.ResourceTotal); err != nil {
+			return nil, fmt.Errorf("count goal map resources: %w", err)
+		}
+		resourceRows, err := b.pool.Query(ctx,
+			`SELECT resource.id, resource.kind, resource.source, resource.authority, resource.title,
+			        resource.uri, resource.summary, resource.external_id, resource.revision,
+			        linked.work_item_id, linked.role
+			 FROM work_resource_links linked
+			 JOIN work_resources resource ON resource.id = linked.resource_id
+			 WHERE linked.work_item_id = ANY($1) AND linked.namespace_id = $2
+			   AND resource.namespace_id = $2 AND resource.deleted_at IS NULL
+			 ORDER BY linked.created_at, linked.id LIMIT $3`,
+			workIDs, namespaceID, goalMapResourceLimit,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("list goal map resources: %w", err)
+		}
+		resourceSeen := make(map[int64]struct{})
+		for resourceRows.Next() {
+			var resource models.GoalMapResource
+			var workItemID int64
+			var role string
+			if err := resourceRows.Scan(
+				&resource.ID, &resource.Kind, &resource.Source, &resource.Authority, &resource.Title,
+				&resource.URI, &resource.Summary, &resource.ExternalID, &resource.Revision,
+				&workItemID, &role,
+			); err != nil {
+				resourceRows.Close()
+				return nil, fmt.Errorf("scan goal map resource: %w", err)
+			}
+			resource.Key = goalMapResourceKey(resource.ID)
+			resource.Title = compactGoalMapText(resource.Title, 256)
+			resource.URI = compactGoalMapText(resource.URI, 512)
+			resource.Summary = compactGoalMapText(resource.Summary, 256)
+			resource.ExternalID = compactGoalMapText(resource.ExternalID, 128)
+			resource.Revision = compactGoalMapText(resource.Revision, 128)
+			if _, exists := resourceSeen[resource.ID]; !exists {
+				resourceSeen[resource.ID] = struct{}{}
+				result.Resources = append(result.Resources, resource)
+			}
+			from, to := resource.Key, goalMapNodeKey("work", workItemID)
+			if role == "output" || role == "evidence" {
+				from, to = to, from
+			}
+			result.Edges = append(result.Edges, models.GoalMapEdge{
+				Key:  fmt.Sprintf("resource-edge:%d:%d:%s", resource.ID, workItemID, role),
+				From: from, To: to, Relation: role,
+			})
+		}
+		if err := resourceRows.Err(); err != nil {
+			resourceRows.Close()
+			return nil, fmt.Errorf("read goal map resource rows: %w", err)
+		}
+		resourceRows.Close()
+		result.ResourcesTruncated = result.ResourceTotal > len(result.Resources)
 	}
 
 	if len(goalIDs) == 0 {
