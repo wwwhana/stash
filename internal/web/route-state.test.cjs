@@ -15,13 +15,15 @@ test('every workspace page has a stable address', () => {
 
 test('work graph address restores namespace and filters', () => {
     const href = buildRoute('graph', {
-        namespace: '/projects/agent-atlas-demo', query: 'Confluence', status: 'doing'
+        namespace: '/projects/agent-atlas-demo', query: 'Confluence', status: 'doing',
+        relations: { part_of: true, blocks: false, relates_to: false }, focus: '42'
     });
-    assert.equal(href, '/ui/work-graph?namespace=%2Fprojects%2Fagent-atlas-demo&q=Confluence&status=doing');
+    assert.equal(href, '/ui/work-graph?namespace=%2Fprojects%2Fagent-atlas-demo&q=Confluence&status=doing&hide_relation=blocks%2Crelates_to&focus=42');
     assert.deepEqual(readRoute('http://stash.local' + href), {
         route: 'graph', matched: true, namespace: '/projects/agent-atlas-demo', project: '',
         query: 'Confluence', status: 'doing', agent: '', memoryType: '',
         kinds: { goal: true, work: true, memory: true, resource: true },
+        relations: { part_of: true, blocks: false, relates_to: false }, focus: '42',
         issueType: '', label: '', offset: 0, issueID: 0
     });
 });
@@ -65,6 +67,9 @@ test('the console restores routes and exposes real navigation links', () => {
     assert.match(html, /<a :href="routeHref\('graph'\)" @click\.prevent="loadWorkGraph\(\)"/);
     assert.match(viewModel, /window\.history\[replace \? 'replaceState' : 'pushState'\]/);
     assert.match(viewModel, /async restoreRoute\(\)/);
+    assert.match(viewModel, /relations: this\.graphFilter\.relations/);
+    assert.match(viewModel, /focus: this\.graphFocusedKey/);
+    assert.match(viewModel, /this\.focusGraphNode\(route\.focus\)/);
     assert.match(html, /window\.addEventListener\('popstate'/);
     assert.match(html, /await this\.restoreRoute\(\)/);
 });

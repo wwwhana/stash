@@ -126,6 +126,10 @@ test('goal map UI keeps resource and monitoring state in its own view-model', ()
     assert.match(html, /node\.kind === 'resource'/);
     assert.match(html, />연결 자료</);
     assert.match(html, /aria-label="목표·지식 지도 필터"/);
+    assert.match(html, /aria-controls="goal-map-filter-menu"/);
+    assert.match(html, /goalMapFilterChips\(\)/);
+    assert.match(viewModel, /goalMapFilterOpen: false/);
+    assert.match(viewModel, /clearGoalMapFilter\(/);
     assert.match(html, /x-for="ring in goalMapLayout\.rings"/);
     assert.doesNotMatch(html, /goalMapLayout\.columns|stash-goal-map__column/);
     assert.match(html, /@submit\.prevent="claimWork"/);
@@ -164,6 +168,6 @@ test('namespace selection is shared by relation views and memory lists', () => {
     assert.match(scopeViewModel, /invokeTool\('list_namespaces'/);
     assert.match(scopeViewModel, /listed\.push\(\.\.\.result\.items\)/);
     assert.match(html, /x-model="mapNamespaceSlug" @change="loadGoalMap\(false\)"/);
-    assert.match(html, /x-model="mapNamespaceSlug" @change="loadWorkGraph\(false\)"/);
+    assert.match(html, /x-model="mapNamespaceSlug" @change="changeWorkGraphNamespace\(\)"/);
     assert.match(html, /query_facts', \{namespaces: mapNamespaceSlug \|\| '\/'/);
 });

@@ -33,6 +33,7 @@
     });
     const pathRoutes = new Map(Object.entries(routePaths).map(([route, path]) => [path, route]));
     const kinds = ['goal', 'work', 'memory', 'resource'];
+    const relations = ['part_of', 'blocks', 'relates_to'];
 
     function text(value) {
         return String(value || '').trim();
@@ -54,6 +55,7 @@
         const path = normalizedPath(url.pathname);
         const route = pathRoutes.get(path) || 'goal-map';
         const hidden = new Set(text(url.searchParams.get('hide')).split(',').map(item => item.trim()).filter(item => kinds.includes(item)));
+        const hiddenRelations = new Set(text(url.searchParams.get('hide_relation')).split(',').map(item => item.trim()).filter(item => relations.includes(item)));
         return {
             route,
             matched: path === '/' || pathRoutes.has(path),
@@ -64,6 +66,8 @@
             agent: text(url.searchParams.get('agent')),
             memoryType: text(url.searchParams.get('memory')),
             kinds: Object.fromEntries(kinds.map(kind => [kind, !hidden.has(kind)])),
+            relations: Object.fromEntries(relations.map(relation => [relation, !hiddenRelations.has(relation)])),
+            focus: text(url.searchParams.get('focus')),
             issueType: text(url.searchParams.get('type')),
             label: text(url.searchParams.get('label')),
             offset: positiveInteger(url.searchParams.get('offset')),
@@ -97,6 +101,9 @@
             setText(params, 'namespace', value.namespace);
             setText(params, 'q', value.query);
             setText(params, 'status', value.status);
+            const hidden = relations.filter(relation => value.relations && value.relations[relation] === false);
+            if (hidden.length) params.set('hide_relation', hidden.join(','));
+            setText(params, 'focus', value.focus);
         } else if (selected === 'plan') {
             setText(params, 'project', value.project);
         } else if (selected === 'board') {

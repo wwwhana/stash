@@ -15,6 +15,17 @@ function placed(layout, id) {
     return layout.nodes.find(item => item.item.id === id);
 }
 
+function workGraphViewModel() {
+    const html = fs.readFileSync(require.resolve('./ui/index.html'), 'utf8');
+    const source = html.match(/function createWorkGraphViewModel\(\) \{[\s\S]*?\n        \}(?=\n\n        function createGoalMapViewModel)/)?.[0];
+    assert.ok(source, 'work graph view-model source');
+    const create = new Function('window', `${source}; return createWorkGraphViewModel;`)({ StashWorkGraph: require('./ui/work-graph-layout.js') });
+    return {
+        ...create(), loading: false, view: 'graph',
+        syncRoute() {}, statusLabel(value) { return value; }, $nextTick() {}
+    };
+}
+
 test('fork and join use the longest predecessor depth', () => {
     const layout = buildWorkGraphLayout(
         ['A', 'B', 'C', 'D'].map(id => node(id)),
@@ -183,7 +194,43 @@ test('a dependency across different parents keeps all four nodes and all relatio
     assert.ok(placed(layout, 'Q').depth > placed(layout, 'B').depth);
 });
 
-test('the graph UI renders one independent node template with filters and no nested child canvas', () => {
+test('relation filters hide only selected links and keep parent-child navigation data', () => {
+    const nodes = [
+        node('P'), { ...node('C'), parent_id: 'P' }, node('A'), node('B')
+    ];
+    const layout = buildWorkGraphLayout(nodes, [
+        edge(1, 'A', 'B', 'blocks'), edge(2, 'A', 'C', 'relates_to')
+    ], { relations: { part_of: false, blocks: true, relates_to: false } });
+
+    assert.deepEqual(layout.edges.map(item => item.type), ['blocks']);
+    assert.equal(placed(layout, 'C').parentItem.id, 'P');
+    assert.deepEqual(placed(layout, 'P').childItems.map(item => item.id), ['C']);
+    assert.equal(placed(layout, 'B').depth, placed(layout, 'A').depth + 1);
+});
+
+test('focused work can move to every child and back to its parent while filters stay active', () => {
+    const viewModel = workGraphViewModel();
+    viewModel.setWorkGraph({
+        nodes: [node('P'), { ...node('C1'), parent_id: 'P' }, { ...node('C2'), parent_id: 'P' }],
+        edges: [], worktrees: []
+    });
+
+    viewModel.graphFilter.query = 'Task P';
+    viewModel.refreshWorkGraphLayout();
+    viewModel.focusGraphNode('P', false);
+    assert.deepEqual(viewModel.graphFocusedChildren().map(item => item.id), ['C1', 'C2']);
+
+    viewModel.focusGraphNodeByID('C2');
+    assert.equal(viewModel.graphFocusedParent().id, 'P');
+    assert.ok(placed(viewModel.workGraphLayout, 'C2'));
+    assert.ok(placed(viewModel.workGraphLayout, 'P'));
+
+    viewModel.toggleGraphRelation('part_of');
+    assert.equal(viewModel.workGraphLayout.edges.some(item => item.type === 'part_of'), false);
+    assert.equal(viewModel.graphFocusedParent().id, 'P');
+});
+
+test('the graph UI renders filter selection and direct parent-child navigation', () => {
     const html = fs.readFileSync(require.resolve('./ui/index.html'), 'utf8');
     const graphArea = html.match(/<div x-show="view === 'graph'"[\s\S]*?<div x-show="view === 'worktrees'"/)?.[0] || '';
 
@@ -192,6 +239,14 @@ test('the graph UI renders one independent node template with filters and no nes
     assert.match(graphArea, /graphNodeMeta\(node\)/);
     assert.match(graphArea, /graphFilter\.query/);
     assert.match(graphArea, /graphFilter\.status/);
+    assert.match(graphArea, /class="stash-filter-trigger"/);
+    assert.match(graphArea, /toggleGraphRelation\('part_of'\)/);
+    assert.match(graphArea, /class="stash-filter-chips"/);
+    assert.match(graphArea, /class="stash-graph-navigator"/);
+    assert.match(graphArea, /focusGraphNodeByID\(graphFocusedParent\(\)\.id\)/);
+    assert.match(graphArea, /x-for="child in graphFocusedChildren\(\)"/);
+    assert.match(graphArea, /data-graph-node-key/);
+    assert.match(graphArea, /class="stash-graph-node__actions"/);
     assert.match(graphArea, /graphNodeRoleLabel\(node\)/);
     assert.match(graphArea, /stash-graph-role-badge/);
     assert.doesNotMatch(graphArea, /workGraphLayout\.stages|stash-graph-stage/);
@@ -206,6 +261,11 @@ test('drag handles stay in the graph view-model and never persist offsets', () =
     assert.match(graphViewModel, /startGraphNodeDrag\(/);
     assert.match(graphViewModel, /moveGraphNodeWithKeyboard\(/);
     assert.match(graphViewModel, /resetGraphLayout\(/);
+    assert.match(graphViewModel, /graphFocusedKey: ''/);
+    assert.match(graphViewModel, /focusGraphNode\(/);
+    assert.match(graphViewModel, /graphFocusedParent\(/);
+    assert.match(graphViewModel, /graphFocusedChildren\(/);
+    assert.match(graphViewModel, /scrollGraphNodeIntoView\(/);
     assert.match(graphViewModel, /return \{ minX: 0, minY: 0 \}/);
     assert.doesNotMatch(graphViewModel, /localStorage|sessionStorage/);
     assert.doesNotMatch(graphViewModel, /invokeTool\([^)]*graphNodeOffsets/);

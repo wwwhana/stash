@@ -6,7 +6,7 @@
     'use strict';
 
     const NODE_WIDTH = 204;
-    const NODE_HEIGHT = 94;
+    const NODE_HEIGHT = 118;
     const COLUMN_WIDTH = 236;
     const COLUMN_GAP = 72;
     const ROW_GAP = 24;
@@ -119,8 +119,18 @@
         return { parentByNode, childrenByParent, orphanParentByNode, hierarchyCycleNodes };
     }
 
-    function graphEdges(explicitEdges, hierarchy) {
+    function relationGroup(type) {
+        if (type === 'part_of' || type === 'blocks') return type;
+        return 'relates_to';
+    }
+
+    function relationEnabled(relations, type) {
+        return !relations || relations[relationGroup(type)] !== false;
+    }
+
+    function graphEdges(explicitEdges, hierarchy, relations) {
         const result = explicitEdges.slice();
+        if (!relationEnabled(relations, 'part_of')) return result;
         for (const [childKey, parentKey] of hierarchy.parentByNode) {
             result.push({
                 edge: null,
@@ -318,9 +328,10 @@
         const nodes = normalizeNodes(rawNodes);
         if (!nodes.length) return emptyLayout();
         const nodeMap = new Map(nodes.map(node => [keyOf(node.id), node]));
-        const explicitEdges = normalizeEdges(rawEdges, nodeMap);
+        const relations = options && options.relations && typeof options.relations === 'object' ? options.relations : null;
+        const explicitEdges = normalizeEdges(rawEdges, nodeMap).filter(edge => relationEnabled(relations, edge.type));
         const hierarchy = buildHierarchy(nodes, nodeMap);
-        const edges = graphEdges(explicitEdges, hierarchy);
+        const edges = graphEdges(explicitEdges, hierarchy, relations);
         const nodeKeys = nodes.map(node => keyOf(node.id));
         const levelData = computeLevels(nodeKeys, edges, nodeMap);
         const offsets = options && options.offsets && typeof options.offsets === 'object' ? options.offsets : {};

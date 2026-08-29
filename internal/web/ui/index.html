@@ -339,6 +339,22 @@
         .stash-map-types { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
         .stash-map-types button { min-height: 30px; padding: 5px 8px; border: 1px solid #475569; border-radius: 7px; color: #94a3b8; background: #172033; font-size: 9px; font-weight: 800; }
         .stash-map-types button[aria-pressed="true"] { border-color: #818cf8; color: #eef2ff; background: #303d63; }
+        .stash-filter-picker { position: relative; }
+        .stash-filter-trigger { min-height: 34px; display: inline-flex; align-items: center; gap: 7px; padding: 6px 10px; border: 1px solid #475569; border-radius: 7px; color: #e2e8f0; background: #1e293b; font-size: 10px; font-weight: 850; }
+        .stash-filter-trigger:hover, .stash-filter-trigger[aria-expanded="true"] { border-color: #818cf8; color: #fff; background: #273552; }
+        .stash-filter-trigger:focus-visible { border-color: #a5b4fc; outline: 2px solid rgba(129,140,248,.35); outline-offset: 2px; }
+        .stash-filter-trigger__count { min-width: 18px; height: 18px; display: inline-grid; padding: 0 5px; place-items: center; border-radius: 999px; color: #fff; background: #6366f1; font-size: 9px; }
+        .stash-filter-menu { position: absolute; top: calc(100% + 7px); left: 0; z-index: 30; width: min(390px, calc(100vw - 32px)); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; padding: 11px; border: 1px solid #475569; border-radius: 10px; background: #172033; box-shadow: 0 16px 36px rgba(2,6,23,.42); }
+        .stash-filter-menu .stash-map-filter { min-width: 0; }
+        .stash-filter-menu .stash-map-filter.is-search, .stash-filter-menu__wide { grid-column: 1 / -1; }
+        .stash-filter-menu__section { display: grid; grid-column: 1 / -1; gap: 6px; }
+        .stash-filter-menu__label { color: #94a3b8; font-size: 9px; font-weight: 800; }
+        .stash-filter-menu__footer { grid-column: 1 / -1; display: flex; justify-content: flex-end; padding-top: 2px; }
+        .stash-filter-menu__footer .stash-graph-reset { min-height: 30px; }
+        .stash-filter-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: -2px 0 8px; }
+        .stash-filter-chip { min-height: 25px; display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; border: 1px solid #475569; border-radius: 999px; color: #cbd5e1; background: #172033; font-size: 9px; font-weight: 750; }
+        .stash-filter-chip:hover { border-color: #818cf8; color: #fff; }
+        .stash-filter-chip i { color: #94a3b8; font-style: normal; }
         .stash-graph-reset { min-height: 34px; padding: 6px 10px; border: 1px solid #475569; border-radius: 7px; color: #e2e8f0; background: #1e293b; font-size: 10px; font-weight: 800; }
         .stash-graph-reset:hover:not(:disabled) { border-color: #818cf8; color: #fff; background: #273552; }
         .stash-graph-reset:disabled { color: #64748b; cursor: default; opacity: .65; }
@@ -358,18 +374,28 @@
         .stash-graph-hierarchy-alert { margin-bottom: 12px; padding: 10px 12px; border: 1px solid rgba(251,191,36,.4); border-radius: 10px; color: #fde68a; background: rgba(120,53,15,.18); font-size: 11px; line-height: 1.5; }
         .stash-graph-hierarchy-alert strong { display: block; color: #fef3c7; font-size: 12px; }
         .stash-graph-hierarchy-alert div { display: grid; gap: 3px; margin-top: 5px; }
+        .stash-graph-navigator { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(140px, 1fr) minmax(180px, 2fr) auto; align-items: center; gap: 8px; margin-bottom: 9px; padding: 9px 10px; border: 1px solid rgba(129,140,248,.48); border-radius: 10px; background: rgba(30,41,59,.96); box-shadow: 0 8px 20px rgba(2,6,23,.25); }
+        .stash-graph-navigator__current, .stash-graph-navigator__group { min-width: 0; }
+        .stash-graph-navigator__current span, .stash-graph-navigator__group > span { display: block; margin-bottom: 4px; color: #94a3b8; font-size: 8px; font-weight: 850; }
+        .stash-graph-navigator__current strong { display: block; overflow: hidden; color: #f8fafc; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+        .stash-graph-navigator__links { display: flex; min-width: 0; flex-wrap: wrap; gap: 5px; }
+        .stash-graph-navigator__links button { max-width: 180px; min-height: 27px; padding: 4px 7px; overflow: hidden; border: 1px solid #475569; border-radius: 7px; color: #e2e8f0; background: #172033; font-size: 9px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+        .stash-graph-navigator__links button:hover { border-color: #818cf8; color: #fff; }
+        .stash-graph-navigator__empty { color: #64748b; font-size: 9px; font-style: normal; }
+        .stash-graph-navigator__actions { display: flex; gap: 5px; }
         .stash-graph-content { min-height: 0; display: flex; flex: 1 1 auto; flex-direction: column; }
         .stash-graph-scroll { width: calc(100% + var(--graph-side-padding) * 2); min-height: 200px; max-width: none; margin-right: calc(var(--graph-side-padding) * -1); margin-left: calc(var(--graph-side-padding) * -1); overflow: auto; flex: 1 1 auto; border-top: 1px solid rgba(148,163,184,.22); border-bottom: 1px solid rgba(148,163,184,.22); background: rgba(10,17,32,.38); overscroll-behavior-inline: contain; scrollbar-color: #475569 #172033; }
         .stash-graph-scroll:focus-visible { border-color: #818cf8; outline-color: rgba(129,140,248,.5); }
         .stash-graph-canvas { position: relative; min-height: 100%; overflow: hidden; }
         .stash-graph-edge-layer { position: absolute; inset: 0; z-index: 1; width: 100% !important; min-width: 0 !important; height: 100% !important; pointer-events: none; }
         .stash-graph-edge-layer path { fill: none; vector-effect: non-scaling-stroke; }
-        .stash-graph-node { position: absolute; z-index: 2; display: block; padding: 0; overflow: hidden; border: 1px solid #475569; border-radius: 11px; color: #f8fafc; background: #18233a; box-shadow: 0 8px 18px rgba(2,6,23,.2); text-align: left; transition: border-color .15s ease, box-shadow .15s ease; }
+        .stash-graph-node { position: absolute; z-index: 2; display: flex; flex-direction: column; padding: 0; overflow: hidden; border: 1px solid #475569; border-radius: 11px; color: #f8fafc; background: #18233a; box-shadow: 0 8px 18px rgba(2,6,23,.2); text-align: left; transition: border-color .15s ease, box-shadow .15s ease; }
         .stash-graph-node:hover { border-color: #818cf8; box-shadow: 0 10px 22px rgba(2,6,23,.28); }
+        .stash-graph-node.is-focused { z-index: 3; border-color: #c7d2fe; box-shadow: 0 0 0 3px rgba(129,140,248,.3), 0 12px 26px rgba(2,6,23,.34); }
         .stash-graph-node.is-cycle { border-color: #fb7185; box-shadow: 0 0 0 1px rgba(251,113,133,.2), 0 8px 18px rgba(2,6,23,.2); }
         .stash-graph-node.is-moved { border-color: #a5b4fc; }
         .stash-graph-node.is-context { opacity: .64; }
-        .stash-graph-node__open { width: 100%; height: 100%; display: block; padding: 12px 42px 10px 13px; border: 0; color: inherit; background: transparent; text-align: left; }
+        .stash-graph-node__open { width: 100%; min-height: 0; display: block; flex: 1 1 auto; padding: 11px 42px 7px 13px; border: 0; color: inherit; background: transparent; text-align: left; }
         .stash-graph-node__open:hover { background: rgba(99,102,241,.08); }
         .stash-graph-node__open:focus-visible { position: relative; z-index: 1; box-shadow: inset 0 0 0 3px rgba(165,180,252,.55); outline: none; }
         .stash-graph-node__top { display: flex; align-items: center; justify-content: space-between; gap: 7px; }
@@ -387,8 +413,12 @@
         .stash-graph-cycle-badge { padding: 2px 5px; border-radius: 999px; color: #fecdd3; background: rgba(190,24,93,.25); font-size: 8px; font-weight: 900; }
         .stash-graph-node__title { display: -webkit-box; margin-top: 8px; overflow: hidden; color: #f8fafc; font-size: 11px; font-weight: 750; line-height: 1.35; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
         .stash-graph-node__meta { display: block; margin-top: 6px; overflow: hidden; color: #94a3b8; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
-        .stash-graph-node__warning { height: 24px; display: flex; align-items: center; padding: 0 12px; border-top: 1px solid rgba(251,191,36,.2); color: #fde68a; background: rgba(120,53,15,.15); font-size: 9px; }
+        .stash-graph-node__warning { min-height: 20px; display: flex; flex: 0 0 auto; align-items: center; padding: 0 12px; border-top: 1px solid rgba(251,191,36,.2); color: #fde68a; background: rgba(120,53,15,.15); font-size: 8px; }
         .stash-graph-node__warning span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .stash-graph-node__actions { min-height: 28px; display: flex; flex: 0 0 auto; border-top: 1px solid rgba(148,163,184,.16); }
+        .stash-graph-node__actions button { min-width: 0; flex: 1 1 auto; padding: 4px 6px; overflow: hidden; border: 0; border-right: 1px solid rgba(148,163,184,.16); color: #a5b4fc; background: rgba(15,23,42,.45); font-size: 8px; font-weight: 850; text-overflow: ellipsis; white-space: nowrap; }
+        .stash-graph-node__actions button:last-child { border-right: 0; }
+        .stash-graph-node__actions button:hover, .stash-graph-node__actions button:focus-visible { color: #fff; background: rgba(99,102,241,.22); outline: none; }
         .stash-graph-drag-handle { position: absolute; top: 7px; right: 7px; z-index: 5; width: 25px; height: 25px; display: grid; padding: 0; place-items: center; border: 1px solid rgba(165,180,252,.48); border-radius: 7px; color: #c7d2fe; background: rgba(15,23,42,.92); box-shadow: 0 2px 5px rgba(2,6,23,.28); cursor: grab; touch-action: none; }
         .stash-graph-drag-handle:hover { border-color: #c7d2fe; color: #fff; background: #303d63; }
         .stash-graph-drag-handle:focus-visible { border-color: #fff; box-shadow: 0 0 0 3px rgba(129,140,248,.42); outline: none; }
@@ -412,7 +442,13 @@
         .stash-goal-map .stash-map-types button { border-color: #d0d5dd; color: #667085; background: #fff; }
         .stash-goal-map .stash-map-types button[aria-pressed="true"] { border-color: #818cf8; color: #3730a3; background: #eef2ff; }
         .stash-goal-map .stash-graph-reset { border-color: #d0d5dd; color: #475467; background: #fff; }
-        .stash-goal-map__summary { display: flex; gap: 7px; }
+        .stash-goal-map .stash-filter-trigger { border-color: #d0d5dd; color: #475467; background: #fff; }
+        .stash-goal-map .stash-filter-trigger:hover, .stash-goal-map .stash-filter-trigger[aria-expanded="true"] { border-color: #818cf8; color: #3730a3; background: #f5f7ff; }
+        .stash-goal-map .stash-filter-menu { border-color: #d0d5dd; background: #fff; box-shadow: 0 16px 36px rgba(27,39,70,.18); }
+        .stash-goal-map .stash-filter-menu__label { color: #667085; }
+        .stash-goal-map .stash-filter-chip { border-color: #d0d5dd; color: #475467; background: #fff; }
+        .stash-goal-map .stash-filter-chip:hover { border-color: #818cf8; color: #3730a3; }
+        .stash-goal-map__summary { display: flex; gap: 7px; margin-left: auto; }
         .stash-goal-map__summary span { padding: 5px 8px; border-radius: 7px; color: #667085; background: #f2f4f7; font-size: 9px; }
         .stash-goal-map__summary strong { margin-right: 3px; color: #344054; }
         .stash-goal-map__activity { display: flex; gap: 7px; margin: 0 0 10px; overflow-x: auto; }
@@ -631,10 +667,17 @@
             .stash-graph-toolbar { display: block; }
             .stash-graph-project { display: block; }
             .stash-graph-project select { width: 100%; margin-top: 6px; }
+            .stash-filter-picker { margin-top: 9px; }
+            .stash-filter-trigger { width: 100%; justify-content: center; }
+            .stash-filter-menu { position: static; width: 100%; margin-top: 7px; grid-template-columns: 1fr; }
+            .stash-filter-menu .stash-map-filter.is-search, .stash-filter-menu__wide, .stash-filter-menu__section, .stash-filter-menu__footer { grid-column: auto; }
+            .stash-filter-chips { margin-top: 0; }
             .stash-map-filter { width: 100%; margin-top: 8px; }
             .stash-map-types { margin-top: 9px; }
             .stash-graph-project-note { display: block; margin-top: 7px; }
             .stash-graph-reset { width: 100%; margin-top: 9px; }
+            .stash-graph-navigator { grid-template-columns: 1fr; }
+            .stash-graph-navigator__actions .stash-graph-reset { width: auto; margin-top: 0; }
             .stash-maintenance-intro { display: block; }
             .stash-maintenance-model { margin-top: 12px; }
             .stash-maintenance-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -994,12 +1037,17 @@
                         </div>
                         <div class="stash-goal-map__toolbar" aria-label="목표·지식 지도 필터">
                             <label class="stash-graph-project"><span>네임스페이스</span><select x-model="mapNamespaceSlug" @change="loadGoalMap(false)" :disabled="mapNamespacesLoading || loading" aria-label="목표·지식 지도 네임스페이스 선택"><option value="">기본 공간 (/)</option><template x-for="namespace in mapNamespaces" :key="'goal-map-' + namespace.slug"><option :value="namespace.slug" x-text="namespace.label"></option></template></select></label>
-                            <label class="stash-map-filter is-search"><span>검색</span><input type="search" x-model.debounce.180ms="goalMapFilters.query" @input.debounce.180ms="refreshGoalMapLayout()" placeholder="작업, 사실, 자료"></label>
-                            <label class="stash-map-filter"><span>작업 상태</span><select x-model="goalMapFilters.status" @change="refreshGoalMapLayout()"><option value="">전체</option><option value="ready">준비</option><option value="doing">진행 중</option><option value="blocked">막힘</option><option value="review">검토</option><option value="done">완료</option></select></label>
-                            <label class="stash-map-filter"><span>담당</span><select x-model="goalMapFilters.agent" @change="refreshGoalMapLayout()"><option value="">전체</option><template x-for="agent in goalMapAgents()" :key="'goal-agent-' + agent"><option :value="agent" x-text="agent"></option></template></select></label>
-                            <label class="stash-map-filter"><span>기억 종류</span><select x-model="goalMapFilters.memoryType" @change="refreshGoalMapLayout()"><option value="">전체</option><option value="fact">사실</option><option value="episode">경험</option><option value="hypothesis">가설</option><option value="failure">실패 기록</option></select></label>
-                            <div class="stash-map-types" role="group" aria-label="표시할 항목"><button type="button" @click="toggleGoalMapKind('goal')" :aria-pressed="String(goalMapFilters.kinds.goal)">목표</button><button type="button" @click="toggleGoalMapKind('work')" :aria-pressed="String(goalMapFilters.kinds.work)">작업</button><button type="button" @click="toggleGoalMapKind('memory')" :aria-pressed="String(goalMapFilters.kinds.memory)">사실·기억</button><button type="button" @click="toggleGoalMapKind('resource')" :aria-pressed="String(goalMapFilters.kinds.resource)">자료</button></div>
-                            <button type="button" class="stash-graph-reset" @click="resetGoalMapFilters()" :disabled="!goalMapHasFilters()">필터 초기화</button>
+                            <div class="stash-filter-picker" @keydown.escape.stop="goalMapFilterOpen = false">
+                                <button type="button" class="stash-filter-trigger" @click="goalMapFilterOpen = !goalMapFilterOpen" :aria-expanded="String(goalMapFilterOpen)" aria-controls="goal-map-filter-menu">필터<span x-show="goalMapFilterCount()" class="stash-filter-trigger__count" x-text="goalMapFilterCount()"></span></button>
+                                <div id="goal-map-filter-menu" x-show="goalMapFilterOpen" x-cloak @click.outside="goalMapFilterOpen = false" class="stash-filter-menu" role="group" aria-label="목표·지식 지도 필터 선택">
+                                    <label class="stash-map-filter is-search"><span>검색</span><input type="search" x-model.debounce.180ms="goalMapFilters.query" @input.debounce.180ms="refreshGoalMapLayout()" placeholder="작업, 사실, 자료"></label>
+                                    <label class="stash-map-filter"><span>작업 상태</span><select x-model="goalMapFilters.status" @change="refreshGoalMapLayout()"><option value="">전체</option><option value="ready">준비</option><option value="doing">진행 중</option><option value="blocked">막힘</option><option value="review">검토</option><option value="done">완료</option></select></label>
+                                    <label class="stash-map-filter"><span>담당</span><select x-model="goalMapFilters.agent" @change="refreshGoalMapLayout()"><option value="">전체</option><template x-for="agent in goalMapAgents()" :key="'goal-agent-' + agent"><option :value="agent" x-text="agent"></option></template></select></label>
+                                    <label class="stash-map-filter"><span>기억 종류</span><select x-model="goalMapFilters.memoryType" @change="refreshGoalMapLayout()"><option value="">전체</option><option value="fact">사실</option><option value="episode">경험</option><option value="hypothesis">가설</option><option value="failure">실패 기록</option></select></label>
+                                    <div class="stash-filter-menu__section"><span class="stash-filter-menu__label">항목</span><div class="stash-map-types" role="group" aria-label="표시할 항목"><button type="button" @click="toggleGoalMapKind('goal')" :aria-pressed="String(goalMapFilters.kinds.goal)">목표</button><button type="button" @click="toggleGoalMapKind('work')" :aria-pressed="String(goalMapFilters.kinds.work)">작업</button><button type="button" @click="toggleGoalMapKind('memory')" :aria-pressed="String(goalMapFilters.kinds.memory)">사실·기억</button><button type="button" @click="toggleGoalMapKind('resource')" :aria-pressed="String(goalMapFilters.kinds.resource)">자료</button></div></div>
+                                    <div class="stash-filter-menu__footer"><button type="button" class="stash-graph-reset" @click="resetGoalMapFilters()" :disabled="!goalMapHasFilters()">초기화</button></div>
+                                </div>
+                            </div>
                             <div class="stash-goal-map__summary" aria-label="목표 진행 요약">
                                 <span><strong x-text="goalMapLayout.counts.goal"></strong>목표</span>
                                 <span><strong x-text="goalMapLayout.counts.work"></strong>작업</span>
@@ -1009,6 +1057,7 @@
                                 <span><strong x-text="goalMapLayout.counts.memory"></strong>기억</span>
                             </div>
                         </div>
+                        <div x-show="goalMapHasFilters()" x-cloak class="stash-filter-chips" aria-label="적용한 필터"><template x-for="chip in goalMapFilterChips()" :key="chip.key"><button type="button" class="stash-filter-chip" @click="clearGoalMapFilter(chip.key)"><span x-text="chip.label"></span><i aria-hidden="true">×</i></button></template></div>
                         <div x-show="goalMapAttentionItems().length" class="stash-goal-map__activity" aria-label="지금 확인할 작업">
                             <template x-for="item in goalMapAttentionItems()" :key="'goal-map-attention-' + item.id">
                                 <button type="button" :class="{'is-blocked': item.status === 'blocked'}" @click="openIssue(item.id, $event.currentTarget)" :title="goalMapWorkDetail(item)"><strong x-text="(item.issue_key || '#' + item.id) + ' · ' + item.title"></strong><span x-text="goalMapAttentionText(item)"></span></button>
@@ -1041,21 +1090,34 @@
                     <div x-show="view === 'graph'" x-cloak class="stash-graph p-4 bg-slate-950 text-white" @pointermove.window="moveGraphNodeDrag($event)" @pointerup.window="finishGraphNodeDrag($event)" @pointercancel.window="finishGraphNodeDrag($event)" @keydown.escape.window="cancelGraphNodeDrag($event)">
                         <div class="stash-graph-header"><div><div class="stash-graph-title">작업 흐름</div><div class="stash-graph-scope" x-text="graphScopeLabel()"></div></div><div class="stash-graph-legend" aria-label="작업 연결 종류"><span><i class="stash-legend-line"></i>하위 → 상위</span><span><i class="stash-legend-line" style="border-color:#f97316"></i>먼저 → 다음</span><span><i class="stash-legend-line is-dashed"></i>관련</span></div></div>
                         <div class="stash-graph-toolbar" role="group" aria-label="작업 흐름 보기 설정">
-                            <label class="stash-graph-project"><span>네임스페이스</span><select x-model="mapNamespaceSlug" @change="loadWorkGraph(false)" :disabled="mapNamespacesLoading || loading" aria-label="작업 흐름 네임스페이스 선택"><option value="">전체</option><template x-for="namespace in mapNamespaces" :key="namespace.slug"><option :value="namespace.slug" x-text="namespace.label"></option></template></select></label>
-                            <label class="stash-map-filter is-search"><span>검색</span><input type="search" x-model.debounce.180ms="graphFilter.query" @input.debounce.180ms="refreshWorkGraphLayout()" placeholder="작업, 담당, 지원 기능"></label>
-                            <label class="stash-map-filter"><span>상태</span><select x-model="graphFilter.status" @change="refreshWorkGraphLayout()"><option value="">전체</option><option value="backlog">대기</option><option value="ready">준비</option><option value="doing">진행 중</option><option value="blocked">막힘</option><option value="review">검토</option><option value="done">완료</option></select></label>
+                            <label class="stash-graph-project"><span>네임스페이스</span><select x-model="mapNamespaceSlug" @change="changeWorkGraphNamespace()" :disabled="mapNamespacesLoading || loading" aria-label="작업 흐름 네임스페이스 선택"><option value="">전체</option><template x-for="namespace in mapNamespaces" :key="namespace.slug"><option :value="namespace.slug" x-text="namespace.label"></option></template></select></label>
+                            <div class="stash-filter-picker" @keydown.escape.stop="graphFilterOpen = false">
+                                <button type="button" class="stash-filter-trigger" @click="graphFilterOpen = !graphFilterOpen" :aria-expanded="String(graphFilterOpen)" aria-controls="work-graph-filter-menu">필터<span x-show="graphFilterCount()" class="stash-filter-trigger__count" x-text="graphFilterCount()"></span></button>
+                                <div id="work-graph-filter-menu" x-show="graphFilterOpen" x-cloak @click.outside="graphFilterOpen = false" class="stash-filter-menu" role="group" aria-label="작업 흐름 필터 선택">
+                                    <label class="stash-map-filter is-search"><span>검색</span><input type="search" x-model.debounce.180ms="graphFilter.query" @input.debounce.180ms="refreshWorkGraphLayout()" placeholder="작업, 담당, 지원 기능"></label>
+                                    <label class="stash-map-filter"><span>상태</span><select x-model="graphFilter.status" @change="refreshWorkGraphLayout()"><option value="">전체</option><option value="backlog">대기</option><option value="ready">준비</option><option value="doing">진행 중</option><option value="blocked">막힘</option><option value="review">검토</option><option value="done">완료</option></select></label>
+                                    <div class="stash-filter-menu__section"><span class="stash-filter-menu__label">관계</span><div class="stash-map-types" role="group" aria-label="표시할 관계"><button type="button" @click="toggleGraphRelation('part_of')" :aria-pressed="String(graphFilter.relations.part_of)">상하</button><button type="button" @click="toggleGraphRelation('blocks')" :aria-pressed="String(graphFilter.relations.blocks)">선후</button><button type="button" @click="toggleGraphRelation('relates_to')" :aria-pressed="String(graphFilter.relations.relates_to)">관련</button></div></div>
+                                    <div class="stash-filter-menu__footer"><button type="button" class="stash-graph-reset" @click="resetGraphFilters()" :disabled="!graphHasFilters()">초기화</button></div>
+                                </div>
+                            </div>
                             <span x-show="mapNamespacesLoading" x-cloak class="stash-graph-project-note">네임스페이스를 불러오는 중...</span>
                             <span x-show="!mapNamespacesLoading && mapNamespaceError" x-cloak class="stash-graph-project-note" x-text="mapNamespaceError"></span>
                             <span x-show="!mapNamespacesLoading && !mapNamespaceError && !mapNamespaces.length" class="stash-graph-project-note">등록된 네임스페이스가 없습니다.</span>
-                            <button type="button" class="stash-graph-reset" @click="resetGraphFilters()" :disabled="!graphHasFilters()">필터 초기화</button>
                             <button type="button" class="stash-graph-reset" @click="resetGraphLayout()" :disabled="!graphHasMovedNodes()">배치 초기화</button>
                         </div>
+                        <div x-show="graphHasFilters()" x-cloak class="stash-filter-chips" aria-label="적용한 필터"><template x-for="chip in graphFilterChips()" :key="chip.key"><button type="button" class="stash-filter-chip" @click="clearGraphFilter(chip.key)"><span x-text="chip.label"></span><i aria-hidden="true">×</i></button></template></div>
                         <p class="sr-only" aria-live="polite" x-text="graphMoveAnnouncement"></p>
                         <div x-show="loading" x-cloak class="stash-graph-empty" role="status">작업 흐름을 불러오는 중</div>
                         <div x-show="!loading && graphError" x-cloak class="stash-graph-empty is-error" role="alert"><div><span x-text="graphError"></span><br><button type="button" class="stash-btn" @click="loadWorkGraph(false)">다시 시도</button></div></div>
                         <div x-show="!loading && !graphError && !graph.nodes.length" x-cloak class="stash-graph-empty">표시할 작업이 없습니다.</div>
                         <div x-show="!loading && !graphError && graph.nodes.length && !workGraphLayout.nodes.length" x-cloak class="stash-graph-empty">조건에 맞는 작업이 없습니다.</div>
                         <div x-show="!loading && !graphError && graph.nodes.length" x-cloak class="stash-graph-content">
+                            <section x-show="graphFocusedItem()" x-cloak class="stash-graph-navigator" aria-label="선택한 작업의 상하 관계">
+                                <div class="stash-graph-navigator__current"><span>선택한 작업</span><strong x-text="graphWorkLabel(graphFocusedItem())"></strong></div>
+                                <div class="stash-graph-navigator__group"><span>상위</span><div class="stash-graph-navigator__links"><button x-show="graphFocusedParent()" type="button" @click="focusGraphNodeByID(graphFocusedParent().id)" x-text="graphWorkLabel(graphFocusedParent())"></button><i x-show="!graphFocusedParent()" class="stash-graph-navigator__empty">없음</i></div></div>
+                                <div class="stash-graph-navigator__group"><span>하위</span><div class="stash-graph-navigator__links"><template x-for="child in graphFocusedChildren()" :key="'graph-child-link-' + child.id"><button type="button" @click="focusGraphNodeByID(child.id)" x-text="graphWorkLabel(child)"></button></template><i x-show="!graphFocusedChildren().length" class="stash-graph-navigator__empty">없음</i></div></div>
+                                <div class="stash-graph-navigator__actions"><button type="button" class="stash-graph-reset" @click="openIssue(graphFocusedItem().id, $event.currentTarget)">상세</button><button type="button" class="stash-graph-reset" @click="clearGraphFocus()">닫기</button></div>
+                            </section>
                             <div x-show="workGraphLayout.cycles.length" class="stash-graph-cycle-alert" role="status">
                                 <strong>서로 막는 작업이 있습니다.</strong>
                                 연결선을 확인하세요.
@@ -1076,14 +1138,15 @@
                                         </svg>
                                     </template>
                                     <template x-for="node in workGraphLayout.nodes" :key="node.key">
-                                        <article class="stash-graph-node" :class="graphNodeClasses(node)" :style="node.style" :aria-labelledby="'graph-node-title-' + node.key">
-                                            <button type="button" class="stash-graph-node__open" @click="openIssue(node.item.id, $event.currentTarget)" :aria-label="graphNodeAriaLabel(node)">
+                                        <article class="stash-graph-node" :class="graphNodeClasses(node)" :style="node.style" :data-graph-node-key="node.key" :aria-labelledby="'graph-node-title-' + node.key">
+                                            <button type="button" class="stash-graph-node__open" @click="focusGraphNode(node.key)" :aria-pressed="String(graphFocusedKey === node.key)" :aria-label="graphNodeAriaLabel(node)">
                                                 <span class="stash-graph-node__top"><strong class="stash-graph-node__key" x-text="node.item.issue_key || '#' + node.item.id"></strong><span class="stash-graph-node__badges"><i class="stash-graph-status-dot" aria-hidden="true"></i><span x-text="statusLabel(node.item.status)"></span><span x-show="graphNodeRoleLabel(node)" class="stash-graph-role-badge" x-text="graphNodeRoleLabel(node)"></span><span x-show="node.cycle" class="stash-graph-cycle-badge">순환</span></span></span>
                                                 <span class="stash-graph-node__title" :id="'graph-node-title-' + node.key" x-text="node.item.title"></span>
                                                 <span class="stash-graph-node__meta" x-text="graphNodeMeta(node)"></span>
                                             </button>
                                             <button type="button" class="stash-graph-drag-handle" :data-graph-drag-key="node.dragKey" @pointerdown="startGraphNodeDrag($event, node)" @keydown="moveGraphNodeWithKeyboard($event, node)" @click.stop.prevent="void 0" :aria-label="graphDragHandleLabel(node)"><span aria-hidden="true">✥</span></button>
                                             <div x-show="node.orphanParentId !== undefined || node.hierarchyCycle" class="stash-graph-node__warning"><span x-show="node.orphanParentId !== undefined" x-text="'상위 작업 #' + node.orphanParentId + '을 찾을 수 없음'"></span><span x-show="node.hierarchyCycle">상위 작업 연결이 순환함</span></div>
+                                            <div class="stash-graph-node__actions"><button x-show="graphParentFor(node.item)" type="button" @click.stop="focusGraphNodeByID(graphParentFor(node.item).id)" :aria-label="graphWorkLabel(graphParentFor(node.item)) + '으로 이동'">상위</button><button x-show="graphChildrenFor(node.item).length" type="button" @click.stop="showGraphChildren(node)" x-text="'하위 ' + graphChildrenFor(node.item).length"></button><button type="button" @click.stop="openIssue(node.item.id, $event.currentTarget)">상세</button></div>
                                         </article>
                                     </template>
                                     <div class="sr-only stash-graph-edges-text"><h3>작업 연결</h3><ul><template x-for="edge in workGraphLayout.edges" :key="'text-' + edge.key"><li x-text="edge.ariaLabel"></li></template></ul></div>
@@ -1262,6 +1325,7 @@
         function createRouteViewModel() {
             const routes = window.StashRouteState;
             const defaultKinds = () => ({ goal: true, work: true, memory: true, resource: true });
+            const defaultRelations = () => ({ part_of: true, blocks: true, relates_to: true });
             return {
                 routeInitialized: false,
                 routeRestoring: false,
@@ -1286,7 +1350,12 @@
                             kinds: this.goalMapFilters.kinds
                         });
                     } else if (route === 'graph') {
-                        Object.assign(state, { query: this.graphFilter.query, status: this.graphFilter.status });
+                        Object.assign(state, {
+                            query: this.graphFilter.query,
+                            status: this.graphFilter.status,
+                            relations: this.graphFilter.relations,
+                            focus: this.graphFocusedKey
+                        });
                     } else if (route === 'board') {
                         Object.assign(state, {
                             query: this.boardFilter.q,
@@ -1327,7 +1396,14 @@
                             kinds: { ...defaultKinds(), ...route.kinds }
                         };
                     }
-                    if (route.route === 'graph') this.graphFilter = { query: route.query, status: route.status };
+                    if (route.route === 'graph') {
+                        this.graphFilter = {
+                            query: route.query,
+                            status: route.status,
+                            relations: { ...defaultRelations(), ...route.relations }
+                        };
+                        this.graphFocusedKey = route.focus;
+                    }
                     if (route.route === 'board') {
                         this.boardFilter = { q: route.query, issueType: route.issueType, label: route.label };
                         this.boardPage.offset = route.offset;
@@ -1360,6 +1436,7 @@
                             if (route.issueID) await this.openIssue(route.issueID);
                             else if (this.selectedIssue) this.closeIssue();
                         }
+                        if (route.route === 'graph' && route.focus) this.focusGraphNode(route.focus);
                     } finally {
                         this.routeRestoring = false;
                         this.routeInitialized = true;
@@ -1424,11 +1501,15 @@
 
         function createWorkGraphViewModel() {
             const layout = window.StashWorkGraph;
+            const defaultRelations = () => ({ part_of: true, blocks: true, relates_to: true });
+            const relationGroup = type => type === 'part_of' || type === 'blocks' ? type : 'relates_to';
             let activeDragHandle = null;
             return {
                 graph: { nodes: [], edges: [], worktrees: [] },
                 workGraphLayout: layout.emptyLayout(),
-                graphFilter: { query: '', status: '' },
+                graphFilter: { query: '', status: '', relations: defaultRelations() },
+                graphFilterOpen: false,
+                graphFocusedKey: '',
                 graphNodeOffsets: {},
                 graphDragState: null,
                 graphMoveAnnouncement: '',
@@ -1448,6 +1529,9 @@
                             validOffsetKeys.has(key) && offset && (Number(offset.x) || Number(offset.y))
                         ))
                     );
+                    if (this.graph.nodes.length && this.graphFocusedKey && !validIDs.has(String(this.graphFocusedKey))) {
+                        this.graphFocusedKey = '';
+                    }
                     this.refreshWorkGraphLayout();
                 },
 
@@ -1470,7 +1554,9 @@
                 refreshWorkGraphLayout() {
                     const query = String(this.graphFilter.query || '').trim().toLocaleLowerCase('ko');
                     const status = String(this.graphFilter.status || '').trim();
-                    const hasFilters = Boolean(query || status);
+                    const hasNodeFilters = Boolean(query || status);
+                    const relations = { ...defaultRelations(), ...(this.graphFilter.relations || {}) };
+                    const relationIsVisible = edge => relations[relationGroup(String(edge && edge.edge_type || 'relates_to'))] !== false;
                     const byID = new Map(this.graph.nodes.map(item => [String(item.id), item]));
                     const matchedIDs = new Set(this.graph.nodes.filter(item => {
                         if (status && item.status !== status) return false;
@@ -1483,9 +1569,10 @@
                         return values.some(value => String(value || '').toLocaleLowerCase('ko').includes(query));
                     }).map(item => String(item.id)));
                     const visibleIDs = new Set(matchedIDs);
-                    if (hasFilters) {
-                        for (const id of matchedIDs) {
-                            let current = byID.get(id);
+                    if (this.graphFocusedKey && byID.has(String(this.graphFocusedKey))) visibleIDs.add(String(this.graphFocusedKey));
+                    if (hasNodeFilters) {
+                        const addAncestors = startID => {
+                            let current = byID.get(String(startID));
                             const guard = new Set();
                             while (current && current.parent_id !== undefined && current.parent_id !== null) {
                                 const parentID = String(current.parent_id);
@@ -1494,8 +1581,12 @@
                                 visibleIDs.add(parentID);
                                 current = byID.get(parentID);
                             }
+                        };
+                        for (const id of matchedIDs) {
+                            addAncestors(id);
                         }
-                        for (const edge of this.graph.edges) {
+                        if (this.graphFocusedKey) addAncestors(this.graphFocusedKey);
+                        for (const edge of this.graph.edges.filter(relationIsVisible)) {
                             const from = String(edge.from_item_id);
                             const to = String(edge.to_item_id);
                             if (matchedIDs.has(from)) visibleIDs.add(to);
@@ -1505,12 +1596,13 @@
                     const nodes = this.graph.nodes.filter(item => visibleIDs.has(String(item.id))).map(item => (
                         matchedIDs.has(String(item.id)) ? item : { ...item, __filter_context: true }
                     ));
-                    const edges = this.graph.edges.filter(edge => (
+                    const edges = this.graph.edges.filter(edge => relationIsVisible(edge) && (
                         visibleIDs.has(String(edge.from_item_id)) && visibleIDs.has(String(edge.to_item_id))
                     ));
                     this.workGraphLayout = layout.buildWorkGraphLayout(nodes, edges, {
                         offsets: this.graphNodeOffsets,
-                        sourceNodeCount: this.graph.nodes.length
+                        sourceNodeCount: this.graph.nodes.length,
+                        relations
                     });
                     if (!this.loading && this.view === 'graph') this.syncRoute(true);
                 },
@@ -1657,13 +1749,141 @@
                 },
 
                 graphHasFilters() {
-                    return Boolean(String(this.graphFilter.query || '').trim() || String(this.graphFilter.status || '').trim());
+                    const relations = { ...defaultRelations(), ...(this.graphFilter.relations || {}) };
+                    return Boolean(
+                        String(this.graphFilter.query || '').trim() || String(this.graphFilter.status || '').trim() ||
+                        Object.values(relations).some(value => value === false)
+                    );
                 },
 
                 resetGraphFilters() {
                     if (!this.graphHasFilters()) return;
-                    this.graphFilter = { query: '', status: '' };
+                    this.graphFilter = { query: '', status: '', relations: defaultRelations() };
                     this.refreshWorkGraphLayout();
+                },
+
+                toggleGraphRelation(relation) {
+                    if (!Object.prototype.hasOwnProperty.call(defaultRelations(), relation)) return;
+                    const current = { ...defaultRelations(), ...(this.graphFilter.relations || {}) };
+                    this.graphFilter = {
+                        ...this.graphFilter,
+                        relations: { ...current, [relation]: !current[relation] }
+                    };
+                    this.refreshWorkGraphLayout();
+                },
+
+                graphFilterCount() {
+                    const relations = { ...defaultRelations(), ...(this.graphFilter.relations || {}) };
+                    return Number(Boolean(String(this.graphFilter.query || '').trim())) +
+                        Number(Boolean(String(this.graphFilter.status || '').trim())) +
+                        Object.values(relations).filter(value => value === false).length;
+                },
+
+                graphFilterChips() {
+                    const chips = [];
+                    const query = String(this.graphFilter.query || '').trim();
+                    const status = String(this.graphFilter.status || '').trim();
+                    if (query) chips.push({ key: 'query', label: `검색: ${query}` });
+                    if (status) chips.push({ key: 'status', label: `상태: ${this.statusLabel(status)}` });
+                    const labels = { part_of: '상하 관계', blocks: '선후 관계', relates_to: '관련 관계' };
+                    const relations = { ...defaultRelations(), ...(this.graphFilter.relations || {}) };
+                    Object.keys(labels).filter(relation => relations[relation] === false).forEach(relation => {
+                        chips.push({ key: `relation:${relation}`, label: `${labels[relation]} 숨김` });
+                    });
+                    return chips;
+                },
+
+                clearGraphFilter(key) {
+                    if (key === 'query') this.graphFilter.query = '';
+                    else if (key === 'status') this.graphFilter.status = '';
+                    else if (String(key || '').startsWith('relation:')) {
+                        const relation = String(key).slice('relation:'.length);
+                        if (Object.prototype.hasOwnProperty.call(defaultRelations(), relation)) {
+                            this.graphFilter = {
+                                ...this.graphFilter,
+                                relations: { ...defaultRelations(), ...(this.graphFilter.relations || {}), [relation]: true }
+                            };
+                        }
+                    }
+                    this.refreshWorkGraphLayout();
+                },
+
+                graphWorkLabel(item) {
+                    if (!item) return '';
+                    const key = item.issue_key || '#' + item.id;
+                    return item.title ? `${key} · ${item.title}` : key;
+                },
+
+                graphFocusedItem() {
+                    if (!this.graphFocusedKey) return null;
+                    return this.graph.nodes.find(item => String(item.id) === String(this.graphFocusedKey)) || null;
+                },
+
+                graphParentFor(item) {
+                    if (!item || item.parent_id === undefined || item.parent_id === null) return null;
+                    return this.graph.nodes.find(candidate => String(candidate.id) === String(item.parent_id)) || null;
+                },
+
+                graphChildrenFor(item) {
+                    if (!item) return [];
+                    return this.graph.nodes.filter(candidate => (
+                        candidate.parent_id !== undefined && candidate.parent_id !== null &&
+                        String(candidate.parent_id) === String(item.id)
+                    )).sort((left, right) => this.graphWorkLabel(left).localeCompare(this.graphWorkLabel(right), 'ko'));
+                },
+
+                graphFocusedParent() {
+                    return this.graphParentFor(this.graphFocusedItem());
+                },
+
+                graphFocusedChildren() {
+                    return this.graphChildrenFor(this.graphFocusedItem());
+                },
+
+                focusGraphNode(key, scroll = true) {
+                    const normalized = String(key === undefined || key === null ? '' : key);
+                    if (!normalized || !this.graph.nodes.some(item => String(item.id) === normalized)) return;
+                    const changed = this.graphFocusedKey !== normalized;
+                    this.graphFocusedKey = normalized;
+                    if (changed) this.syncRoute();
+                    this.refreshWorkGraphLayout();
+                    if (scroll) this.scrollGraphNodeIntoView(normalized);
+                    this.graphMoveAnnouncement = `${this.graphWorkLabel(this.graphFocusedItem())} 선택`;
+                },
+
+                focusGraphNodeByID(id) {
+                    this.focusGraphNode(String(id));
+                },
+
+                showGraphChildren(node) {
+                    if (!node) return;
+                    this.focusGraphNode(node.key, false);
+                },
+
+                clearGraphFocus() {
+                    if (!this.graphFocusedKey) return;
+                    this.graphFocusedKey = '';
+                    this.syncRoute();
+                    this.refreshWorkGraphLayout();
+                },
+
+                scrollGraphNodeIntoView(key) {
+                    this.$nextTick(() => {
+                        const nodes = Array.from(document.querySelectorAll('[data-graph-node-key]'));
+                        const element = nodes.find(candidate => candidate.dataset.graphNodeKey === String(key));
+                        const container = element && element.closest('.stash-graph-scroll');
+                        if (!element || !container) return;
+                        container.scrollTo({
+                            left: Math.max(0, element.offsetLeft - (container.clientWidth - element.offsetWidth) / 2),
+                            top: Math.max(0, element.offsetTop - (container.clientHeight - element.offsetHeight) / 2),
+                            behavior: 'smooth'
+                        });
+                    });
+                },
+
+                async changeWorkGraphNamespace() {
+                    this.graphFocusedKey = '';
+                    await this.loadWorkGraph(false);
                 },
 
                 graphNode(id) {
@@ -1701,15 +1921,18 @@
                         ['is-' + String(node && node.item && node.item.status || 'unknown').replace(/[^a-z0-9_-]/gi, '')]: true,
                         'is-cycle': Boolean(node && node.cycle),
                         'is-moved': Boolean(node && node.offset && (node.offset.x || node.offset.y)),
-                        'is-context': Boolean(node && node.context)
+                        'is-context': Boolean(node && node.context),
+                        'is-focused': Boolean(node && String(node.key) === String(this.graphFocusedKey))
                     };
                 },
 
                 graphNodeMeta(node) {
                     if (!node || !node.item) return '';
                     const parts = [];
-                    if (node.parentItem) parts.push('상위 ' + (node.parentItem.issue_key || '#' + node.parentItem.id));
-                    if (node.childItems && node.childItems.length) parts.push(`하위 ${node.childItems.length}개`);
+                    const parent = this.graphParentFor(node.item);
+                    const children = this.graphChildrenFor(node.item);
+                    if (parent) parts.push('상위 ' + (parent.issue_key || '#' + parent.id));
+                    if (children.length) parts.push(`하위 ${children.length}개`);
                     const owner = String(node.item.owner || '').trim();
                     if (owner) parts.push(owner);
                     if (node.context) parts.push('연결 맥락');
@@ -1726,10 +1949,12 @@
                     const item = node.item;
                     const key = item.issue_key || '#' + item.id;
                     const parts = [`${key}: ${item.title}`, `상태 ${this.statusLabel(item.status)}`];
+                    const parent = this.graphParentFor(item);
+                    const children = this.graphChildrenFor(item);
                     const role = this.graphNodeRoleLabel(node);
                     if (role) parts.push(role);
-                    if (node.parentItem) parts.push(`상위 작업 ${node.parentItem.issue_key || '#' + node.parentItem.id}`);
-                    if (node.childItems && node.childItems.length) parts.push(`하위 작업 ${node.childItems.length}개`);
+                    if (parent) parts.push(`상위 작업 ${parent.issue_key || '#' + parent.id}`);
+                    if (children.length) parts.push(`하위 작업 ${children.length}개`);
                     if (node.cycle) parts.push('서로 막는 연결에 포함됨');
                     if (node.orphanParentId !== undefined) parts.push(`상위 작업 ${node.orphanParentId}을 찾을 수 없음`);
                     if (node.hierarchyCycle) parts.push('상위 작업 연결이 순환함');
@@ -1770,6 +1995,7 @@
                     query: '', status: '', agent: '', memoryType: '',
                     kinds: { goal: true, work: true, memory: true, resource: true }
                 },
+                goalMapFilterOpen: false,
                 goalMapError: '',
                 goalMapRootCandidates: [],
                 goalMapRootGoalId: '',
@@ -1843,6 +2069,44 @@
                         query: '', status: '', agent: '', memoryType: '',
                         kinds: { goal: true, work: true, memory: true, resource: true }
                     };
+                    this.refreshGoalMapLayout();
+                },
+
+                goalMapFilterCount() {
+                    const filters = this.goalMapFilters;
+                    return Number(Boolean(String(filters.query || '').trim())) +
+                        Number(Boolean(String(filters.status || '').trim())) +
+                        Number(Boolean(String(filters.agent || '').trim())) +
+                        Number(Boolean(String(filters.memoryType || '').trim())) +
+                        Object.values(filters.kinds).filter(value => value === false).length;
+                },
+
+                goalMapFilterChips() {
+                    const filters = this.goalMapFilters;
+                    const chips = [];
+                    const query = String(filters.query || '').trim();
+                    if (query) chips.push({ key: 'query', label: `검색: ${query}` });
+                    if (filters.status) chips.push({ key: 'status', label: `상태: ${this.statusLabel(filters.status)}` });
+                    if (filters.agent) chips.push({ key: 'agent', label: `담당: ${filters.agent}` });
+                    if (filters.memoryType) chips.push({ key: 'memoryType', label: `기억: ${this.goalMapMemoryTypeLabel(filters.memoryType)}` });
+                    const labels = { goal: '목표', work: '작업', memory: '사실·기억', resource: '자료' };
+                    Object.keys(labels).filter(kind => filters.kinds[kind] === false).forEach(kind => {
+                        chips.push({ key: `kind:${kind}`, label: `${labels[kind]} 숨김` });
+                    });
+                    return chips;
+                },
+
+                clearGoalMapFilter(key) {
+                    if (['query', 'status', 'agent', 'memoryType'].includes(key)) this.goalMapFilters[key] = '';
+                    else if (String(key || '').startsWith('kind:')) {
+                        const kind = String(key).slice('kind:'.length);
+                        if (Object.prototype.hasOwnProperty.call(this.goalMapFilters.kinds, kind)) {
+                            this.goalMapFilters = {
+                                ...this.goalMapFilters,
+                                kinds: { ...this.goalMapFilters.kinds, [kind]: true }
+                            };
+                        }
+                    }
                     this.refreshGoalMapLayout();
                 },
 
