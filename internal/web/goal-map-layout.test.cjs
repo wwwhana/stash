@@ -133,15 +133,24 @@ test('goal map UI keeps resource and monitoring state in its own view-model', ()
     assert.match(html, /@media \(max-width: 680px\)[\s\S]*?\.stash-goal-map__summary \{ flex-wrap: wrap; \}/);
 });
 
-test('the work plan uses the same namespace selector as the maps', () => {
+test('the work plan keeps project scope separate from map and memory scope', () => {
     const html = fs.readFileSync(require.resolve('./ui/index.html'), 'utf8');
     const viewModel = html.match(/function createPlanViewModel\(\) \{[\s\S]*?\n        function createIssueExecutionViewModel/)?.[0] || '';
 
-    assert.match(html, /x-model="mapNamespaceSlug" @change="loadWorkPlan\(false\)"/);
+    assert.match(html, /x-model="planNamespaceSlug" @change="loadWorkPlan\(false\)"/);
+    assert.match(html, /x-for="namespace in planProjects\(\)"/);
+    assert.doesNotMatch(html, /x-model="planNamespaceSlug"[\s\S]{0,300}>기본 공간/);
+    assert.match(viewModel, /planNamespaceSlug: ''/);
+    assert.match(viewModel, /\^\\\/projects\\\/\[\^\/\]\+\$/);
+    assert.match(viewModel, /const mapProject = projects\.find\(item => item\.slug === this\.mapNamespaceSlug\)/);
     assert.match(viewModel, /planNamespace\(\)/);
-    assert.match(viewModel, /get_work_plan', \{ namespace: this\.planNamespace\(\) \}/);
+    assert.doesNotMatch(viewModel, /return this\.mapNamespaceSlug \|\| '\/'/);
+    assert.match(viewModel, /const namespace = this\.planNamespace\(\)/);
+    assert.match(viewModel, /get_work_plan', \{ namespace \}/);
     assert.match(viewModel, /validate_work_plan', \{ namespace: this\.planNamespace\(\) \}/);
     assert.match(viewModel, /namespace: this\.planNamespace\(\)/);
+    assert.match(html, /class="stash-plan-toolbar"[\s\S]*class="stash-plan-summary"/);
+    assert.doesNotMatch(html, /stash-plan-intro/);
     assert.match(html, />맡는 범위</);
     assert.doesNotMatch(html, /5~9개/);
 });

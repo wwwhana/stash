@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="/tailwind-3.4.17.min.css">
     <script defer src="/work-graph-layout.js"></script>
     <script defer src="/goal-map-layout.js"></script>
+    <script defer src="/route-state.js"></script>
     <script defer src="/alpine-3.16.3.min.js"></script>
     <style>
         [x-cloak] { display: none !important; }
@@ -363,10 +364,6 @@
         .stash-graph-canvas { position: relative; min-height: 100%; overflow: hidden; }
         .stash-graph-edge-layer { position: absolute; inset: 0; z-index: 1; width: 100% !important; min-width: 0 !important; height: 100% !important; pointer-events: none; }
         .stash-graph-edge-layer path { fill: none; vector-effect: non-scaling-stroke; }
-        .stash-graph-stage { position: absolute; z-index: 0; pointer-events: none; }
-        .stash-graph-stage::after { content: ''; position: absolute; top: 42px; bottom: 18px; left: 50%; border-left: 1px dashed rgba(148,163,184,.2); }
-        .stash-graph-stage__label { width: max-content; min-width: 88px; display: flex; align-items: baseline; justify-content: center; gap: 6px; margin: 8px auto 0; padding: 5px 8px; border: 1px solid rgba(148,163,184,.2); border-radius: 999px; color: #e2e8f0; background: rgba(30,41,59,.82); font-size: 10px; font-weight: 850; }
-        .stash-graph-stage__label span { color: #94a3b8; font-size: 9px; font-weight: 700; }
         .stash-graph-node { position: absolute; z-index: 2; display: block; padding: 0; overflow: hidden; border: 1px solid #475569; border-radius: 11px; color: #f8fafc; background: #18233a; box-shadow: 0 8px 18px rgba(2,6,23,.2); text-align: left; transition: border-color .15s ease, box-shadow .15s ease; }
         .stash-graph-node:hover { border-color: #818cf8; box-shadow: 0 10px 22px rgba(2,6,23,.28); }
         .stash-graph-node.is-cycle { border-color: #fb7185; box-shadow: 0 0 0 1px rgba(251,113,133,.2), 0 8px 18px rgba(2,6,23,.2); }
@@ -386,6 +383,7 @@
         .is-review .stash-graph-status-dot { background: #c084fc; }
         .is-done .stash-graph-status-dot { background: #34d399; }
         .is-canceled .stash-graph-status-dot { background: #64748b; }
+        .stash-graph-role-badge { padding: 2px 5px; border-radius: 999px; color: #c7d2fe; background: rgba(99,102,241,.22); font-size: 8px; font-weight: 900; }
         .stash-graph-cycle-badge { padding: 2px 5px; border-radius: 999px; color: #fecdd3; background: rgba(190,24,93,.25); font-size: 8px; font-weight: 900; }
         .stash-graph-node__title { display: -webkit-box; margin-top: 8px; overflow: hidden; color: #f8fafc; font-size: 11px; font-weight: 750; line-height: 1.35; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
         .stash-graph-node__meta { display: block; margin-top: 6px; overflow: hidden; color: #94a3b8; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
@@ -471,10 +469,9 @@
         .stash-worktree-summary strong { color: var(--stash-ink); font-size: 18px; }
         .stash-worktree-card__path { margin-top: 10px; padding: 8px 9px; overflow-wrap: anywhere; border-radius: 7px; color: #475467; background: #f8fafc; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; line-height: 1.45; }
         .stash-plan { width: 100%; min-height: 0; padding: 20px 24px 30px; color: var(--stash-ink); background: var(--stash-canvas); }
-        .stash-plan-intro { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 16px; }
-        .stash-plan-intro h3 { margin: 0; color: var(--stash-ink); font-size: 21px; letter-spacing: -.035em; }
-        .stash-plan-intro p { max-width: 590px; margin: 6px 0 0; color: var(--stash-muted); font-size: 12px; line-height: 1.5; }
+        .stash-plan-summary { display: flex; align-items: stretch; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
         .stash-plan-shared-goal { display: flex; align-items: center; gap: 7px; max-width: 620px; margin-top: 9px; padding: 7px 9px; border: 1px solid #dfe3ff; border-radius: 8px; color: #475467; background: #f8f8ff; font-size: 10px; }
+        .stash-plan-summary .stash-plan-shared-goal { flex: 1 1 auto; max-width: none; margin-top: 0; }
         .stash-plan-shared-goal span { flex: 0 0 auto; color: var(--stash-indigo); font-weight: 800; }
         .stash-plan-shared-goal strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .stash-plan-stats { display: grid; grid-template-columns: repeat(3, minmax(74px, 1fr)); gap: 7px; flex: 0 0 auto; }
@@ -545,6 +542,7 @@
         .stash-plan-task__actions { display: flex; gap: 5px; }
         .stash-plan-task__actions button { min-height: 28px; padding: 5px 7px; font-size: 10px; }
         .stash-plan-empty { display: grid; min-height: 220px; place-items: center; padding: 30px; border: 1px dashed #ccd3df; border-radius: 13px; color: var(--stash-muted); background: #fff; font-size: 12px; text-align: center; }
+        .stash-plan-empty.is-error { border-color: #f2b8b5; color: var(--stash-red); background: #fff8f7; }
         .stash-plan-component__actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
         .stash-plan-component__add { width: 100%; margin-top: 10px; }
         .stash-plan-path-editor { display: flex; gap: 7px; margin-top: 10px; }
@@ -599,7 +597,7 @@
             .stash-board-state { min-height: 260px; }
             .stash-field--title, .stash-field--type, .stash-field--labels, .stash-field--description, .stash-form-actions { grid-column: auto; }
             .stash-plan { padding: 15px 14px 20px; }
-            .stash-plan-intro { display: block; }
+            .stash-plan-summary { display: block; }
             .stash-plan-stats { margin-top: 12px; }
             .stash-plan-toolbar .stash-field { flex-basis: 100%; max-width: none; }
             .stash-plan-field--title, .stash-plan-field--source, .stash-plan-field--goal, .stash-plan-field--description, .stash-plan-field--tech, .stash-plan-field--paths, .stash-plan-form__actions, .stash-plan-form__heading { grid-column: auto; }
@@ -700,19 +698,19 @@
                 <div class="stash-sidebar-card bg-white p-4 rounded-lg shadow-sm border border-gray-100">
                     <h2 class="stash-sidebar-label text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">작업 공간</h2>
                     <nav class="stash-nav flex flex-col gap-2">
-                        <button @click="loadGoalMap()" :class="{'is-active': activeNav === 'goal-map'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">◎</span>목표·지식 지도</button>
-                        <button @click="loadWorkPlan()" :class="{'is-active': activeNav === 'plan'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">◇</span>작업 계획</button>
-                        <button @click="loadWorkBoard()" :class="{'is-active': activeNav === 'board'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">▦</span>이슈 보드</button>
-                        <button @click="loadWorkGraph()" :class="{'is-active': activeNav === 'graph'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">⌁</span>작업 흐름</button>
-                        <button @click="loadWorktrees()" :class="{'is-active': activeNav === 'worktrees'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">⌘</span>Git 연결</button>
-                        <button x-show="isAdmin" x-cloak @click="showMaintenance()" :class="{'is-active': activeNav === 'maintenance'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">⚙</span>임베딩 관리</button>
+                        <a :href="routeHref('goal-map')" @click.prevent="loadGoalMap()" :class="{'is-active': activeNav === 'goal-map'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">◎</span>목표·지식 지도</a>
+                        <a :href="routeHref('plan')" @click.prevent="loadWorkPlan()" :class="{'is-active': activeNav === 'plan'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">◇</span>작업 계획</a>
+                        <a :href="routeHref('board')" @click.prevent="loadWorkBoard()" :class="{'is-active': activeNav === 'board'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">▦</span>이슈 보드</a>
+                        <a :href="routeHref('graph')" @click.prevent="loadWorkGraph()" :class="{'is-active': activeNav === 'graph'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">⌁</span>작업 흐름</a>
+                        <a :href="routeHref('worktrees')" @click.prevent="loadWorktrees()" :class="{'is-active': activeNav === 'worktrees'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">⌘</span>Git 연결</a>
+                        <a x-show="isAdmin" x-cloak :href="routeHref('maintenance')" @click.prevent="showMaintenance()" :class="{'is-active': activeNav === 'maintenance'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">⚙</span>임베딩 관리</a>
                         <div class="stash-nav-divider"></div>
-                        <button @click="callTool('list_namespaces', {limit: 100})" :class="{'is-active': activeNav === 'list_namespaces'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">◌</span>네임스페이스</button>
-                        <button @click="callTool('query_facts', {namespaces: mapNamespaceSlug || '/', limit: 100})" :class="{'is-active': activeNav === 'query_facts'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">✓</span>사실</button>
-                        <button @click="callTool('list_hypotheses', {namespaces: mapNamespaceSlug || '/', limit: 100})" :class="{'is-active': activeNav === 'list_hypotheses'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">?</span>가설</button>
-                        <button @click="callTool('list_goals', {namespaces: mapNamespaceSlug || '/', limit: 100})" :class="{'is-active': activeNav === 'list_goals'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">↗</span>목표</button>
+                        <a :href="routeHref('list_namespaces')" @click.prevent="callTool('list_namespaces', {limit: 100})" :class="{'is-active': activeNav === 'list_namespaces'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">◌</span>네임스페이스</a>
+                        <a :href="routeHref('query_facts')" @click.prevent="callTool('query_facts', {namespaces: mapNamespaceSlug || '/', limit: 100})" :class="{'is-active': activeNav === 'query_facts'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">✓</span>사실</a>
+                        <a :href="routeHref('list_hypotheses')" @click.prevent="callTool('list_hypotheses', {namespaces: mapNamespaceSlug || '/', limit: 100})" :class="{'is-active': activeNav === 'list_hypotheses'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">?</span>가설</a>
+                        <a :href="routeHref('list_goals')" @click.prevent="callTool('list_goals', {namespaces: mapNamespaceSlug || '/', limit: 100})" :class="{'is-active': activeNav === 'list_goals'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">↗</span>목표</a>
                         <div class="stash-nav-divider"></div>
-                        <button @click="showAgentGuide()" :class="{'is-active': activeNav === 'agent'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">⌘</span>에이전트 규칙</button>
+                        <a :href="routeHref('agent')" @click.prevent="showAgentGuide()" :class="{'is-active': activeNav === 'agent'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">⌘</span>에이전트 규칙</a>
                     </nav>
                 </div>
             </aside>
@@ -1060,7 +1058,7 @@
                         <div x-show="!loading && !graphError && graph.nodes.length" x-cloak class="stash-graph-content">
                             <div x-show="workGraphLayout.cycles.length" class="stash-graph-cycle-alert" role="status">
                                 <strong>서로 막는 작업이 있습니다.</strong>
-                                같은 묶음은 한 단계에 표시했습니다.
+                                연결선을 확인하세요.
                                 <div class="stash-graph-cycle-list"><template x-for="cycle in workGraphLayout.cycles" :key="cycle.id"><span x-text="cycle.label"></span></template></div>
                             </div>
                             <div x-show="workGraphLayout.hierarchyWarnings.length" class="stash-graph-hierarchy-alert" role="status">
@@ -1077,13 +1075,10 @@
                                             <path :d="edge.path" :stroke="edge.stroke" stroke-width="2" :stroke-dasharray="edge.dashArray" :marker-end="edge.marker ? edgeMarkerUrl(edge) : null" opacity="0.9"></path>
                                         </svg>
                                     </template>
-                                    <template x-for="stage in workGraphLayout.stages" :key="'stage-' + stage.depth">
-                                        <div class="stash-graph-stage" :style="stage.style" aria-hidden="true"><div class="stash-graph-stage__label"><strong x-text="stage.label"></strong><span x-text="stage.nodes.length + '개'"></span></div></div>
-                                    </template>
                                     <template x-for="node in workGraphLayout.nodes" :key="node.key">
                                         <article class="stash-graph-node" :class="graphNodeClasses(node)" :style="node.style" :aria-labelledby="'graph-node-title-' + node.key">
                                             <button type="button" class="stash-graph-node__open" @click="openIssue(node.item.id, $event.currentTarget)" :aria-label="graphNodeAriaLabel(node)">
-                                                <span class="stash-graph-node__top"><strong class="stash-graph-node__key" x-text="node.item.issue_key || '#' + node.item.id"></strong><span class="stash-graph-node__badges"><i class="stash-graph-status-dot" aria-hidden="true"></i><span x-text="statusLabel(node.item.status)"></span><span x-show="node.cycle" class="stash-graph-cycle-badge">순환</span></span></span>
+                                                <span class="stash-graph-node__top"><strong class="stash-graph-node__key" x-text="node.item.issue_key || '#' + node.item.id"></strong><span class="stash-graph-node__badges"><i class="stash-graph-status-dot" aria-hidden="true"></i><span x-text="statusLabel(node.item.status)"></span><span x-show="graphNodeRoleLabel(node)" class="stash-graph-role-badge" x-text="graphNodeRoleLabel(node)"></span><span x-show="node.cycle" class="stash-graph-cycle-badge">순환</span></span></span>
                                                 <span class="stash-graph-node__title" :id="'graph-node-title-' + node.key" x-text="node.item.title"></span>
                                                 <span class="stash-graph-node__meta" x-text="graphNodeMeta(node)"></span>
                                             </button>
@@ -1144,22 +1139,26 @@
                     </div>
 
                     <div x-show="view === 'plan'" x-cloak class="stash-plan" aria-label="작업 계획">
-                        <div class="stash-plan-intro">
-                            <div><h3>작업 계획</h3><p>구성 요소, 실제 할 일, 선행 관계와 결정 내용을 한곳에서 봅니다.</p><div x-show="planRootGoal()" class="stash-plan-shared-goal"><span>공통 목표</span><strong x-text="planRootGoal() && planRootGoal().content"></strong><small x-text="planRootGoal() ? planProgressPercent(planRootGoal().progress) : ''"></small></div></div>
+	                        <div class="stash-plan-toolbar">
+	                            <label class="stash-field"><span>프로젝트</span><select x-model="planNamespaceSlug" @change="loadWorkPlan(false)" :disabled="mapNamespacesLoading || loading || !planProjects().length" aria-label="작업 계획 프로젝트 선택"><option value="" disabled>프로젝트 선택</option><template x-for="namespace in planProjects()" :key="'plan-' + namespace.slug"><option :value="namespace.slug" x-text="namespace.label"></option></template></select></label>
+	                            <label class="stash-field"><span>작업자</span><input x-model="planActor" placeholder="예: codex" aria-label="작업자"></label>
+	                            <button type="button" class="stash-btn stash-btn-primary" @click="openPlanComponentForm()" :disabled="loading || !planNamespaceSlug">구성 요소 만들기</button>
+	                            <button type="button" class="stash-btn" @click="planDecisionFormOpen = !planDecisionFormOpen" :disabled="loading || !planNamespaceSlug">결정 기록</button>
+	                            <button type="button" class="stash-btn" @click="validateWorkPlan()" :disabled="loading || !planNamespaceSlug || !plan.components.length">계획 검사</button>
+	                        </div>
+
+                        <div x-show="loading" x-cloak class="stash-plan-empty" role="status">작업 계획을 불러오는 중</div>
+                        <div x-show="!loading && planError" x-cloak class="stash-plan-empty is-error" role="alert"><span x-text="planError"></span></div>
+                        <div x-show="!loading && !planError && mapNamespacesLoaded && !planProjects().length" x-cloak class="stash-plan-empty">등록된 프로젝트가 없습니다.</div>
+
+                        <section x-show="!loading && planLoaded && !planError" x-cloak class="stash-plan-summary" aria-label="선택한 프로젝트 요약">
+                            <div x-show="planRootGoal()" class="stash-plan-shared-goal"><span>공통 목표</span><strong x-text="planRootGoal() && planRootGoal().content"></strong><small x-text="planRootGoal() ? planProgressPercent(planRootGoal().progress) : ''"></small></div>
                             <div class="stash-plan-stats" aria-label="계획 요약">
                                 <div class="stash-plan-stat is-indigo"><strong x-text="plan.components.length"></strong><span>구성 요소</span></div>
                                 <div class="stash-plan-stat"><strong x-text="planTaskCount('doing')"></strong><span>진행 중</span></div>
                                 <div class="stash-plan-stat is-red"><strong x-text="planTaskCount('blocked')"></strong><span>막힘</span></div>
                             </div>
-                        </div>
-
-	                        <div class="stash-plan-toolbar">
-	                            <label class="stash-field"><span>네임스페이스</span><select x-model="mapNamespaceSlug" @change="loadWorkPlan(false)" :disabled="mapNamespacesLoading || loading" aria-label="작업 계획 네임스페이스 선택"><option value="">기본 공간 (/)</option><template x-for="namespace in mapNamespaces" :key="'plan-' + namespace.slug"><option :value="namespace.slug" x-text="namespace.label"></option></template></select></label>
-	                            <label class="stash-field"><span>작업자</span><input x-model="planActor" placeholder="예: codex" aria-label="작업자"></label>
-	                            <button type="button" class="stash-btn stash-btn-primary" @click="openPlanComponentForm()">구성 요소 만들기</button>
-	                            <button type="button" class="stash-btn" @click="planDecisionFormOpen = !planDecisionFormOpen">결정 기록</button>
-	                            <button type="button" class="stash-btn" @click="validateWorkPlan()" :disabled="loading || !plan.components.length">계획 검사</button>
-	                        </div>
+                        </section>
 
                         <form x-show="planComponentFormOpen" x-cloak @submit.prevent="savePlanComponent" class="stash-plan-form">
                             <div class="stash-plan-form__heading"><span x-text="planComponentForm.componentId ? '구성 요소 수정' : '새 구성 요소'"></span><span class="stash-plan-form__hint">시스템의 한 부분을 적습니다.</span></div>
@@ -1190,11 +1189,11 @@
                             <div class="stash-plan-form__actions"><button type="submit" class="stash-btn stash-btn-success">기록</button><button type="button" class="stash-btn" @click="planDecisionFormOpen = false">닫기</button></div>
                         </form>
 
-	                        <div x-show="plan.warnings.length" class="stash-plan-warnings">
+	                        <div x-show="!loading && planLoaded && !planError && plan.warnings.length" class="stash-plan-warnings">
 	                            <template x-for="(warning, index) in plan.warnings" :key="warning.code + '-' + warning.component_id + '-' + warning.task_id + '-' + index"><div class="stash-plan-warning"><b>확인</b><span x-text="planWarningText(warning)"></span></div></template>
 	                        </div>
 
-	                        <section x-show="plan.validation" x-cloak class="stash-plan-validation" :class="{'is-stale': plan.validation && plan.validation.stale}">
+	                        <section x-show="!loading && planLoaded && !planError && plan.validation" x-cloak class="stash-plan-validation" :class="{'is-stale': plan.validation && plan.validation.stale}">
 	                            <div class="stash-plan-validation__header">
 	                                <div><div class="stash-plan-validation__title">계획 검사</div><div class="stash-plan-validation__meta" x-text="planValidationMeta()"></div></div>
 	                                <span class="stash-plan-validation__status" :class="{'is-clear': plan.validation && plan.validation.passed && !plan.validation.stale}" x-text="planValidationStatus()"></span>
@@ -1212,7 +1211,7 @@
 	                            </div>
 	                        </section>
 
-                        <div x-show="plan.components.length" class="stash-plan-grid">
+                        <div x-show="!loading && planLoaded && !planError && plan.components.length" class="stash-plan-grid">
                             <template x-for="component in plan.components" :key="component.id">
                                 <article class="stash-plan-component">
                                     <header class="stash-plan-component__header">
@@ -1243,9 +1242,9 @@
                                 </article>
                             </template>
                         </div>
-                        <div x-show="!plan.components.length" class="stash-plan-empty">먼저 시스템 구성 요소를 만드세요.</div>
+                        <div x-show="!loading && planLoaded && !planError && planNamespaceSlug && !plan.components.length" class="stash-plan-empty">등록된 구성 요소가 없습니다.</div>
 
-                        <section class="stash-plan-decisions"><h4>최근 결정</h4><div x-show="!plan.decisions.length" class="text-xs text-gray-400">기록된 결정이 없습니다.</div><div x-show="plan.decisions.length" class="stash-plan-decision-list"><template x-for="decision in plan.decisions" :key="decision.id"><article class="stash-plan-decision"><strong x-text="decision.title"></strong><p x-show="decision.rationale" x-text="decision.rationale"></p><small x-text="planDecisionMeta(decision)"></small></article></template></div></section>
+                        <section x-show="!loading && planLoaded && !planError" x-cloak class="stash-plan-decisions"><h4>최근 결정</h4><div x-show="!plan.decisions.length" class="text-xs text-gray-400">기록된 결정이 없습니다.</div><div x-show="plan.decisions.length" class="stash-plan-decision-list"><template x-for="decision in plan.decisions" :key="decision.id"><article class="stash-plan-decision"><strong x-text="decision.title"></strong><p x-show="decision.rationale" x-text="decision.rationale"></p><small x-text="planDecisionMeta(decision)"></small></article></template></div></section>
                     </div>
 
                     <div x-show="view === 'agent'" x-cloak class="stash-agent min-w-[760px] min-h-[560px] p-4 bg-gray-100 text-gray-800">
@@ -1260,6 +1259,116 @@
     </div>
 
     <script>
+        function createRouteViewModel() {
+            const routes = window.StashRouteState;
+            const defaultKinds = () => ({ goal: true, work: true, memory: true, resource: true });
+            return {
+                routeInitialized: false,
+                routeRestoring: false,
+
+                currentRouteName() {
+                    if (routes.routePaths[this.activeNav]) return this.activeNav;
+                    return ({ 'goal-map': 'goal-map', plan: 'plan', board: 'board', graph: 'graph', worktrees: 'worktrees', maintenance: 'maintenance', agent: 'agent' })[this.view] || 'goal-map';
+                },
+
+                routeState(route = this.currentRouteName()) {
+                    const state = {
+                        namespace: this.mapNamespaceSlug,
+                        project: this.planNamespaceSlug,
+                        issueID: this.selectedIssue && this.selectedIssue.id
+                    };
+                    if (route === 'goal-map') {
+                        Object.assign(state, {
+                            query: this.goalMapFilters.query,
+                            status: this.goalMapFilters.status,
+                            agent: this.goalMapFilters.agent,
+                            memoryType: this.goalMapFilters.memoryType,
+                            kinds: this.goalMapFilters.kinds
+                        });
+                    } else if (route === 'graph') {
+                        Object.assign(state, { query: this.graphFilter.query, status: this.graphFilter.status });
+                    } else if (route === 'board') {
+                        Object.assign(state, {
+                            query: this.boardFilter.q,
+                            issueType: this.boardFilter.issueType,
+                            label: this.boardFilter.label,
+                            offset: this.boardPage.offset
+                        });
+                    } else if (route === 'worktrees') {
+                        state.offset = this.worktreePage.offset;
+                    } else if (['list_namespaces', 'query_facts', 'list_hypotheses', 'list_goals'].includes(route)) {
+                        state.offset = this.listPage.offset;
+                    }
+                    return state;
+                },
+
+                routeHref(route) {
+                    return routes.buildRoute(route, this.routeState(route));
+                },
+
+                syncRoute(replace = false) {
+                    if (!this.routeInitialized || this.routeRestoring) return;
+                    const route = this.currentRouteName();
+                    const href = this.routeHref(route);
+                    document.title = routes.routeTitle(route) + ' · Stash';
+                    if (href === window.location.pathname + window.location.search) return;
+                    window.history[replace ? 'replaceState' : 'pushState']({ stashRoute: route }, '', href);
+                },
+
+                applyRouteState(route) {
+                    if (route.route === 'goal-map' || route.route === 'graph') this.mapNamespaceSlug = route.namespace;
+                    if (route.route === 'plan') this.planNamespaceSlug = route.project;
+                    if (route.route === 'goal-map') {
+                        this.goalMapFilters = {
+                            query: route.query,
+                            status: route.status,
+                            agent: route.agent,
+                            memoryType: route.memoryType,
+                            kinds: { ...defaultKinds(), ...route.kinds }
+                        };
+                    }
+                    if (route.route === 'graph') this.graphFilter = { query: route.query, status: route.status };
+                    if (route.route === 'board') {
+                        this.boardFilter = { q: route.query, issueType: route.issueType, label: route.label };
+                        this.boardPage.offset = route.offset;
+                        this.boardPage.history = [];
+                    }
+                    if (route.route === 'worktrees') {
+                        this.worktreePage.offset = route.offset;
+                        this.worktreePage.history = [];
+                    }
+                    if (['query_facts', 'list_hypotheses', 'list_goals'].includes(route.route)) this.mapNamespaceSlug = route.namespace;
+                },
+
+                async restoreRoute() {
+                    const route = routes.readRoute(window.location.href);
+                    this.routeRestoring = true;
+                    this.applyRouteState(route);
+                    try {
+                        if (route.route === 'goal-map') await this.loadGoalMap();
+                        else if (route.route === 'plan') await this.loadWorkPlan();
+                        else if (route.route === 'board') await this.loadWorkBoard(false);
+                        else if (route.route === 'graph') await this.loadWorkGraph();
+                        else if (route.route === 'worktrees') await this.loadWorktrees(false);
+                        else if (route.route === 'agent') this.showAgentGuide();
+                        else if (route.route === 'maintenance') await this.loadMaintenance();
+                        else {
+                            const args = route.route === 'list_namespaces' ? {} : { namespaces: route.namespace || '/' };
+                            await this.callTool(route.route, args, route.offset);
+                        }
+                        if (['goal-map', 'board', 'graph'].includes(route.route)) {
+                            if (route.issueID) await this.openIssue(route.issueID);
+                            else if (this.selectedIssue) this.closeIssue();
+                        }
+                    } finally {
+                        this.routeRestoring = false;
+                        this.routeInitialized = true;
+                        this.syncRoute(true);
+                    }
+                }
+            };
+        }
+
         function createMapScopeViewModel() {
             return {
                 mapNamespaces: [],
@@ -1403,6 +1512,7 @@
                         offsets: this.graphNodeOffsets,
                         sourceNodeCount: this.graph.nodes.length
                     });
+                    if (!this.loading && this.view === 'graph') this.syncRoute(true);
                 },
 
                 graphNodeDragKey(node) {
@@ -1606,10 +1716,18 @@
                     return parts.join(' · ') || '독립 작업';
                 },
 
+                graphNodeRoleLabel(node) {
+                    if (node && node.isEntry) return '시작점';
+                    if (node && node.isOutcome) return '최종점';
+                    return '';
+                },
+
                 graphNodeAriaLabel(node) {
                     const item = node.item;
                     const key = item.issue_key || '#' + item.id;
-                    const parts = [`${key}: ${item.title}`, node.stageLabel, `상태 ${this.statusLabel(item.status)}`];
+                    const parts = [`${key}: ${item.title}`, `상태 ${this.statusLabel(item.status)}`];
+                    const role = this.graphNodeRoleLabel(node);
+                    if (role) parts.push(role);
                     if (node.parentItem) parts.push(`상위 작업 ${node.parentItem.issue_key || '#' + node.parentItem.id}`);
                     if (node.childItems && node.childItems.length) parts.push(`하위 작업 ${node.childItems.length}개`);
                     if (node.cycle) parts.push('서로 막는 연결에 포함됨');
@@ -1693,6 +1811,7 @@
                 refreshGoalMapLayout() {
                     this.goalMapVisible = layout.filterGoalMap(this.goalMap, this.goalMapFilters);
                     this.goalMapLayout = layout.buildGoalMapLayout(this.goalMapVisible);
+                    if (!this.loading && this.view === 'goal-map') this.syncRoute(true);
                 },
 
                 goalMapAgents() {
@@ -1886,80 +2005,126 @@
                         this.result = '오류: ' + this.goalMapError;
                     } finally {
                         this.loading = false;
+                        this.syncRoute();
                     }
                 }
             };
         }
 
         function createPlanViewModel() {
+            const emptyPlan = () => ({ goal_tree: { root_goal_id: null, goals: [] }, components: [], decisions: [], warnings: [], validation: null });
+            const emptyComponentForm = () => ({ componentId: null, goalId: '', title: '', description: '', technicalDetails: '', ownedScopes: '', priority: 0 });
+            const emptyTaskForm = () => ({ taskId: null, componentId: null, goalId: '', title: '', description: '', technicalDetails: '', provenance: 'agent' });
+            const emptyDecisionForm = () => ({ componentId: '', title: '', rationale: '' });
             return {
-	                plan: { goal_tree: { root_goal_id: null, goals: [] }, components: [], decisions: [], warnings: [], validation: null },
+                plan: emptyPlan(),
+                planNamespaceSlug: '',
+                planLoaded: false,
+                planError: '',
                 planActor: '',
                 planComponentFormOpen: false,
                 planTaskFormOpen: false,
                 planDecisionFormOpen: false,
                 planScopeEditorComponentId: null,
                 planScopeEditorValue: '',
-	                planComponentForm: { componentId: null, goalId: '', title: '', description: '', technicalDetails: '', ownedScopes: '', priority: 0 },
-	                planTaskForm: { taskId: null, componentId: null, goalId: '', title: '', description: '', technicalDetails: '', provenance: 'agent' },
-                planDecisionForm: { componentId: '', title: '', rationale: '' },
+                planComponentForm: emptyComponentForm(),
+                planTaskForm: emptyTaskForm(),
+                planDecisionForm: emptyDecisionForm(),
+
+                planProjects() {
+                    return this.mapNamespaces.filter(item => /^\/projects\/[^/]+$/.test(String(item && item.slug || '')));
+                },
+
+                ensurePlanNamespace() {
+                    const projects = this.planProjects();
+                    if (projects.some(item => item.slug === this.planNamespaceSlug)) return;
+                    const mapProject = projects.find(item => item.slug === this.mapNamespaceSlug);
+                    this.planNamespaceSlug = mapProject ? mapProject.slug : (projects[0] && projects[0].slug || '');
+                },
 
                 planNamespace() {
-                    return this.mapNamespaceSlug || '/';
+                    return this.planNamespaceSlug;
                 },
 
                 planScopeLabel() {
-                    if (!this.mapNamespaceSlug) return '기본 공간 (/)';
-                    const namespace = this.mapNamespaces.find(item => item.slug === this.mapNamespaceSlug);
-                    return namespace ? namespace.label : this.mapNamespaceSlug;
+                    const namespace = this.planProjects().find(item => item.slug === this.planNamespaceSlug);
+                    return namespace ? namespace.label : this.planNamespaceSlug;
                 },
 
-	                async fetchWorkPlan() {
-	                    const data = await this.invokeTool('get_work_plan', { namespace: this.planNamespace() });
+                resetPlanEditors() {
+                    this.planComponentFormOpen = false;
+                    this.planTaskFormOpen = false;
+                    this.planDecisionFormOpen = false;
+                    this.planScopeEditorComponentId = null;
+                    this.planScopeEditorValue = '';
+                    this.planComponentForm = emptyComponentForm();
+                    this.planTaskForm = emptyTaskForm();
+                    this.planDecisionForm = emptyDecisionForm();
+                },
+
+                async fetchWorkPlan() {
+                    const namespace = this.planNamespace();
+                    if (!namespace) return;
+                    const data = await this.invokeTool('get_work_plan', { namespace });
                     const value = this.toolValue(data) || {};
-	                    this.plan = {
-	                        goal_tree: value.goal_tree && typeof value.goal_tree === 'object' ? {
-	                            root_goal_id: value.goal_tree.root_goal_id === undefined ? null : value.goal_tree.root_goal_id,
-	                            goals: Array.isArray(value.goal_tree.goals) ? value.goal_tree.goals : []
-	                        } : { root_goal_id: null, goals: [] },
-	                        components: Array.isArray(value.components) ? value.components : [],
-	                        decisions: Array.isArray(value.decisions) ? value.decisions : [],
-	                        warnings: Array.isArray(value.warnings) ? value.warnings : [],
-	                        validation: value.validation && typeof value.validation === 'object' ? value.validation : null
-	                    };
-                    this.resultValue = this.plan;
-                    this.resultKind = 'get_work_plan';
-                    this.result = JSON.stringify(this.plan, null, 2);
+                    this.plan = {
+                        goal_tree: value.goal_tree && typeof value.goal_tree === 'object' ? {
+                            root_goal_id: value.goal_tree.root_goal_id === undefined ? null : value.goal_tree.root_goal_id,
+                            goals: Array.isArray(value.goal_tree.goals) ? value.goal_tree.goals : []
+                        } : { root_goal_id: null, goals: [] },
+                        components: Array.isArray(value.components) ? value.components : [],
+                        decisions: Array.isArray(value.decisions) ? value.decisions : [],
+                        warnings: Array.isArray(value.warnings) ? value.warnings : [],
+                        validation: value.validation && typeof value.validation === 'object' ? value.validation : null
+                    };
+                    this.planLoaded = true;
+                    this.planError = '';
                     this.markLoaded();
                 },
 
-	                async loadWorkPlan(refreshNamespaces = true) {
-	                    this.activeNav = 'plan';
-	                    this.resultTitle = '작업 계획';
-	                    this.resultDescription = this.planScopeLabel() + '의 구성 요소와 실제 할 일을 관리합니다.';
-	                    this.view = 'plan';
-	                    this.loading = true;
-	                    try {
-	                        await this.loadMapNamespaces(refreshNamespaces);
-	                        this.resultDescription = this.planScopeLabel() + '의 구성 요소와 실제 할 일을 관리합니다.';
-	                        await this.fetchWorkPlan();
+                async loadWorkPlan(refreshNamespaces = true) {
+                    this.activeNav = 'plan';
+                    this.resultTitle = '작업 계획';
+                    this.resultDescription = '프로젝트의 구성 요소와 할 일을 관리합니다.';
+                    this.view = 'plan';
+                    this.loading = true;
+                    this.planLoaded = false;
+                    this.planError = '';
+                    this.plan = emptyPlan();
+                    this.resetPlanEditors();
+                    try {
+                        await this.loadMapNamespaces(refreshNamespaces);
+                        if (this.mapNamespaceError) {
+                            this.planError = '프로젝트 목록을 불러오지 못했습니다.';
+                            return;
+                        }
+                        this.ensurePlanNamespace();
+                        if (!this.planNamespace()) return;
+                        this.resultDescription = this.planScopeLabel() + '의 구성 요소와 할 일을 관리합니다.';
+                        await this.fetchWorkPlan();
                         this.setNotice('', 'success', 0);
                     } catch (e) {
-                        this.result = '오류: ' + e.message;
+                        this.plan = emptyPlan();
+                        this.planLoaded = false;
+                        this.planError = '작업 계획을 불러오지 못했습니다.';
                         this.setNotice('작업 계획을 불러오지 못했습니다.', 'error', 0);
                     } finally {
                         this.loading = false;
+                        this.syncRoute();
                     }
                 },
 
                 async runPlanMutation(action, successMessage, errorMessage) {
+                    if (!this.planNamespace()) {
+                        this.setNotice('프로젝트를 선택하세요.', 'error', 0);
+                        return;
+                    }
                     this.loading = true;
                     try {
                         await action();
                         await this.fetchWorkPlan();
                         this.setNotice(successMessage);
                     } catch (e) {
-                        this.result = '오류: ' + e.message;
                         this.setNotice(errorMessage, 'error', 0);
                     } finally {
                         this.loading = false;
@@ -2079,13 +2244,13 @@
 	                        technicalDetails: component.technical_details || '',
 	                        ownedScopes: Array.isArray(component.owned_paths) ? component.owned_paths.join(', ') : '',
 	                        priority: Number(component.priority) || 0
-	                    } : { componentId: null, goalId: '', title: '', description: '', technicalDetails: '', ownedScopes: '', priority: 0 };
+	                    } : emptyComponentForm();
 	                    this.planComponentFormOpen = true;
 	                },
 
 	                closePlanComponentForm() {
 	                    this.planComponentFormOpen = false;
-	                    this.planComponentForm = { componentId: null, goalId: '', title: '', description: '', technicalDetails: '', ownedScopes: '', priority: 0 };
+	                    this.planComponentForm = emptyComponentForm();
 	                },
 
 	                async savePlanComponent() {
@@ -2121,13 +2286,13 @@
 	                        goalId: task.goal_id || '',
 	                        title: task.title || '', description: task.description || '',
 	                        technicalDetails: task.technical_details || '', provenance: task.provenance || ''
-	                    } : { taskId: null, componentId: Number(componentID), goalId: component && component.goal_id || '', title: '', description: '', technicalDetails: '', provenance: 'agent' };
+	                    } : { ...emptyTaskForm(), componentId: Number(componentID), goalId: component && component.goal_id || '' };
 	                    this.planTaskFormOpen = true;
 	                },
 
 	                closePlanTaskForm() {
 	                    this.planTaskFormOpen = false;
-	                    this.planTaskForm = { taskId: null, componentId: null, goalId: '', title: '', description: '', technicalDetails: '', provenance: 'agent' };
+	                    this.planTaskForm = emptyTaskForm();
 	                },
 
 	                async savePlanTask() {
@@ -2209,7 +2374,7 @@
 	                        const args = { namespace: this.planNamespace(), title: form.title, rationale: form.rationale, author: this.planActorName() };
                         if (componentID) args.component_id = componentID;
                         await this.invokeTool('record_plan_decision', args);
-                        this.planDecisionForm = { componentId: '', title: '', rationale: '' };
+                        this.planDecisionForm = emptyDecisionForm();
                         this.planDecisionFormOpen = false;
                     }, '결정을 기록했습니다.', '결정을 기록하지 못했습니다.');
                 }
@@ -2916,6 +3081,7 @@
 
         function stashConsole() {
             return {
+                ...createRouteViewModel(),
                 ...createPlanViewModel(),
                 ...createIssueExecutionViewModel(),
                 ...createMapScopeViewModel(),
@@ -3052,6 +3218,10 @@
                     { status: 'canceled', label: '취소' }
                 ],
                 init() {
+                    window.addEventListener('popstate', () => {
+                        if (!this.authChecked || (this.authRequired() && !this.auth.authenticated)) return;
+                        this.restoreRoute();
+                    });
                     this.bootstrap();
                 },
 
@@ -3065,7 +3235,7 @@
                     if (!this.authRequired() || this.auth.authenticated) {
                         if (!this.planActor) this.planActor = this.auth.user || 'codex';
                         await this.ensureWorkspace();
-                        await this.loadGoalMap();
+                        await this.restoreRoute();
                     }
                 },
 
@@ -3163,6 +3333,7 @@
                     } finally {
                         this.adminChecked = true;
                         this.adminLoading = false;
+                        this.syncRoute();
                     }
                 },
 
@@ -3195,6 +3366,7 @@
                     } finally {
                         this.adminChecked = true;
                         this.adminLoading = false;
+                        this.syncRoute();
                     }
                 },
 
@@ -3271,13 +3443,13 @@
                     window.location.reload();
                 },
 
-                async callTool(toolName, args) {
+                async callTool(toolName, args, offset = 0) {
                     this.view = 'text';
                     this.activeNav = toolName;
                     this.resultKind = toolName;
                     this.resultTitle = this.toolLabel(toolName);
                     this.resultDescription = '선택한 기억 항목의 응답입니다.';
-                    this.listPage = { tool: toolName, args: { ...args }, offset: 0, nextOffset: 0, limit: this.pageSize, hasNext: false, history: [] };
+                    this.listPage = { tool: toolName, args: { ...args }, offset: Math.max(0, Number(offset) || 0), nextOffset: 0, limit: this.pageSize, hasNext: false, history: [] };
                     await this.loadListPage();
                 },
 
@@ -3306,6 +3478,7 @@
                         this.setNotice('불러오지 못했습니다.', 'error', 0);
                     } finally {
                         this.loading = false;
+                        this.syncRoute();
                     }
                 },
 
@@ -3502,6 +3675,7 @@
                         this.setNotice('Git 작업 공간을 불러오지 못했습니다.', 'error', 0);
                     } finally {
                         this.loading = false;
+                        this.syncRoute();
                     }
                 },
 
@@ -3527,6 +3701,7 @@
                     this.view = 'agent';
                     this.copyStatus = '복사';
                     this.markLoaded();
+                    this.syncRoute();
                 },
 
                 async copyAgentGuide() {
@@ -3605,6 +3780,7 @@
                         this.setNotice(view === 'board' ? '이슈를 불러오지 못했습니다.' : '그래프를 불러오지 못했습니다.', 'error', 0);
                     } finally {
                         this.loading = false;
+                        this.syncRoute();
                     }
                 },
 
@@ -3666,6 +3842,7 @@
                         this.setNotice('상태를 저장하지 못했습니다.', 'error', 0);
                     } finally {
                         this.loading = false;
+                        this.syncRoute();
                     }
                 },
 
@@ -3752,6 +3929,7 @@
                         this.setNotice('이슈를 불러오지 못했습니다.', 'error', 0);
                     } finally {
                         this.loading = false;
+                        this.syncRoute();
                     }
                 },
 
@@ -3767,6 +3945,7 @@
                     this.commentPage = { offset: 0, nextOffset: 0, limit: this.pageSize, hasNext: false, history: [] };
                     this.resetIssueExecution(true);
                     this.closeIssueDrawer();
+                    this.syncRoute(true);
                 },
 
                 async loadIssueComments(workItemID = this.selectedIssue && this.selectedIssue.id) {

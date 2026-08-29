@@ -11,7 +11,7 @@
     const COLUMN_GAP = 72;
     const ROW_GAP = 24;
     const PADDING_X = 30;
-    const PADDING_TOP = 58;
+    const PADDING_TOP = 30;
     const PADDING_BOTTOM = 30;
     const MIN_WIDTH = 760;
     const MIN_HEIGHT = 360;
@@ -179,14 +179,14 @@
         return components;
     }
 
-    function orderStages(stages, directedEdges, nodeMap) {
+    function orderColumns(columns, directedEdges, nodeMap) {
         const incoming = new Map();
         directedEdges.forEach(edge => {
             if (!incoming.has(edge.toKey)) incoming.set(edge.toKey, []);
             incoming.get(edge.toKey).push(edge.fromKey);
         });
         const position = new Map();
-        stages.forEach((members, depth) => {
+        columns.forEach((members, depth) => {
             members.sort((left, right) => compareNodes(nodeMap.get(left), nodeMap.get(right)));
             if (depth > 0) {
                 members.sort((left, right) => {
@@ -202,11 +202,11 @@
             }
             members.forEach((key, index) => position.set(key, index));
         });
-        return stages;
+        return columns;
     }
 
     function computeLevels(nodeKeys, edges, nodeMap) {
-        if (!nodeKeys.length) return { stages: [], cycles: [], cycleByNode: new Map(), maxDepth: -1 };
+        if (!nodeKeys.length) return { columns: [], cycles: [], cycleByNode: new Map(), maxDepth: -1 };
         const directedEdges = edges.filter(edge => edge.type === 'blocks' || edge.type === 'part_of');
         const outgoing = new Map(nodeKeys.map(key => [key, []]));
         const reverseOutgoing = new Map(nodeKeys.map(key => [key, []]));
@@ -263,10 +263,10 @@
         });
 
         const maxDepth = Math.max(...depth, 0);
-        const stages = Array.from({ length: maxDepth + 1 }, () => []);
-        components.forEach((component, index) => component.forEach(key => stages[depth[index]].push(key)));
-        orderStages(stages, directedEdges, nodeMap);
-        return { stages, cycles, cycleByNode, maxDepth };
+        const columns = Array.from({ length: maxDepth + 1 }, () => []);
+        components.forEach((component, index) => component.forEach(key => columns[depth[index]].push(key)));
+        orderColumns(columns, directedEdges, nodeMap);
+        return { columns, cycles, cycleByNode, maxDepth };
     }
 
     function edgePath(source, target, index) {
@@ -283,13 +283,6 @@
         const targetX = target.x - direction * target.width / 2;
         const control = Math.max(38, Math.abs(targetX - sourceX) * 0.44) + (index % 3) * 5;
         return `M ${sourceX} ${source.y} C ${sourceX + direction * control} ${source.y}, ${targetX - direction * control} ${target.y}, ${targetX} ${target.y}`;
-    }
-
-    function stageLabel(depth, maxDepth) {
-        if (maxDepth === 0) return '작업';
-        if (depth === 0) return '시작';
-        if (depth === maxDepth) return '결과';
-        return `${depth + 1}단계`;
     }
 
     function edgeAppearance(type, cycle) {
@@ -310,7 +303,6 @@
             width: 0,
             height: 0,
             canvasStyle: '',
-            stages: [],
             nodes: [],
             edges: [],
             disconnected: [],
@@ -333,8 +325,8 @@
         const levelData = computeLevels(nodeKeys, edges, nodeMap);
         const offsets = options && options.offsets && typeof options.offsets === 'object' ? options.offsets : {};
 
-        const contentWidth = PADDING_X * 2 + levelData.stages.length * COLUMN_WIDTH + Math.max(0, levelData.stages.length - 1) * COLUMN_GAP;
-        const maxRows = Math.max(1, ...levelData.stages.map(stage => stage.length));
+        const contentWidth = PADDING_X * 2 + levelData.columns.length * COLUMN_WIDTH + Math.max(0, levelData.columns.length - 1) * COLUMN_GAP;
+        const maxRows = Math.max(1, ...levelData.columns.map(column => column.length));
         const contentHeight = PADDING_TOP + maxRows * NODE_HEIGHT + Math.max(0, maxRows - 1) * ROW_GAP + PADDING_BOTTOM;
         const baseWidth = Math.max(MIN_WIDTH, contentWidth);
         const baseHeight = Math.max(MIN_HEIGHT, contentHeight);
@@ -343,16 +335,16 @@
         const height = baseHeight + Math.max(0, ...allOffsets.map(offset => offset.y));
         const contentInset = Math.max(0, (baseWidth - contentWidth) / 2);
         const layoutByNode = new Map();
+        const incoming = new Map(nodeKeys.map(key => [key, 0]));
+        const outgoing = new Map(nodeKeys.map(key => [key, 0]));
+        edges.filter(edge => edge.type === 'blocks' || edge.type === 'part_of').forEach(edge => {
+            outgoing.set(edge.fromKey, (outgoing.get(edge.fromKey) || 0) + 1);
+            incoming.set(edge.toKey, (incoming.get(edge.toKey) || 0) + 1);
+        });
+        const layoutNodes = [];
 
-        const stages = levelData.stages.map((members, depth) => {
+        levelData.columns.forEach((members, depth) => {
             const left = contentInset + PADDING_X + depth * (COLUMN_WIDTH + COLUMN_GAP);
-            const label = stageLabel(depth, levelData.maxDepth);
-            const stage = {
-                depth,
-                label,
-                style: `left:${left}px;top:0;width:${COLUMN_WIDTH}px;height:${height}px`,
-                nodes: []
-            };
             members.forEach((key, row) => {
                 const item = nodeMap.get(key);
                 const offset = nodeOffset(offsets, dragKey(key));
@@ -376,7 +368,8 @@
                     canvasWidth: width,
                     canvasHeight: height,
                     depth,
-                    stageLabel: label,
+                    isEntry: (incoming.get(key) || 0) === 0 && (outgoing.get(key) || 0) > 0,
+                    isOutcome: (incoming.get(key) || 0) > 0 && (outgoing.get(key) || 0) === 0,
                     parentItem: parentKey ? nodeMap.get(parentKey) : null,
                     childItems: children.map(childKey => nodeMap.get(childKey)),
                     orphanParentId: hierarchy.orphanParentByNode.get(key),
@@ -385,10 +378,9 @@
                     context: Boolean(item && item.__filter_context),
                     style: `left:${x - NODE_WIDTH / 2}px;top:${y - NODE_HEIGHT / 2}px;width:${NODE_WIDTH}px;height:${NODE_HEIGHT}px`
                 };
-                stage.nodes.push(layoutNode);
+                layoutNodes.push(layoutNode);
                 layoutByNode.set(key, layoutNode);
             });
-            return stage;
         });
 
         const layoutEdges = edges.map((edge, index) => {
@@ -411,7 +403,7 @@
 
         const incident = new Set();
         edges.forEach(edge => { incident.add(edge.fromKey); incident.add(edge.toKey); });
-        const disconnected = stages.flatMap(stage => stage.nodes).filter(node => !incident.has(node.key));
+        const disconnected = layoutNodes.filter(node => !incident.has(node.key));
         const hierarchyWarnings = nodes.filter(node => {
             const key = keyOf(node.id);
             return hierarchy.orphanParentByNode.has(key) || hierarchy.hierarchyCycleNodes.has(key);
@@ -431,8 +423,7 @@
             width,
             height,
             canvasStyle: `width:${width}px;height:${height}px`,
-            stages,
-            nodes: stages.flatMap(stage => stage.nodes),
+            nodes: layoutNodes,
             edges: layoutEdges,
             disconnected,
             cycles: levelData.cycles,

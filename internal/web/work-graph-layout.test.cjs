@@ -66,7 +66,7 @@ test('session offset moves one node, updates attached paths, expands the canvas,
     );
 });
 
-test('related work is connected without creating a dependency stage', () => {
+test('related work is connected without changing dependency depth', () => {
     const layout = buildWorkGraphLayout(
         ['A', 'B', 'C'].map(id => node(id)),
         [edge(1, 'A', 'B', 'relates_to'), edge(2, 'B', 'C')]
@@ -89,7 +89,7 @@ test('work without an edge stays visible and is reported as disconnected', () =>
     assert.equal(layout.nodes.length, 3);
 });
 
-test('strongly connected blocking edges share a stage and are marked as a cycle', () => {
+test('strongly connected blocking edges share a column and are marked as a cycle', () => {
     const layout = buildWorkGraphLayout(
         ['A', 'B', 'C'].map(id => node(id)),
         [edge(1, 'A', 'B'), edge(2, 'B', 'A'), edge(3, 'B', 'C')]
@@ -120,6 +120,10 @@ test('every hierarchy item is an independent node joined child to parent', () =>
     assert.equal(layout.edges.filter(item => item.type === 'part_of').length, 2);
     assert.ok(layout.edges.some(item => item.fromKey === 'G' && item.toKey === 'C'));
     assert.ok(layout.edges.some(item => item.fromKey === 'C' && item.toKey === 'P'));
+    assert.equal(placed(layout, 'G').isEntry, true);
+    assert.equal(placed(layout, 'C').isEntry, false);
+    assert.equal(placed(layout, 'C').isOutcome, false);
+    assert.equal(placed(layout, 'P').isOutcome, true);
 });
 
 test('hierarchy and dependency edges share one node-link layout', () => {
@@ -188,6 +192,9 @@ test('the graph UI renders one independent node template with filters and no nes
     assert.match(graphArea, /graphNodeMeta\(node\)/);
     assert.match(graphArea, /graphFilter\.query/);
     assert.match(graphArea, /graphFilter\.status/);
+    assert.match(graphArea, /graphNodeRoleLabel\(node\)/);
+    assert.match(graphArea, /stash-graph-role-badge/);
+    assert.doesNotMatch(graphArea, /workGraphLayout\.stages|stash-graph-stage/);
     assert.doesNotMatch(graphArea, /childLayout|stash-graph-child|toggleGraphParent/);
 });
 
@@ -220,7 +227,8 @@ test('the graph shell fills its view and always has room for a real horizontal g
     assert.doesNotMatch(html, /<main class="[^"]*max-w-7xl/);
     assert.ok(hierarchy.width >= 760);
     assert.ok(hierarchy.height >= 360);
-    assert.equal(hierarchy.stages.length, 3);
-    assert.equal(hierarchy.stages[0].label, '시작');
-    assert.equal(hierarchy.stages.at(-1).label, '결과');
+    assert.equal(Object.hasOwn(hierarchy, 'stages'), false);
+    assert.equal(placed(hierarchy, 'G').isEntry, true);
+    assert.equal(placed(hierarchy, 'P').isOutcome, true);
+    assert.equal(placed(hierarchy, 'C').isEntry || placed(hierarchy, 'C').isOutcome, false);
 });
