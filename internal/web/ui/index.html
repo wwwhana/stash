@@ -6,6 +6,7 @@
     <title>Stash 작업 공간</title>
     <link rel="stylesheet" href="/tailwind-3.4.17.min.css">
     <script defer src="/work-graph-layout.js"></script>
+    <script defer src="/goal-map-layout.js"></script>
     <script defer src="/alpine-3.16.3.min.js"></script>
     <style>
         [x-cloak] { display: none !important; }
@@ -443,6 +444,60 @@
         .stash-graph-unlinked__badge { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 4px; color: #94a3b8; font-size: 8px; }
         .stash-graph-unlinked__title { display: block; margin-top: 5px; overflow: hidden; font-size: 10px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
         .stash-graph-unlinked__item small { display: block; margin-top: 5px; color: #fde68a; font-size: 8px; }
+        .stash-goal-map { width: 100%; height: 100%; min-height: 100%; display: flex; flex-direction: column; padding: 12px; color: #f8fafc; background: #111a2f; }
+        .stash-goal-map__header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 9px; }
+        .stash-goal-map__title { font-size: 14px; font-weight: 850; }
+        .stash-goal-map__scope { margin-top: 3px; color: #94a3b8; font-size: 10px; }
+        .stash-goal-map__legend { display: flex; flex-wrap: wrap; gap: 10px; color: #cbd5e1; font-size: 10px; }
+        .stash-goal-map__legend span { display: inline-flex; align-items: center; gap: 5px; }
+        .stash-goal-map__legend i { width: 18px; border-top: 2px solid #818cf8; }
+        .stash-goal-map__legend i.is-memory { border-top-style: dashed; border-top-color: #fbbf24; }
+        .stash-goal-map__toolbar { display: flex; align-items: end; justify-content: space-between; gap: 10px; margin-bottom: 9px; padding: 8px; border: 1px solid rgba(148,163,184,.2); border-radius: 8px; background: rgba(15,23,42,.68); }
+        .stash-goal-map__summary { display: flex; gap: 7px; }
+        .stash-goal-map__summary span { padding: 5px 8px; border-radius: 7px; color: #cbd5e1; background: #1e293b; font-size: 9px; }
+        .stash-goal-map__summary strong { margin-right: 3px; color: #fff; }
+        .stash-goal-map__activity { display: flex; gap: 6px; margin: 0 0 9px; overflow-x: auto; }
+        .stash-goal-map__activity button { min-width: 160px; max-width: 260px; padding: 7px 9px; border: 1px solid rgba(129,140,248,.25); border-radius: 8px; color: #e2e8f0; background: rgba(30,41,59,.72); text-align: left; }
+        .stash-goal-map__activity button.is-blocked { border-color: rgba(251,113,133,.42); }
+        .stash-goal-map__activity strong, .stash-goal-map__activity span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .stash-goal-map__activity strong { font-size: 9px; }
+        .stash-goal-map__activity span { margin-top: 3px; color: #94a3b8; font-size: 8px; }
+        .stash-goal-map__empty { display: grid; min-height: 280px; flex: 1; place-items: center; padding: 24px; border: 1px dashed rgba(148,163,184,.3); border-radius: 12px; color: #94a3b8; background: rgba(15,23,42,.3); font-size: 12px; text-align: center; }
+        .stash-goal-map__empty.is-error { color: #fecaca; }
+        .stash-goal-map__setup { display: grid; width: min(420px, 100%); gap: 8px; margin-top: 14px; }
+        .stash-goal-map__setup select { width: 100%; padding: 8px 10px; border: 1px solid rgba(148,163,184,.34); border-radius: 7px; color: #f8fafc; background: #172033; }
+        .stash-goal-map__setup .stash-btn { justify-self: center; }
+        .stash-goal-map__scroll { min-height: 260px; flex: 1; overflow: auto; border: 1px solid rgba(148,163,184,.2); border-radius: 10px; background: rgba(8,15,29,.45); }
+        .stash-goal-map__canvas { position: relative; min-height: 100%; overflow: hidden; }
+        .stash-goal-map__columns { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
+        .stash-goal-map__column { position: absolute; top: 10px; bottom: 10px; border: 1px solid rgba(148,163,184,.13); border-radius: 9px; background: rgba(30,41,59,.32); }
+        .stash-goal-map__column strong { display: block; padding: 9px 10px; color: #94a3b8; font-size: 9px; }
+        .stash-goal-map__column span { float: right; color: #64748b; }
+        .stash-goal-map__edges { position: absolute; inset: 0; z-index: 1; width: 100% !important; height: 100% !important; pointer-events: none; }
+        .stash-goal-map__edges path { fill: none; vector-effect: non-scaling-stroke; }
+        .stash-goal-node { position: absolute; z-index: 2; overflow: hidden; border: 1px solid #475569; border-radius: 10px; color: #f8fafc; background: #18233a; box-shadow: 0 7px 16px rgba(2,6,23,.24); }
+        .stash-goal-node.is-root { border-color: #a5b4fc; background: #222d50; box-shadow: 0 0 0 1px rgba(165,180,252,.2), 0 8px 18px rgba(2,6,23,.28); }
+        .stash-goal-node.is-complete { border-color: rgba(52,211,153,.6); }
+        .stash-goal-node.is-ready { border-color: #38bdf8; }
+        .stash-goal-node.is-mismatch { border-color: #fb7185; }
+        .stash-goal-node__body { width: 100%; height: 100%; padding: 10px 11px; text-align: left; }
+        button.stash-goal-node__body { border: 0; color: inherit; background: transparent; }
+        button.stash-goal-node__body:hover { background: rgba(99,102,241,.08); }
+        button.stash-goal-node__body:focus-visible { box-shadow: inset 0 0 0 3px rgba(165,180,252,.48); outline: none; }
+        .stash-goal-node__top { display: flex; align-items: center; justify-content: space-between; gap: 7px; color: #94a3b8; font-size: 8px; }
+        .stash-goal-node__top strong { color: #c7d2fe; font-size: 9px; }
+        .stash-goal-node__title { display: -webkit-box; margin-top: 7px; overflow: hidden; font-size: 10px; font-weight: 800; line-height: 1.35; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+        .stash-goal-node__meta { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 7px; color: #94a3b8; font-size: 8px; }
+        .stash-goal-node__detail { display: block; margin-top: 5px; overflow: hidden; color: #94a3b8; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+        .stash-goal-node__progress { display: block; height: 4px; margin-top: 7px; overflow: hidden; border-radius: 999px; background: #334155; }
+        .stash-goal-node__progress i { display: block; height: 100%; border-radius: inherit; background: #818cf8; }
+        .stash-goal-node.is-memory { border-color: rgba(251,191,36,.45); background: #272318; }
+        .stash-goal-node.is-memory .stash-goal-node__top strong { color: #fde68a; }
+        .stash-goal-node.is-work { background: #172033; }
+        .stash-goal-map__unassigned { margin-top: 9px; padding: 10px; border: 1px solid rgba(251,191,36,.3); border-radius: 9px; background: rgba(120,53,15,.14); }
+        .stash-goal-map__unassigned > strong { color: #fde68a; font-size: 10px; }
+        .stash-goal-map__unassigned > div { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
+        .stash-goal-map__unassigned button { padding: 5px 8px; border: 1px solid rgba(251,191,36,.25); border-radius: 7px; color: #fef3c7; background: rgba(15,23,42,.6); font-size: 9px; }
         .stash-worktree-summary { display: flex; align-items: center; gap: 8px; margin-bottom: 13px; color: var(--stash-muted); font-size: 11px; }
         .stash-worktree-summary strong { color: var(--stash-ink); font-size: 18px; }
         .stash-worktree-card__path { margin-top: 10px; padding: 8px 9px; overflow-wrap: anywhere; border-radius: 7px; color: #475467; background: #f8fafc; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; line-height: 1.45; }
@@ -450,6 +505,9 @@
         .stash-plan-intro { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 16px; }
         .stash-plan-intro h3 { margin: 0; color: var(--stash-ink); font-size: 21px; letter-spacing: -.035em; }
         .stash-plan-intro p { max-width: 590px; margin: 6px 0 0; color: var(--stash-muted); font-size: 12px; line-height: 1.5; }
+        .stash-plan-shared-goal { display: flex; align-items: center; gap: 7px; max-width: 620px; margin-top: 9px; padding: 7px 9px; border: 1px solid #dfe3ff; border-radius: 8px; color: #475467; background: #f8f8ff; font-size: 10px; }
+        .stash-plan-shared-goal span { flex: 0 0 auto; color: var(--stash-indigo); font-weight: 800; }
+        .stash-plan-shared-goal strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .stash-plan-stats { display: grid; grid-template-columns: repeat(3, minmax(74px, 1fr)); gap: 7px; flex: 0 0 auto; }
         .stash-plan-stat { min-width: 74px; padding: 9px 11px; border: 1px solid var(--stash-line); border-radius: 9px; background: #fff; text-align: center; box-shadow: var(--stash-shadow-sm); }
         .stash-plan-stat strong { display: block; color: var(--stash-ink); font-size: 17px; line-height: 1; }
@@ -466,6 +524,7 @@
         .stash-plan-form__hint { color: var(--stash-subtle); font-size: 10px; font-weight: 500; }
         .stash-plan-field--title { grid-column: span 6; }
         .stash-plan-field--source { grid-column: span 2; }
+        .stash-plan-field--goal { grid-column: span 4; }
         .stash-plan-field--description { grid-column: span 6; }
         .stash-plan-field--tech { grid-column: span 6; }
         .stash-plan-field--paths { grid-column: span 10; }
@@ -574,10 +633,14 @@
             .stash-plan-intro { display: block; }
             .stash-plan-stats { margin-top: 12px; }
             .stash-plan-toolbar .stash-field { flex-basis: 100%; max-width: none; }
-            .stash-plan-field--title, .stash-plan-field--source, .stash-plan-field--description, .stash-plan-field--tech, .stash-plan-field--paths, .stash-plan-form__actions, .stash-plan-form__heading { grid-column: auto; }
+            .stash-plan-field--title, .stash-plan-field--source, .stash-plan-field--goal, .stash-plan-field--description, .stash-plan-field--tech, .stash-plan-field--paths, .stash-plan-form__actions, .stash-plan-form__heading { grid-column: auto; }
             .stash-plan-form__actions { align-items: stretch; }
             .stash-plan-task { grid-template-columns: 1fr; }
             .stash-plan-task__actions { justify-content: flex-end; }
+            .stash-goal-map { padding: 10px; }
+            .stash-goal-map__header, .stash-goal-map__toolbar { display: block; }
+            .stash-goal-map__legend, .stash-goal-map__summary { margin-top: 8px; }
+            .stash-goal-map__summary { flex-wrap: wrap; }
             .stash-issue-form__heading { grid-column: auto; }
             .stash-form-actions { align-items: stretch; }
             .stash-execution { margin: 14px -4px 0; padding: 11px; }
@@ -667,6 +730,7 @@
                 <div class="stash-sidebar-card bg-white p-4 rounded-lg shadow-sm border border-gray-100">
                     <h2 class="stash-sidebar-label text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">작업 공간</h2>
                     <nav class="stash-nav flex flex-col gap-2">
+                        <button @click="loadGoalMap()" :class="{'is-active': activeNav === 'goal-map'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">◎</span>목표 지도</button>
                         <button @click="loadWorkPlan()" :class="{'is-active': activeNav === 'plan'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">◇</span>작업 계획</button>
                         <button @click="loadWorkBoard()" :class="{'is-active': activeNav === 'board'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">▦</span>이슈 보드</button>
                         <button @click="loadWorkGraph()" :class="{'is-active': activeNav === 'graph'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">⌁</span>작업 그래프</button>
@@ -955,6 +1019,48 @@
                         </section>
                     </div>
 
+                    <div x-show="view === 'goal-map'" x-cloak class="stash-goal-map" aria-label="목표 지도">
+                        <div class="stash-goal-map__header">
+                            <div><div class="stash-goal-map__title">목표 흐름</div><div class="stash-goal-map__scope" x-text="goalMapScopeLabel()"></div></div>
+                            <div class="stash-goal-map__legend" aria-label="목표 지도 범례"><span><i></i>결과가 목표에 합쳐짐</span><span><i class="is-memory"></i>기억 연결</span></div>
+                        </div>
+                        <div class="stash-goal-map__toolbar">
+                            <label class="stash-graph-project"><span>프로젝트</span><select x-model="graphProjectSlug" @change="loadGoalMap(false)" :disabled="graphProjectsLoading || loading" aria-label="목표 지도 프로젝트 선택"><option value="">기본 작업 공간</option><template x-for="project in graphProjects" :key="'goal-map-' + project.slug"><option :value="project.slug" x-text="project.label"></option></template></select></label>
+                            <div class="stash-goal-map__summary" aria-label="목표 진행 요약">
+                                <span><strong x-text="goalMapLayout.counts.goal"></strong>목표</span>
+                                <span><strong x-text="goalMapLayout.counts.work"></strong>작업</span>
+                                <span><strong x-text="goalMapStatusCount('doing')"></strong>진행</span>
+                                <span><strong x-text="goalMapStatusCount('blocked')"></strong>막힘</span>
+                                <span><strong x-text="goalMapLayout.counts.memory"></strong>기억</span>
+                            </div>
+                        </div>
+                        <div x-show="goalMapAttentionItems().length" class="stash-goal-map__activity" aria-label="지금 확인할 작업">
+                            <template x-for="item in goalMapAttentionItems()" :key="'goal-map-attention-' + item.id">
+                                <button type="button" :class="{'is-blocked': item.status === 'blocked'}" @click="openIssue(item.id, $event.currentTarget)" :title="goalMapWorkDetail(item)"><strong x-text="(item.issue_key || '#' + item.id) + ' · ' + item.title"></strong><span x-text="goalMapAttentionText(item)"></span></button>
+                            </template>
+                        </div>
+                        <div x-show="loading" class="stash-goal-map__empty" role="status">목표 지도를 불러오는 중</div>
+                        <div x-show="!loading && goalMapError" class="stash-goal-map__empty is-error" role="alert"><div><span x-text="goalMapError"></span><br><button type="button" class="stash-btn" @click="loadGoalMap(false)">다시 시도</button></div></div>
+                        <div x-show="!loading && !goalMapError && !goalMapHasRoot()" class="stash-goal-map__empty"><div><strong>공통 목표가 아직 없습니다.</strong><div x-show="goalMapRootCandidates.length" class="stash-goal-map__setup"><label class="sr-only" for="goal-map-root">공통 목표</label><select id="goal-map-root" x-model="goalMapRootGoalId" :disabled="goalMapRootSaving"><option value="">목표 선택</option><template x-for="goal in goalMapRootCandidates" :key="'goal-map-root-' + goal.id"><option :value="String(goal.id)" x-text="goal.content"></option></template></select><button type="button" class="stash-btn stash-btn-primary" @click="setProjectGoal()" :disabled="!goalMapRootGoalId || goalMapRootSaving" x-text="goalMapRootSaving ? '저장 중' : '공통 목표로 정하기'"></button></div><span x-show="!goalMapRootCandidates.length">먼저 최상위 목표를 만드세요.</span><br><span x-show="goalMap.unassigned_work.length" x-text="'목표에 연결할 작업 ' + goalMap.unassigned_work.length + '개'"></span></div></div>
+                        <div x-show="!loading && !goalMapError && goalMapHasRoot()" class="stash-goal-map__scroll" tabindex="0" aria-label="기억에서 작업을 거쳐 공통 목표로 이어지는 지도">
+                            <div class="stash-goal-map__canvas" :style="goalMapLayout.canvasStyle" role="region" :aria-label="goalMapAriaLabel()">
+                                <div class="stash-goal-map__columns" aria-hidden="true"><template x-for="column in goalMapLayout.columns" :key="column.key"><div class="stash-goal-map__column" :style="column.style"><strong><span x-text="column.count + '개'"></span><b x-text="column.label"></b></strong></div></template></div>
+                                <template x-for="edge in goalMapLayout.edges" :key="edge.key">
+                                    <svg :viewBox="goalMapCanvasViewBox()" :style="goalMapLayout.canvasStyle" class="stash-goal-map__edges" aria-hidden="true"><defs><marker :id="goalMapMarkerId(edge)" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" :fill="edge.stroke"></path></marker></defs><path :d="edge.path" :stroke="edge.stroke" stroke-width="2" :stroke-dasharray="edge.dashArray" :marker-end="edge.marker ? goalMapMarkerUrl(edge) : null" opacity="0.88"></path></svg>
+                                </template>
+                                <template x-for="node in goalMapLayout.nodes" :key="node.key">
+                                    <article class="stash-goal-node" :class="goalMapNodeClasses(node)" :style="node.style">
+                                        <template x-if="node.kind === 'goal'"><div class="stash-goal-node__body" :aria-label="goalMapNodeAriaLabel(node)"><span class="stash-goal-node__top"><strong x-text="goalMapGoalKind(node.item)"></strong><span x-text="statusLabel(node.item.status)"></span></span><span class="stash-goal-node__title" x-text="node.item.content"></span><span class="stash-goal-node__meta"><span x-text="goalMapGoalProgressText(node.item)"></span><span x-text="goalMapProgressPercent(node.item.progress)"></span></span><span class="stash-goal-node__progress"><i :style="'width:' + goalMapProgressPercent(node.item.progress)"></i></span></div></template>
+                                        <template x-if="node.kind === 'work'"><button type="button" class="stash-goal-node__body" @click="openIssue(node.item.id, $event.currentTarget)" :aria-label="goalMapNodeAriaLabel(node)" :title="goalMapWorkDetail(node.item)"><span class="stash-goal-node__top"><strong x-text="node.item.issue_key || '#' + node.item.id"></strong><span x-text="statusLabel(node.item.status)"></span></span><span class="stash-goal-node__title" x-text="node.item.title"></span><span class="stash-goal-node__detail" x-text="goalMapWorkMonitorText(node.item)"></span><span class="stash-goal-node__detail" x-text="goalMapWorkDetail(node.item)"></span></button></template>
+                                        <template x-if="node.kind === 'memory'"><div class="stash-goal-node__body" :aria-label="goalMapNodeAriaLabel(node)"><span class="stash-goal-node__top"><strong x-text="goalMapMemoryTypeLabel(node.item.memory_type)"></strong><span x-text="goalMapMemoryStatusLabel(node.item.status)"></span></span><span class="stash-goal-node__title" x-text="node.item.content"></span></div></template>
+                                    </article>
+                                </template>
+                                <div class="sr-only"><h3>목표 연결</h3><ul><template x-for="edge in goalMapLayout.edges" :key="'goal-map-text-' + edge.key"><li x-text="edge.ariaLabel"></li></template></ul></div>
+                            </div>
+                        </div>
+                        <section x-show="!loading && !goalMapError && goalMap.unassigned_work.length" class="stash-goal-map__unassigned" aria-label="목표에 연결되지 않은 작업"><strong>목표 연결 필요</strong><div><template x-for="item in goalMap.unassigned_work" :key="'unassigned-goal-work-' + item.id"><button type="button" @click="openIssue(item.id, $event.currentTarget)" x-text="(item.issue_key || '#' + item.id) + ' · ' + item.title"></button></template></div></section>
+                    </div>
+
                     <div x-show="view === 'graph'" x-cloak class="stash-graph p-4 bg-slate-950 text-white" @pointermove.window="moveGraphNodeDrag($event)" @pointerup.window="finishGraphNodeDrag($event)" @pointercancel.window="finishGraphNodeDrag($event)" @keydown.escape.window="cancelGraphNodeDrag($event)">
                         <div class="stash-graph-header"><div><div class="stash-graph-title">작업 흐름</div><div class="stash-graph-scope" x-text="graphScopeLabel()"></div></div><div class="stash-graph-legend" aria-label="그래프 범례"><span><i class="stash-legend-line"></i>선행 → 다음</span><span><i class="stash-legend-line is-dashed"></i>관련</span></div></div>
                         <div class="stash-graph-toolbar" role="group" aria-label="작업 흐름 보기 설정">
@@ -1085,7 +1191,7 @@
 
                     <div x-show="view === 'plan'" x-cloak class="stash-plan" aria-label="작업 계획">
                         <div class="stash-plan-intro">
-                            <div><h3>작업 계획</h3><p>구성 요소, 실제 할 일, 선행 관계와 결정 내용을 한곳에서 봅니다.</p></div>
+                            <div><h3>작업 계획</h3><p>구성 요소, 실제 할 일, 선행 관계와 결정 내용을 한곳에서 봅니다.</p><div x-show="planRootGoal()" class="stash-plan-shared-goal"><span>공통 목표</span><strong x-text="planRootGoal() && planRootGoal().content"></strong><small x-text="planRootGoal() ? planProgressPercent(planRootGoal().progress) : ''"></small></div></div>
                             <div class="stash-plan-stats" aria-label="계획 요약">
                                 <div class="stash-plan-stat is-indigo"><strong x-text="plan.components.length"></strong><span>구성 요소</span></div>
                                 <div class="stash-plan-stat"><strong x-text="planTaskCount('doing')"></strong><span>진행 중</span></div>
@@ -1104,6 +1210,7 @@
                             <div class="stash-plan-form__heading"><span x-text="planComponentForm.componentId ? '구성 요소 수정' : '새 구성 요소'"></span><span class="stash-plan-form__hint">시스템의 한 부분을 적습니다.</span></div>
                             <label class="stash-field stash-plan-field--title"><span>이름</span><input x-model="planComponentForm.title" required placeholder="예: 알림을 소리로 읽기"></label>
                             <label x-show="!planComponentForm.componentId" class="stash-field stash-plan-field--source"><span>우선순위</span><input x-model.number="planComponentForm.priority" type="number" min="0"></label>
+                            <label class="stash-field stash-plan-field--goal"><span>연결 목표</span><select x-model="planComponentForm.goalId"><option value="">공통 목표</option><template x-for="goal in planGoals()" :key="'component-goal-' + goal.id"><option :value="goal.id" x-text="planGoalLabel(goal)"></option></template></select></label>
                             <label class="stash-field stash-plan-field--description"><span>완료 조건</span><textarea x-model="planComponentForm.description" placeholder="사용자가 확인할 수 있는 결과"></textarea></label>
                             <label class="stash-field stash-plan-field--tech"><span>구현 메모</span><textarea x-model="planComponentForm.technicalDetails" placeholder="필요한 구현 방식"></textarea></label>
                             <label class="stash-field stash-plan-field--paths"><span>맡는 경로</span><input x-model="planComponentForm.ownedPaths" placeholder="src/audio/**, config.py"></label>
@@ -1114,6 +1221,7 @@
                             <div class="stash-plan-form__heading"><span x-text="planTaskForm.taskId ? '작업 수정' : '새 작업'"></span><span class="stash-plan-form__hint" x-text="planComponentTitle(planTaskForm.componentId)"></span></div>
                             <label class="stash-field stash-plan-field--title"><span>결과</span><input x-model="planTaskForm.title" required placeholder="예: 실패한 알림을 다시 보여주기"></label>
                             <label class="stash-field stash-plan-field--source"><span>출처</span><select x-model="planTaskForm.provenance"><option value="agent">에이전트</option><option value="roadmap">계획 문서</option><option value="">없음</option></select></label>
+                            <label class="stash-field stash-plan-field--goal"><span>연결 목표</span><select x-model="planTaskForm.goalId"><option value="">구성 요소와 같음</option><template x-for="goal in planGoals()" :key="'task-goal-' + goal.id"><option :value="goal.id" x-text="planGoalLabel(goal)"></option></template></select></label>
                             <label class="stash-field stash-plan-field--description"><span>완료 조건</span><textarea x-model="planTaskForm.description" placeholder="끝났다고 판단할 기준"></textarea></label>
                             <label class="stash-field stash-plan-field--tech"><span>구현 메모</span><textarea x-model="planTaskForm.technicalDetails" placeholder="필요한 구현 방식"></textarea></label>
                             <div class="stash-plan-form__actions"><button type="submit" class="stash-btn stash-btn-success" x-text="planTaskForm.taskId ? '수정' : '만들기'"></button><button type="button" class="stash-btn" @click="closePlanTaskForm()">닫기</button></div>
@@ -1157,6 +1265,7 @@
                                         <p x-show="component.description" class="stash-plan-component__description" x-text="component.description"></p>
                                         <div x-show="component.technical_details" class="stash-plan-tech"><strong>구현:</strong> <span x-text="component.technical_details"></span></div>
                                         <div class="stash-plan-meta">
+											<span x-show="component.goal_id" class="stash-plan-chip is-edge" x-text="'목표 ' + planGoalShortLabel(component.goal_id)"></span>
                                             <template x-for="path in component.owned_paths" :key="path"><span class="stash-plan-chip is-path" x-text="path"></span></template>
                                             <template x-for="need in component.needs" :key="'need-' + need.id"><span class="stash-plan-chip is-edge" x-text="'선행 ' + need.issue_key"></span></template>
                                             <template x-for="link in component.links" :key="'link-' + link.id"><span class="stash-plan-chip" x-text="'연결 ' + link.issue_key"></span></template>
@@ -1169,7 +1278,7 @@
                                             <div x-show="!component.tasks.length" class="stash-plan-empty">아직 등록된 작업이 없습니다.</div>
                                             <template x-for="task in component.tasks" :key="task.id">
                                                 <article class="stash-plan-task">
-                                                    <div class="stash-plan-task__copy"><div class="stash-plan-task__title" x-text="task.title"></div><div x-show="task.description" class="stash-plan-task__detail" x-text="task.description"></div><div x-show="task.technical_details" class="stash-plan-task__detail" x-text="'구현: ' + task.technical_details"></div><div class="stash-plan-task__meta"><span x-show="task.provenance" class="stash-plan-chip" x-text="'출처 ' + planProvenanceLabel(task.provenance)"></span><span x-show="task.started_by" class="stash-plan-chip" x-text="'시작 ' + task.started_by"></span><span x-show="task.completed_by" class="stash-plan-chip" x-text="'완료 ' + task.completed_by"></span><span x-show="task.worktree_ids && task.worktree_ids.length" class="stash-plan-chip" x-text="'워크트리 ' + task.worktree_ids.length"></span></div></div>
+                                                    <div class="stash-plan-task__copy"><div class="stash-plan-task__title" x-text="task.title"></div><div x-show="task.description" class="stash-plan-task__detail" x-text="task.description"></div><div x-show="task.technical_details" class="stash-plan-task__detail" x-text="'구현: ' + task.technical_details"></div><div class="stash-plan-task__meta"><span x-show="task.goal_id" class="stash-plan-chip is-edge" x-text="'목표 ' + planGoalShortLabel(task.goal_id)"></span><span x-show="task.provenance" class="stash-plan-chip" x-text="'출처 ' + planProvenanceLabel(task.provenance)"></span><span x-show="task.started_by" class="stash-plan-chip" x-text="'시작 ' + task.started_by"></span><span x-show="task.completed_by" class="stash-plan-chip" x-text="'완료 ' + task.completed_by"></span><span x-show="task.worktree_ids && task.worktree_ids.length" class="stash-plan-chip" x-text="'워크트리 ' + task.worktree_ids.length"></span></div></div>
                                                     <div><span class="stash-plan-task__state" :class="'is-' + task.status" x-text="statusLabel(task.status)"></span><div class="stash-plan-task__actions"><button type="button" class="stash-btn" @click="openPlanTaskForm(component.id, task)">수정</button><button x-show="task.status === 'ready' || task.status === 'backlog'" type="button" class="stash-btn stash-btn-primary" @click="startPlanTask(task.id)">시작</button><button x-show="task.status === 'doing'" type="button" class="stash-btn stash-btn-success" @click="completePlanTask(task.id)">완료</button><button x-show="task.status === 'doing' || task.status === 'ready' || task.status === 'backlog'" type="button" class="stash-btn" @click="blockPlanTask(task.id)">막힘</button><button x-show="task.status === 'blocked'" type="button" class="stash-btn stash-btn-primary" @click="unblockPlanTask(task.id)">재개</button></div></div>
                                                 </article>
                                             </template>
@@ -1535,23 +1644,225 @@
             };
         }
 
+        function createGoalMapViewModel() {
+            const layout = window.StashGoalMap || {
+                emptyLayout: () => ({ width: 0, height: 0, canvasStyle: '', nodes: [], edges: [], columns: [], counts: { memory: 0, work: 0, goal: 0 } }),
+                buildGoalMapLayout: () => ({ width: 0, height: 0, canvasStyle: '', nodes: [], edges: [], columns: [], counts: { memory: 0, work: 0, goal: 0 } })
+            };
+            const emptyMap = () => ({
+                goal_tree: { root_goal_id: null, goals: [] },
+                root_candidates: [], root_candidates_truncated: false,
+                work_items: [], memories: [], edges: [], unassigned_work: []
+            });
+            return {
+                goalMap: emptyMap(),
+                goalMapLayout: layout.emptyLayout(),
+                goalMapError: '',
+                goalMapRootCandidates: [],
+                goalMapRootGoalId: '',
+                goalMapRootSaving: false,
+
+                setGoalMap(value) {
+                    const source = value && typeof value === 'object' ? value : {};
+                    const tree = source.goal_tree && typeof source.goal_tree === 'object' ? source.goal_tree : {};
+                    this.goalMap = {
+                        goal_tree: {
+                            root_goal_id: tree.root_goal_id === undefined ? null : tree.root_goal_id,
+                            goals: Array.isArray(tree.goals) ? tree.goals : []
+                        },
+                        root_candidates: Array.isArray(source.root_candidates) ? source.root_candidates : [],
+                        root_candidates_truncated: Boolean(source.root_candidates_truncated),
+                        work_items: Array.isArray(source.work_items) ? source.work_items : [],
+                        memories: Array.isArray(source.memories) ? source.memories : [],
+                        edges: Array.isArray(source.edges) ? source.edges : [],
+                        unassigned_work: Array.isArray(source.unassigned_work) ? source.unassigned_work : []
+                    };
+                    this.goalMapRootCandidates = this.goalMap.root_candidates;
+                    if (!this.goalMapRootCandidates.some(goal => String(goal.id) === String(this.goalMapRootGoalId))) {
+                        this.goalMapRootGoalId = '';
+                    }
+                    this.goalMapLayout = layout.buildGoalMapLayout(this.goalMap);
+                },
+
+                clearGoalMap() {
+                    this.setGoalMap(emptyMap());
+                },
+
+                goalMapHasRoot() {
+                    return this.goalMap.goal_tree.root_goal_id !== null && this.goalMap.goal_tree.goals.length > 0;
+                },
+
+                goalMapScopeLabel() {
+                    if (!this.graphProjectSlug) return '기본 작업 공간의 목표입니다.';
+                    const project = this.graphProjects.find(item => item.slug === this.graphProjectSlug);
+                    return (project ? project.label : this.graphProjectSlug) + '의 목표입니다.';
+                },
+
+                goalMapStatusCount(status) {
+                    if (status === 'doing') return this.goalMap.work_items.filter(item => item.status === 'doing' || item.status === 'review').length;
+                    return this.goalMap.work_items.filter(item => item.status === status).length;
+                },
+
+                goalMapAttentionItems() {
+                    return this.goalMap.work_items
+                        .filter(item => item.status === 'doing' || item.status === 'review' || item.status === 'blocked')
+                        .sort((left, right) => {
+                            const rank = value => value === 'blocked' ? 0 : 1;
+                            return rank(left.status) - rank(right.status) || Number(left.id) - Number(right.id);
+                        })
+                        .slice(0, 8);
+                },
+
+                goalMapGoalKind(goal) {
+                    return Number(goal && goal.id) === Number(this.goalMap.goal_tree.root_goal_id) ? '공통 목표' : '하위 목표';
+                },
+
+                goalMapProgressPercent(value) {
+                    const progress = Math.max(0, Math.min(1, Number(value) || 0));
+                    return Math.round(progress * 100) + '%';
+                },
+
+                goalMapGoalProgressText(goal) {
+                    if ((Number(goal && goal.subtree_work_total) || 0) > 0) return `작업 ${Number(goal.subtree_work_done) || 0}/${Number(goal.subtree_work_total) || 0}`;
+                    if ((Number(goal && goal.child_goal_total) || 0) > 0) return `하위 목표 ${Number(goal.child_goal_completed) || 0}/${Number(goal.child_goal_total) || 0}`;
+                    return '연결된 작업 없음';
+                },
+
+                goalMapMemoryTypeLabel(value) {
+                    return ({ episode: '경험', fact: '사실', hypothesis: '가설', failure: '실패 기록' })[value] || '기억';
+                },
+
+                goalMapMemoryStatusLabel(value) {
+                    return ({ active: '유효', recorded: '기록됨', proposed: '검토 전', confirmed: '확인됨', rejected: '기각' })[value] || value || '기록됨';
+                },
+
+                goalMapWorkMonitorText(item) {
+                    const agent = String(item && (item.agent_id || item.owner) || '').trim();
+                    const status = this.statusLabel(item && item.status);
+                    return agent ? `${status} · ${agent}` : `${status} · 담당 없음`;
+                },
+
+                goalMapAttentionText(item) {
+                    const monitor = this.goalMapWorkMonitorText(item);
+                    const next = String(item && item.next_action || '').trim();
+                    return next ? `${monitor} · ${next}` : monitor;
+                },
+
+                goalMapWorkDetail(item) {
+                    const next = String(item && item.next_action || '').trim();
+                    const result = String(item && item.latest_result || '').trim();
+                    const details = [];
+                    if (next) details.push('다음 행동: ' + next);
+                    if (result) details.push('최근 결과: ' + result);
+                    return details.join(' · ');
+                },
+
+                async setProjectGoal() {
+                    const goalId = Number(this.goalMapRootGoalId);
+                    if (!Number.isInteger(goalId) || goalId <= 0) return;
+                    this.goalMapRootSaving = true;
+                    try {
+                        await this.invokeTool('set_project_goal', {
+                            namespace: this.graphProjectSlug || '/', goal_id: goalId
+                        });
+                        await this.loadGoalMap(false);
+                        this.setNotice('공통 목표를 정했습니다.', 'success');
+                    } catch (error) {
+                        this.setNotice(error.message || '공통 목표를 저장하지 못했습니다.', 'error');
+                    } finally {
+                        this.goalMapRootSaving = false;
+                    }
+                },
+
+                goalMapNodeClasses(node) {
+                    const item = node && node.item || {};
+                    return {
+                        ['is-' + String(node && node.kind || 'unknown').replace(/[^a-z0-9_-]/gi, '')]: true,
+                        'is-root': node && node.kind === 'goal' && Number(item.id) === Number(this.goalMap.goal_tree.root_goal_id),
+                        'is-complete': item.status === 'completed' || item.status === 'done',
+                        'is-ready': Boolean(item.ready_to_complete),
+                        'is-mismatch': Boolean(item.completion_mismatch)
+                    };
+                },
+
+                goalMapNodeAriaLabel(node) {
+                    const item = node && node.item || {};
+                    if (node.kind === 'goal') return `${this.goalMapGoalKind(item)}: ${item.content}. 진행 ${this.goalMapProgressPercent(item.progress)}. 상태 ${this.statusLabel(item.status)}.`;
+                    if (node.kind === 'work') {
+                        const detail = this.goalMapWorkDetail(item);
+                        return `${item.issue_key || '#' + item.id}: ${item.title}. ${this.goalMapWorkMonitorText(item)}.${detail ? ' ' + detail + '.' : ''}`;
+                    }
+                    return `${this.goalMapMemoryTypeLabel(item.memory_type)}: ${item.content}.`;
+                },
+
+                goalMapCanvasViewBox() {
+                    return `0 0 ${this.goalMapLayout.width} ${this.goalMapLayout.height}`;
+                },
+
+                goalMapMarkerId(edge) {
+                    return 'stash-goal-map-arrow-' + String(edge && edge.key || '').replace(/[^a-zA-Z0-9_-]/g, '-');
+                },
+
+                goalMapMarkerUrl(edge) {
+                    return `url(#${this.goalMapMarkerId(edge)})`;
+                },
+
+                goalMapAriaLabel() {
+                    const counts = this.goalMapLayout.counts;
+                    return `${this.goalMapScopeLabel()} 목표 ${counts.goal}개, 작업 ${counts.work}개, 기억 ${counts.memory}개, 막힌 작업 ${this.goalMapStatusCount('blocked')}개.`;
+                },
+
+                async loadGoalMap(refreshProjects = true) {
+                    this.activeNav = 'goal-map';
+                    this.resultTitle = '목표 지도';
+                    this.resultDescription = '기억과 작업이 공통 목표에 어떻게 이어지는지 봅니다.';
+                    this.view = 'goal-map';
+                    this.goalMapError = '';
+                    this.loading = true;
+                    try {
+                        await this.loadGraphProjects(refreshProjects);
+                        const data = await this.invokeTool('get_goal_map', {
+                            namespace: this.graphProjectSlug || '/', include_done: true
+                        });
+                        const value = this.toolValue(data) || {};
+                        this.setGoalMap(value);
+                        this.resultValue = this.goalMap;
+                        this.resultKind = 'get_goal_map';
+                        this.result = JSON.stringify(this.goalMap, null, 2);
+                        this.markLoaded();
+                        this.setNotice('', 'success', 0);
+                    } catch (error) {
+                        this.clearGoalMap();
+                        this.goalMapError = error.message || '목표 지도를 불러오지 못했습니다.';
+                        this.result = '오류: ' + this.goalMapError;
+                    } finally {
+                        this.loading = false;
+                    }
+                }
+            };
+        }
+
         function createPlanViewModel() {
             return {
-	                plan: { components: [], decisions: [], warnings: [], validation: null },
+	                plan: { goal_tree: { root_goal_id: null, goals: [] }, components: [], decisions: [], warnings: [], validation: null },
                 planActor: '',
                 planComponentFormOpen: false,
                 planTaskFormOpen: false,
                 planDecisionFormOpen: false,
                 planPathEditorComponentId: null,
                 planPathEditorValue: '',
-                planComponentForm: { componentId: null, title: '', description: '', technicalDetails: '', ownedPaths: '', priority: 0 },
-                planTaskForm: { taskId: null, componentId: null, title: '', description: '', technicalDetails: '', provenance: 'agent' },
+	                planComponentForm: { componentId: null, goalId: '', title: '', description: '', technicalDetails: '', ownedPaths: '', priority: 0 },
+	                planTaskForm: { taskId: null, componentId: null, goalId: '', title: '', description: '', technicalDetails: '', provenance: 'agent' },
                 planDecisionForm: { componentId: '', title: '', rationale: '' },
 
                 async fetchWorkPlan() {
                     const data = await this.invokeTool('get_work_plan', { namespace: '/' });
                     const value = this.toolValue(data) || {};
 	                    this.plan = {
+	                        goal_tree: value.goal_tree && typeof value.goal_tree === 'object' ? {
+	                            root_goal_id: value.goal_tree.root_goal_id === undefined ? null : value.goal_tree.root_goal_id,
+	                            goals: Array.isArray(value.goal_tree.goals) ? value.goal_tree.goals : []
+	                        } : { root_goal_id: null, goals: [] },
 	                        components: Array.isArray(value.components) ? value.components : [],
 	                        decisions: Array.isArray(value.decisions) ? value.decisions : [],
 	                        warnings: Array.isArray(value.warnings) ? value.warnings : [],
@@ -1604,6 +1915,31 @@
                     return component ? component.issue_key + ' · ' + component.title : '구성 요소를 선택하세요';
                 },
 
+				planGoals() {
+					return this.plan && this.plan.goal_tree && Array.isArray(this.plan.goal_tree.goals) ? this.plan.goal_tree.goals : [];
+				},
+
+				planRootGoal() {
+					const rootID = this.plan && this.plan.goal_tree && this.plan.goal_tree.root_goal_id;
+					return this.planGoals().find(goal => Number(goal.id) === Number(rootID)) || null;
+				},
+
+				planGoalLabel(goal) {
+					const depth = Math.max(0, Number(goal && goal.depth) || 0);
+					return (depth ? '↳ '.repeat(depth) : '') + String(goal && goal.content || '목표');
+				},
+
+				planGoalShortLabel(goalID) {
+					const goal = this.planGoals().find(candidate => Number(candidate.id) === Number(goalID));
+					if (!goal) return '#' + goalID;
+					const content = String(goal.content || '목표');
+					return content.length > 32 ? content.slice(0, 31) + '…' : content;
+				},
+
+				planProgressPercent(value) {
+					return Math.round(Math.max(0, Math.min(1, Number(value) || 0)) * 100) + '%';
+				},
+
                 planTaskCount(status) {
                     return this.plan.components.reduce((count, component) => count + (Array.isArray(component.tasks) ? component.tasks.filter(task => task.status === status).length : 0), 0);
                 },
@@ -1621,7 +1957,12 @@
                         component_count_high: `구성 요소가 ${warning.count}개입니다. 새 카드를 늘리기보다 기존 구성 요소의 작업을 나누세요.`,
                         component_without_paths: `${component ? component.title : '구성 요소'}에 맡는 경로가 없습니다.`,
                         open_task_without_provenance: `${task ? task.title : '작업'}의 출처를 기록하세요.`,
-                        active_task_without_starter: `${task ? task.title : '작업'}의 시작 작업자가 없습니다.`
+	                        active_task_without_starter: `${task ? task.title : '작업'}의 시작 작업자가 없습니다.`,
+						no_project_goal: '공통 목표를 먼저 정하세요.',
+						component_without_goal: `${component ? component.title : '구성 요소'}를 목표에 연결하세요.`,
+						component_goal_outside_tree: `${component ? component.title : '구성 요소'}의 연결 목표를 확인하세요.`,
+						task_without_goal: `${task ? task.title : '작업'}을 목표에 연결하세요.`,
+						task_goal_outside_tree: `${task ? task.title : '작업'}의 연결 목표를 확인하세요.`
                     }[warning.code] || '계획 내용을 확인하세요.';
                 },
 
@@ -1673,35 +2014,41 @@
 	                    this.planTaskFormOpen = false;
 	                    this.planComponentForm = component ? {
 	                        componentId: Number(component.id),
+	                        goalId: component.goal_id || '',
 	                        title: component.title || '',
 	                        description: component.description || '',
 	                        technicalDetails: component.technical_details || '',
 	                        ownedPaths: Array.isArray(component.owned_paths) ? component.owned_paths.join(', ') : '',
 	                        priority: Number(component.priority) || 0
-	                    } : { componentId: null, title: '', description: '', technicalDetails: '', ownedPaths: '', priority: 0 };
+	                    } : { componentId: null, goalId: '', title: '', description: '', technicalDetails: '', ownedPaths: '', priority: 0 };
 	                    this.planComponentFormOpen = true;
 	                },
 
 	                closePlanComponentForm() {
 	                    this.planComponentFormOpen = false;
-	                    this.planComponentForm = { componentId: null, title: '', description: '', technicalDetails: '', ownedPaths: '', priority: 0 };
+	                    this.planComponentForm = { componentId: null, goalId: '', title: '', description: '', technicalDetails: '', ownedPaths: '', priority: 0 };
 	                },
 
 	                async savePlanComponent() {
 	                    const form = this.planComponentForm;
 	                    const componentID = Number(form.componentId);
+	                    const goalID = Number(form.goalId) || 0;
 	                    await this.runPlanMutation(async () => {
 	                        if (componentID) {
-	                            await this.invokeTool('update_plan_component', {
+	                            const args = {
 	                                component_id: componentID, title: form.title, description: form.description,
 	                                technical_details: form.technicalDetails, owned_paths: form.ownedPaths
-	                            });
+	                            };
+	                            if (goalID) args.goal_id = goalID;
+	                            await this.invokeTool('update_plan_component', args);
 	                        } else {
-	                            await this.invokeTool('create_plan_component', {
+	                            const args = {
 	                                namespace: '/', title: form.title, description: form.description,
 	                                technical_details: form.technicalDetails, owned_paths: form.ownedPaths,
 	                                priority: Number(form.priority) || 0, owner: this.planActorName()
-	                            });
+	                            };
+	                            if (goalID) args.goal_id = goalID;
+	                            await this.invokeTool('create_plan_component', args);
 	                        }
 	                        this.closePlanComponentForm();
 	                    }, componentID ? '구성 요소를 수정했습니다.' : '구성 요소를 만들었습니다.', componentID ? '구성 요소를 수정하지 못했습니다.' : '구성 요소를 만들지 못했습니다.');
@@ -1709,38 +2056,45 @@
 
 	                openPlanTaskForm(componentID, task = null) {
 	                    this.planComponentFormOpen = false;
+	                    const component = this.plan.components.find(candidate => Number(candidate.id) === Number(componentID));
 	                    this.planTaskForm = task ? {
 	                        taskId: Number(task.id), componentId: Number(componentID),
+	                        goalId: task.goal_id || '',
 	                        title: task.title || '', description: task.description || '',
 	                        technicalDetails: task.technical_details || '', provenance: task.provenance || ''
-	                    } : { taskId: null, componentId: Number(componentID), title: '', description: '', technicalDetails: '', provenance: 'agent' };
+	                    } : { taskId: null, componentId: Number(componentID), goalId: component && component.goal_id || '', title: '', description: '', technicalDetails: '', provenance: 'agent' };
 	                    this.planTaskFormOpen = true;
 	                },
 
 	                closePlanTaskForm() {
 	                    this.planTaskFormOpen = false;
-	                    this.planTaskForm = { taskId: null, componentId: null, title: '', description: '', technicalDetails: '', provenance: 'agent' };
+	                    this.planTaskForm = { taskId: null, componentId: null, goalId: '', title: '', description: '', technicalDetails: '', provenance: 'agent' };
 	                },
 
 	                async savePlanTask() {
 	                    const form = this.planTaskForm;
 	                    const taskID = Number(form.taskId);
 	                    const componentID = Number(form.componentId);
+	                    const goalID = Number(form.goalId) || 0;
 	                    if (!componentID) {
 	                        this.setNotice('작업을 넣을 구성 요소를 선택하세요.', 'error', 0);
 	                        return;
 	                    }
 	                    await this.runPlanMutation(async () => {
 	                        if (taskID) {
-	                            await this.invokeTool('update_plan_task', {
+	                            const args = {
 	                                task_id: taskID, title: form.title, description: form.description,
 	                                technical_details: form.technicalDetails, provenance: form.provenance
-	                            });
+	                            };
+	                            if (goalID) args.goal_id = goalID;
+	                            await this.invokeTool('update_plan_task', args);
 	                        } else {
-	                            await this.invokeTool('create_plan_task', {
+	                            const args = {
 	                                namespace: '/', component_id: componentID, title: form.title, description: form.description,
 	                                technical_details: form.technicalDetails, provenance: form.provenance
-	                            });
+	                            };
+	                            if (goalID) args.goal_id = goalID;
+	                            await this.invokeTool('create_plan_task', args);
 	                        }
 	                        this.closePlanTaskForm();
 	                    }, taskID ? '작업을 수정했습니다.' : '작업을 만들었습니다.', taskID ? '작업을 수정하지 못했습니다.' : '작업을 만들지 못했습니다.');
@@ -2028,6 +2382,7 @@
                 executionFailureMessage(error, fallback = '작업을 처리하지 못했습니다.') {
                     const message = String(error && error.message || '').trim();
                     const lower = message.toLowerCase();
+                    if (lower.includes('worktree already has an active attempt')) return '이 워크트리에서 다른 작업이 진행 중입니다. 해당 작업을 끝내거나 인계한 뒤 다시 시도하세요.';
                     if (lower.includes('already has an active attempt')) return '다른 에이전트가 작업 중입니다. 작업권이 끝난 뒤 다시 시도하세요.';
                     if (lower.includes('lease is invalid or expired')) return '작업권이 없거나 만료되었습니다. 실행 상태를 다시 불러오세요.';
                     if (lower.includes('requires at least one required completion condition')) return '필수 완료 조건을 하나 이상 입력하세요.';
@@ -2505,6 +2860,7 @@
                 ...createPlanViewModel(),
                 ...createIssueExecutionViewModel(),
                 ...createWorkGraphViewModel(),
+				...createGoalMapViewModel(),
                 token: '',
                 adminToken: '',
                 isAdmin: false,
@@ -2528,8 +2884,8 @@
                 notice: { text: '', type: 'success' },
                 lastLoadedAt: null,
                 noticeTimer: null,
-                view: 'plan',
-                activeNav: 'plan',
+                view: 'goal-map',
+                activeNav: 'goal-map',
                 tokenOpen: false,
                 pageSize: 50,
                 listPage: { tool: '', args: {}, offset: 0, nextOffset: 0, limit: 50, hasNext: false, history: [] },
@@ -2555,13 +2911,25 @@
 	                    '',
 	                    '## Work execution continuity',
 	                    '',
-	                    '- Search `get_work_plan` and `list_work_items` before creating tracked work. If a matching item exists, call `resume_work` and continue it.',
-	                    '- Call `resume_work` before acting. Prepare completion conditions only when they are missing or the owner deliberately changes them, then call `start_work`.',
+	                    '- Collect local Git facts with `stash workspace facts --cwd . --agent-id <agent>` or use the facts supplied by a lifecycle hook.',
+	                    '- Call `resolve_workspace` with those facts, then call brief `resume_workspace` with the returned namespace and worktree ID before creating or changing work.',
+	                    '- Keep `context_digest` and send it as `known_context_digest` on later resume calls. Use `detail: full` only for a specific missing record.',
+	                    '- Supply `project_namespace` only for the first binding or an explicit owner choice. Never infer it from a folder or worktree name.',
+	                    '- Continue a matching existing item. Prepare completion conditions only when they are missing or the owner deliberately changes them, then call `claim_workspace` immediately before implementation.',
 	                    '- Keep the returned `lease_token` private. Never bypass another live lease or create replacement work because the previous chat is unavailable.',
+	                    '- `claim_workspace` resolves the worktree, attaches it, and creates the attempt in one transaction. Do not use a manual register, attach, and start sequence.',
 	                    '- Call `checkpoint_work` after each meaningful action with the observed result and exactly one concrete `next_action`.',
 	                    '- Submit observable results with `submit_work_evidence`, link them to the relevant condition, and call `verify_work_condition`.',
 	                    '- Call `finish_work` only after every required condition has accepted evidence and every blocker is finished.',
 	                    '- Before stopping unfinished work, call `handoff_work`. A fresh agent resumes from the same work item ID and its recorded next action.',
+	                    '',
+	                    '## Shared outcome tree',
+	                    '',
+	                    '- Treat the selected top-level goal as the project outcome. A-1, A-2, and deeper results are child goals that combine into it.',
+	                    '- Read `goal_context.path` before acting and attach each component or task to the narrowest matching goal with `goal_id`.',
+	                    '- Do not start detached work or work assigned outside the shared tree. A start or claim returns the same compact goal path.',
+	                    '- Link only durable context, constraints, decisions, failures, evidence, and results. Omit routine narration.',
+	                    '- Verified leaf work completes eligible child and parent goals. Never complete a parent while child work remains unfinished.',
 	                    '',
                     '## Component map',
                     '',
@@ -2575,10 +2943,10 @@
                     '',
                     '## Tasks and live state',
                     '',
-                    '- Create executable child tasks with `create_plan_task` and its `component_id`. A component is the map; its tasks are the work.',
+	                    '- Create executable child tasks with `create_plan_task`, its `component_id`, and the narrowest matching `goal_id`. A component is the map; its tasks are the work.',
 	                    '- Use `update_plan_task` when a task\'s outcome, completion condition, implementation note, or provenance needs clarification. It keeps the component, issue key, state, agents, and worktree links intact.',
                     '- Map task state as follows: `ready` is not started, `doing` is in progress, `done` is complete, and `blocked` is stuck. Use `review` only when the owner explicitly needs a review state.',
-	                    '- Prepare completion conditions and call `start_work` **before** implementation. It records `doing`, the task\'s `owner`, and immutable `started_by` data immediately.',
+	                    '- Prepare completion conditions and call `claim_workspace` **before** implementation. It records the worktree, `doing`, the task\'s `owner`, and immutable `started_by` data together.',
 	                    '- Call `finish_work` the moment the verified task is complete. If work is stuck, checkpoint the blocker, hand off the active attempt, and then use `block_plan_task`.',
                     '- Never batch plan updates at the end of a session. Every state change is an API write when it happens.',
                     '- For an open task, set `provenance` to `agent` when an agent is declaring its imminent build intent, or `roadmap` when the task comes from durable planning material. Leave it empty only when neither is true.',
@@ -2587,13 +2955,13 @@
                     '',
                     '- Connect components with `link_plan_components`. `needs` means the component must come after the related component; `links` means the two components are connected. The underlying `blocks` edge remains directed.',
                     '- Put repository paths and glob patterns owned by a component in `owned_paths`. Keep them current with `set_plan_component_paths`; this tells the owner which component an agent is actually changing, including follow-up work on a completed component.',
-                    '- Sync local worktrees before work starts:',
+	                    '- Use a complete repository sync when worktrees were added, moved, or removed:',
                     '',
                     '```bash',
                     'stash worktree sync --repo . --namespace /projects/myapp --agent-id my-agent',
                     '```',
                     '',
-                    'Attach the returned worktree to the active task with `attach_worktree_to_item`. Sync again when work ends or a worktree disappears.',
+	                    '`claim_workspace` attaches the current worktree atomically. The full sync is for heartbeat and missing-worktree reconciliation.',
                     '',
                     '## Decisions and evidence',
                     '',
@@ -2612,11 +2980,10 @@
 	                    '',
 	                    '## Session start and end',
                     '',
-	                    '1. Call `init` if the Stash namespace has not been initialized.',
-	                    '2. Verify the exact project namespace exists, then call `recall` for it.',
-	                    '3. Call `get_work_plan`, `list_work_items`, and `list_worktrees` before making a new plan card. Resume the existing graph instead of rebuilding a checklist.',
-	                    '4. Run `validate_work_plan` when the plan meaning changed or its saved validation is stale.',
-	                    '5. Before ending an active attempt, either finish it with verified evidence or call `handoff_work` with one concrete next action. Save durable facts with `remember_work` or short-lived focus with `set_context`.',
+	                    '1. Collect local Git facts, call `resolve_workspace`, and then call brief `resume_workspace`.',
+	                    '2. Follow the returned goal path and next action. Search only when the short work selection does not identify the intended item.',
+	                    '3. Run `validate_work_plan` when the plan meaning changed or its saved validation is stale.',
+	                    '4. Before ending an active attempt, either finish it with verified evidence or call `handoff_work` with one concrete next action. Save durable facts with `remember_work`.',
                     '',
                     'Use `create_work_item` for ad-hoc local bugs, questions, and tracker entries that do not belong in the component map. Use the plan API for the owner-facing plan; do not maintain a separate live `PLAN.md` alongside it.'
                 ].join('\n'),
@@ -2643,7 +3010,7 @@
                     if (!this.authRequired() || this.auth.authenticated) {
                         if (!this.planActor) this.planActor = this.auth.user || 'codex';
                         await this.ensureWorkspace();
-                        await this.loadWorkPlan();
+                        await this.loadGoalMap();
                     }
                 },
 
@@ -2685,6 +3052,7 @@
                 refreshCurrentView() {
                     if (this.loading) return;
                     if (this.view === 'board') return this.loadWorkBoard(false);
+                    if (this.view === 'goal-map') return this.loadGoalMap(false);
                     if (this.view === 'plan') return this.loadWorkPlan();
                     if (this.view === 'graph') return this.loadWorkGraph();
                     if (this.view === 'worktrees') return this.loadWorktrees(false);
@@ -3416,7 +3784,8 @@
                 statusLabel(status) {
                     return {
                         backlog: '대기', ready: '준비', doing: '진행 중', blocked: '막힘',
-                        review: '검토', done: '완료', canceled: '취소'
+                        review: '검토', done: '완료', canceled: '취소', active: '진행 중',
+                        completed: '완료', abandoned: '중단'
                     }[status] || status || '대기';
                 },
 

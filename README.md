@@ -180,17 +180,18 @@ A 9-stage consolidation pipeline turns raw observations into structured knowledg
 
 ## Work Graphs and Git Worktrees
 
-Work cards live separately from memory data and connect goals, tasks, dependencies, worktrees, and activity events in one graph. Issue types (bug, feature, task), labels, assignees, and comments are included, so the same data can serve as a local issue tracker without another service. The same data can be shown as a Kanban board grouped by status or as a dependency graph. Work cards can also link to facts, failures, and hypotheses so an agent can pick up the evidence it needs in a later session.
+Work cards live separately from memory data and connect goals, tasks, dependencies, worktrees, and activity events in one graph. A project can select one shared top-level goal, decompose it into child outcomes, and show memory → work → child goal → project goal in the Goal Map. The map also shows progress, active agents, blockers, next actions, and recent results. Work cards can link to facts, failures, and hypotheses so an agent can pick up the evidence it needs in a later session.
 
 The web console's Work Graph lists `/projects/<name>` namespaces as project scopes. Selecting a project limits the graph to that project and its descendants; `All projects` shows work under `/projects` together. MCP clients can pass `project: "/projects/myapp"` to `get_work_graph` to retrieve one project explicitly.
 
 For an owner-facing living plan, use the Work Plan API instead of a changing `PLAN.md`. Its 5–9 stable component cards own repository paths and hold executable child tasks, directed prerequisites, worktree links, and decisions made before implementation. `get_work_plan` is the shared current plan; `create_plan_component`, `update_plan_component`, `create_plan_task`, `update_plan_task`, task-state tools, `link_plan_components`, and `record_plan_decision` update it. `validate_work_plan` runs an explicit semantic review with the configured Reasoner model and stores the latest result; it does not use the embedding model. When plan content changes, `get_work_plan.validation.stale` marks the saved review as outdated. The ordinary issue board remains for ad-hoc local issues and does not mix in plan-managed cards.
 
-Tracked work has a resumable execution record. `prepare_work` stores observable completion conditions and one next action; `start_work` grants one time-limited lease; checkpoints, agent-submitted evidence, verification, handoff, and completion are committed with stable action keys. A fresh agent can call `resume_work` with only the work item ID and recover the latest checkpoint, next action, conditions, evidence, blockers, worktree, and linked memory without needing the previous chat. `finish_work` is rejected until every required condition has linked evidence and every blocking item is finished.
+Tracked work has a resumable execution record. `resolve_workspace` maps locally observed Git facts to the bound project and a stable worktree identity. `resume_workspace` and `resume_work` default to quota-conscious briefs containing only the shared goal path, current action, pending conditions, relevant memory, and blockers; callers can reuse `context_digest` to receive a tiny unchanged receipt or request `detail: full` when needed. `claim_workspace` attaches the worktree, returns the same goal path, and grants one exclusive lease in the same transaction. `finish_work` is rejected until every required condition has linked evidence and every blocking item is finished, then rolls eligible child goals into their parents.
 
 An agent-side bridge can sync the repository's local Git worktrees into Stash. Git remains the source for code and diffs; Stash stores paths, branches, commits, status, and work history.
 
 ```bash
+stash workspace facts --cwd . --agent-id codex --project-namespace /projects/myapp
 stash worktree sync --repo . --namespace /projects/myapp
 stash worktree list --namespaces /projects/myapp
 stash issue create --namespace / "Login error" --type bug --labels auth,login
@@ -198,7 +199,7 @@ stash issue list --namespaces / --status doing --label auth
 stash issue comment add W-000001 --body "Reproduction confirmed"
 ```
 
-An agent rules sample is available at [docs/AGENT.md](docs/AGENT.md). MCP clients can use `get_work_plan`, `validate_work_plan`, the component/task/decision tools, and `prepare_work`, `start_work`, `resume_work`, `checkpoint_work`, `submit_work_evidence`, `verify_work_condition`, `renew_work_lease`, `handoff_work`, `finish_work`, and `remember_work` for durable execution. `create_work_item`, `list_work_items`, `add_work_item_dependency`, `get_work_graph`, comments, memory links, worktrees, and work events remain available for local issue tracking. Call `init` once to create the default workspace before syncing or creating work data.
+An agent rules sample is available at [docs/AGENT.md](docs/AGENT.md). Workspace-aware clients should use `resolve_workspace`, `resume_workspace`, and `claim_workspace`, followed by the checkpoint, evidence, verification, handoff, and finish tools. Plan, issue, graph, comments, memory links, worktrees, and work events remain available for project planning and local issue tracking. Create the chosen project namespace before its first repository binding.
 
 ### Work plan skill
 

@@ -84,6 +84,7 @@ type WorkPlanValidation struct {
 
 // WorkPlan is the owner-facing, component-oriented projection of a namespace.
 type WorkPlan struct {
+	GoalTree   GoalTree            `json:"goal_tree"`
 	Components []WorkPlanComponent `json:"components"`
 	Decisions  []WorkPlanDecision  `json:"decisions"`
 	Warnings   []WorkPlanWarning   `json:"warnings"`

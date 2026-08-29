@@ -1,101 +1,77 @@
-# Seamless Agent Handoff (Auto-Save & Load)
+# Workspace Resume and Handoff
 
-Stash provides the memory backend, but for a truly seamless experience, your AI agent needs to *use* it automatically. Instead of manually telling the agent to "save" or "load" every time, you can configure your MCP client to enforce this behavior.
+Stash can resolve a Git checkout to its project and return the bounded state a new agent needs. The agent still decides when work is complete; hooks must not mark work done or create issues on their own.
 
-There are two approaches: **Prompt-based Rules** (works everywhere) and **Lifecycle Hooks** (requires specific IDEs like Antigravity).
+## Install the agent rule
 
----
+Copy [AGENT.md](AGENT.md) into the repository's `AGENTS.md`, or install `plugins/stash-work-plan` through the included Codex or Claude plugin manifest. Stash also serves the smaller `stash-work` skill through MCP Skills.
 
-## 1. Prompt-based Rules (Cursor, Windsurf, Claude Desktop)
+## Session start
 
-The easiest way to enforce state synchronization is to add a strict rule to your workspace's system prompt (e.g., `.cursorrules`, `.windsurfrules`, or Agent instructions).
+Collect Git facts locally:
 
-Create a `.cursorrules` file in your project root:
-
-```markdown
-# Mandatory Stash Synchronization
-You are connected to the `stash` MCP server for persistent memory. You must maintain state continuity across sessions.
-
-1. **Auto-Load**: At the start of a new task or conversation, ALWAYS call `get_context` (namespace: your project path) to understand the current focus, and `list_failures` to know what approaches to avoid.
-2. **Auto-Save**: BEFORE you end your turn, finish a task, or provide your final answer to the user, you MUST ALWAYS call `set_context` to save your current progress, what you just did, and what the `next_steps` are.
-3. DO NOT STOP or conclude a conversation without saving your state to Stash.
-```
-
-By adding this, the LLM is heavily biased towards synchronizing its state automatically.
-
----
-
-## 2. Advanced Automation with Lifecycle Hooks (Antigravity IDE)
-
-If you use an orchestrator or IDE that supports lifecycle hooks (like **Antigravity**), you can completely remove the reliance on the LLM's memory by forcing the system to load and save mechanically.
-
-### Auto-Load (PreInvocation Hook)
-Inject the context before the agent even sees the prompt.
-
-Create `.agents/hooks.json`:
-```json
-{
-  "stash-auto-hydrate": {
-    "PreInvocation": [
-      {
-        "type": "command",
-        "command": "./.agents/scripts/auto_load_context.sh"
-      }
-    ]
-  }
-}
-```
-
-Create `.agents/scripts/auto_load_context.sh`:
 ```bash
-#!/bin/bash
-INVOCATION_NUM=$(jq -r '.invocationNum' < /dev/stdin)
-
-if [ "$INVOCATION_NUM" -eq 1 ]; then
-  # Fetch context from stash (assuming streamable HTTP at /mcp)
-  # Replace with actual curl/cli command to your stash instance
-  CONTEXT=$(stash mcp execute --tool get_context --namespace /projects/my-project)
-  
-  jq -n --arg ctx "$CONTEXT" '{
-    injectSteps: [
-      { ephemeralMessage: ("Here is the current stash context from previous agent:\n" + $ctx) }
-    ]
-  }'
-else
-  echo "{}"
-fi
+stash workspace facts --cwd . --agent-id codex
 ```
 
-### Enforce Auto-Save (Stop Hook)
-Prevent the agent from exiting if it forgot to call `set_context`.
+This command does not connect to PostgreSQL. On first use it creates two local Git settings when supplied:
 
-Add to `.agents/hooks.json`:
-```json
-{
-  "stash-safety-gate": {
-    "Stop": [
-      {
-        "type": "command",
-        "command": "./.agents/scripts/prevent_exit.sh"
-      }
-    ]
-  }
-}
-```
+- `stash.repositoryInstanceId`: a random ID that remains stable when the clone moves
+- `stash.projectNamespace`: the owner's explicit first binding
 
-Create `.agents/scripts/prevent_exit.sh`:
+The session-start integration then passes the JSON fields to `resolve_workspace` and calls `resume_workspace` with the returned namespace and worktree ID. The resume response includes:
+
+- the current component plan
+- doing and blocked work
+- dependency graph
+- current worktree and active attempt
+- latest checkpoint and handoff
+- recent decisions and failures
+- project context
+- one next action when one is available
+
+A lifecycle hook may inject the local JSON and an instruction to call these MCP tools. A shell hook cannot safely impersonate an OAuth-authenticated MCP principal, so Stash does not ship a fake `curl` login flow.
+
+## Claim before implementation
+
+After choosing an existing prepared item, call `claim_workspace` with its ID and the same Git facts. The server performs these changes in one transaction:
+
+1. resolve or update the repository binding
+2. resolve or update the stable worktree
+3. attach the worktree to the item
+4. create the attempt and exclusive lease
+5. return the workspace state and private lease token
+
+One item cannot have two live attempts, and one worktree cannot claim two items. The authenticated MCP principal, not the local path or agent name, controls namespace access.
+
+## Heartbeat and repository sync
+
+Every `resolve_workspace` or `claim_workspace` call refreshes the current worktree heartbeat. For a complete repository scan, run:
+
 ```bash
-#!/bin/bash
-TRANSCRIPT_PATH=$(jq -r '.transcriptPath' < /dev/stdin)
-
-if ! grep -q '"tool_name":"set_context"' "$TRANSCRIPT_PATH"; then
-  jq -n '{
-    decision: "continue",
-    reason: "CRITICAL: You forgot to call `set_context` to save your state. You MUST save your state before stopping."
-  }'
-else
-  jq -n '{ decision: "stop" }'
-fi
+stash worktree sync --repo . --namespace /projects/myapp --agent-id codex
 ```
 
-With these hooks, your workspace becomes a perfectly stateful environment where any agent session can pick up exactly where the last one left off.
+Use `--namespace` for the first binding. Later syncs read `stash.projectNamespace` from the shared Git config, so the flag can be omitted.
+
+The full sync marks registered worktrees missing when Git no longer lists them. Background maintenance marks heartbeats stale after 24 hours and missing worktrees removed after seven days. A later valid heartbeat restores the worktree.
+
+## Session end
+
+For unfinished work, call `handoff_work` before the agent exits. It records the observed result and exactly one next action while releasing the lease. For finished work, submit and verify evidence, then call `finish_work`.
+
+A stop hook may check that the transcript contains an accepted `handoff_work` or `finish_work` response. It must not manufacture a checkpoint, copy a lease token into logs, or decide that work is done. If the network is unavailable, keep the local transcript and retry the same action key after connectivity returns.
+
+## Child agents and worktrees
+
+Pass these values to a child agent when the orchestrator supports environment injection:
+
+```text
+STASH_PROJECT_NAMESPACE
+STASH_WORKTREE_ID
+STASH_AGENT_ID
+STASH_WORK_ITEM_ID
+STASH_ATTEMPT_ID
+```
+
+Treat them as routing hints. The child must still call `resolve_workspace` and `resume_workspace`; the server rechecks authentication, binding, active lease, and current checkpoint.

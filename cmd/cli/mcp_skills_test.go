@@ -27,7 +27,7 @@ func TestStashSkillsProtocolSuccess(t *testing.T) {
 	if listed.Frontmatter["name"] != "stash-work" {
 		t.Fatalf("frontmatter name = %#v", listed.Frontmatter["name"])
 	}
-	for _, field := range []string{"description", "license", "compatibility", "metadata"} {
+	for _, field := range []string{"description", "license", "metadata"} {
 		if _, ok := listed.Frontmatter[field]; !ok {
 			t.Errorf("frontmatter is missing %q: %#v", field, listed.Frontmatter)
 		}

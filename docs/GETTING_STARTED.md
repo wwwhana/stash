@@ -64,6 +64,14 @@ Example prompts to your agent:
 - *"Use Stash `recall` to find what you know about this project's stack."*
 - *"Run Stash `consolidate` to process recent episodes into facts."*
 
+For project work in a Git checkout, collect facts without opening the database:
+
+```bash
+stash workspace facts --cwd . --agent-id codex --project-namespace /projects/myapp
+```
+
+Pass that JSON to `resolve_workspace`, then call `resume_workspace` with the returned namespace and worktree ID. Prepare an existing item's completion conditions only when needed, and call `claim_workspace` immediately before implementation. Later sessions omit `project_namespace`; Stash resolves the saved repository binding.
+
 ## 4. Background consolidation
 
 When started with `stash serve` (the Docker Compose default), Stash consolidates in the background. You can also trigger manually via the `consolidate` MCP tool or CLI:

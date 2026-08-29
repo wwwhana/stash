@@ -232,6 +232,12 @@ func compactWorkResumeBundle(bundle *models.WorkResumeBundle, maxBytes int) *mod
 	compact.MemoryLinks = append([]models.WorkMemorySnapshot(nil), bundle.MemoryLinks...)
 	compact.Blockers = append([]models.WorkItem(nil), bundle.Blockers...)
 	compact.RecentEvents = append([]models.WorkEvent(nil), bundle.RecentEvents...)
+	if bundle.GoalContext != nil {
+		goalContext := *bundle.GoalContext
+		goalContext.Path = append([]models.GoalBrief(nil), bundle.GoalContext.Path...)
+		goalContext.Siblings = append([]models.GoalBrief(nil), bundle.GoalContext.Siblings...)
+		compact.GoalContext = &goalContext
+	}
 	if bundle.LatestAttempt != nil {
 		attempt := *bundle.LatestAttempt
 		compact.LatestAttempt = &attempt
@@ -260,6 +266,16 @@ func compactWorkResumeBundle(bundle *models.WorkResumeBundle, maxBytes int) *mod
 	}
 	compact.NextAction, shortened = truncateWorkResumeString(compact.NextAction, 2048)
 	compact.Truncated.Core = compact.Truncated.Core || shortened
+	if compact.GoalContext != nil {
+		for index := range compact.GoalContext.Path {
+			compact.GoalContext.Path[index].Content, shortened = truncateWorkResumeString(compact.GoalContext.Path[index].Content, 256)
+			compact.Truncated.Core = compact.Truncated.Core || shortened
+		}
+		for index := range compact.GoalContext.Siblings {
+			compact.GoalContext.Siblings[index].Content, shortened = truncateWorkResumeString(compact.GoalContext.Siblings[index].Content, 192)
+			compact.Truncated.Core = compact.Truncated.Core || shortened
+		}
+	}
 	if compact.LatestAttempt != nil {
 		compact.LatestAttempt.AgentID, shortened = truncateWorkResumeString(compact.LatestAttempt.AgentID, 512)
 		compact.Truncated.Core = compact.Truncated.Core || shortened
@@ -370,6 +386,14 @@ func compactWorkResumeBundle(bundle *models.WorkResumeBundle, maxBytes int) *mod
 		case len(compact.CompletionConditions) > 0:
 			compact.CompletionConditions = compact.CompletionConditions[:len(compact.CompletionConditions)-1]
 			compact.Truncated.CompletionConditions = true
+		case compact.GoalContext != nil && len(compact.GoalContext.Siblings) > 0:
+			compact.GoalContext.Siblings = compact.GoalContext.Siblings[:len(compact.GoalContext.Siblings)-1]
+			compact.GoalContext.SiblingsTruncated = true
+			compact.Truncated.Core = true
+		case compact.GoalContext != nil && len(compact.GoalContext.Path) > 2:
+			compact.GoalContext.Path = append(compact.GoalContext.Path[:1], compact.GoalContext.Path[2:]...)
+			compact.GoalContext.PathTruncated = true
+			compact.Truncated.Core = true
 		default:
 			compact.Truncated.Core = true
 			compact.WorkItem.Labels = nil
@@ -681,9 +705,11 @@ func registerWorkExecutionTools(mcpServer *server.MCPServer, bc *bootstrap.Conte
 	}))
 
 	mcpServer.AddTool(mcp.NewTool("resume_work",
-		mcp.WithDescription("Call before acting on tracked work and after a handoff to read the item, checkpoint, conditions, evidence, links, blockers, and recent events. It may expire a stale lease but never returns a lease token."),
+		mcp.WithDescription("Call before acting on tracked work and after a handoff. The default brief view returns only the shared goal path, current action, pending conditions, relevant memory, and blockers. Use detail=full only when those references are insufficient."),
 		mcp.WithNumber("work_item_id", mcp.Description("Work item to resume"), mcp.Required()),
-		mcp.WithNumber("recent_event_limit", mcp.Description("Maximum recent events in the compact resume bundle"), mcp.DefaultNumber(20), mcp.Min(1), mcp.Max(100)),
+		mcp.WithString("detail", mcp.Description("brief minimizes model input; full includes evidence, events, and worktree metadata"), mcp.DefaultString("brief"), mcp.Enum("brief", "full")),
+		mcp.WithString("known_context_digest", mcp.Description("Digest from the previous brief response; matching state returns only an unchanged receipt"), mcp.Pattern(`sha256:[0-9a-f]{64}`)),
+		mcp.WithNumber("recent_event_limit", mcp.Description("Maximum recent events when detail is full"), mcp.DefaultNumber(8), mcp.Min(1), mcp.Max(100)),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
 	), recordWorkExecutionHandler("resume", func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -694,11 +720,23 @@ func registerWorkExecutionTools(mcpServer *server.MCPServer, bc *bootstrap.Conte
 		if _, err := authorizeWorkItem(ctx, bc, workItemID); err != nil {
 			return nil, err
 		}
-		bundle, err := bc.Brain.GetWorkResumeBundle(ctx, workItemID, request.GetInt("recent_event_limit", 20))
+		bundle, err := bc.Brain.GetWorkResumeBundle(ctx, workItemID, request.GetInt("recent_event_limit", 8))
 		if err != nil {
 			return nil, err
 		}
-		return workResumeToolResult(bc, bundle)
+		if request.GetString("detail", "brief") == "full" {
+			return workResumeToolResult(bc, bundle)
+		}
+		brief, err := buildWorkResumeBrief(bundle)
+		if err != nil {
+			return nil, err
+		}
+		if receipt := matchingAgentContextReceipt(
+			request.GetString("known_context_digest", ""), "work", workItemID, brief.NextAction, brief.ContextDigest,
+		); receipt != nil {
+			return jsonToolResult(bc, receipt)
+		}
+		return jsonToolResult(bc, brief)
 	}))
 
 	mcpServer.AddTool(mcp.NewTool("checkpoint_work", attemptMutationOptions(

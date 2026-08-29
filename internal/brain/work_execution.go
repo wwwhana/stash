@@ -15,6 +15,7 @@ import (
 
 	"github.com/alash3al/stash/internal/models"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const (
@@ -33,6 +34,7 @@ const (
 
 var (
 	ErrActiveWorkAttempt        = errors.New("brain: work item already has an active attempt")
+	ErrActiveWorktreeAttempt    = errors.New("brain: worktree already has an active attempt")
 	ErrWorkAttemptNotFound      = errors.New("brain: work attempt not found")
 	ErrWorkAttemptLease         = errors.New("brain: work attempt lease is invalid or expired")
 	ErrWorkAttemptTerminal      = errors.New("brain: completed or canceled work cannot start an attempt")
@@ -531,6 +533,63 @@ func expireStaleWorkAttempts(ctx context.Context, tx pgx.Tx, namespaceID, workIt
 	return nil
 }
 
+// expireStaleWorktreeAttempts releases expired leases left by other work
+// items in the same checkout. The graph advisory lock held by the caller
+// serializes the corresponding work-item state changes for this namespace.
+func expireStaleWorktreeAttempts(ctx context.Context, tx pgx.Tx, namespaceID, worktreeID, currentWorkItemID int64) error {
+	rows, err := tx.Query(ctx,
+		`UPDATE work_attempts attempt
+		 SET status = 'expired', ended_at = clock_timestamp(), updated_at = now()
+		 FROM work_items item
+		 WHERE attempt.worktree_id = $1 AND attempt.work_item_id <> $2
+		   AND attempt.status = 'active' AND attempt.lease_expires_at <= clock_timestamp()
+		   AND item.id = attempt.work_item_id AND item.namespace_id = $3 AND item.deleted_at IS NULL
+		 RETURNING attempt.id, attempt.work_item_id`,
+		worktreeID, currentWorkItemID, namespaceID,
+	)
+	if err != nil {
+		return fmt.Errorf("expire stale worktree attempts: %w", err)
+	}
+	type expiredAttempt struct {
+		attemptID  int64
+		workItemID int64
+	}
+	expired := make([]expiredAttempt, 0)
+	for rows.Next() {
+		var item expiredAttempt
+		if err := rows.Scan(&item.attemptID, &item.workItemID); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan stale worktree attempt: %w", err)
+		}
+		expired = append(expired, item)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("read stale worktree attempts: %w", err)
+	}
+	rows.Close()
+	for _, item := range expired {
+		if _, err := tx.Exec(ctx,
+			`UPDATE work_attempt_lease_tokens
+			 SET revoked_at = clock_timestamp()
+			 WHERE attempt_id = $1 AND revoked_at IS NULL`, item.attemptID,
+		); err != nil {
+			return fmt.Errorf("revoke stale worktree lease tokens: %w", err)
+		}
+		if err := setAvailableWorkItemStatus(ctx, tx, namespaceID, item.workItemID); err != nil {
+			return err
+		}
+		attemptID := item.attemptID
+		if err := insertWorkExecutionEvent(ctx, tx, namespaceID, item.workItemID, &attemptID, "work.attempt.expired", "attempt.expired", map[string]any{
+			"attempt_id":  item.attemptID,
+			"worktree_id": worktreeID,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func lockWorkGraph(ctx context.Context, tx pgx.Tx, namespaceID int64) error {
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, namespaceID); err != nil {
 		return fmt.Errorf("lock work graph: %w", err)
@@ -575,6 +634,56 @@ func lockWorkGraphForAttempt(ctx context.Context, tx pgx.Tx, attemptID int64) (i
 		return 0, err
 	}
 	return namespaceID, nil
+}
+
+// ensureWorkGoalAlignmentTx binds older unassigned work to the shared root and
+// rejects work that points outside the selected project goal tree. Callers hold
+// the work-item lock before invoking it.
+func ensureWorkGoalAlignmentTx(ctx context.Context, tx pgx.Tx, namespaceID, workItemID int64) (*int64, error) {
+	var goalID, rootID *int64
+	if err := tx.QueryRow(ctx,
+		`SELECT item.goal_id, root.goal_id
+		 FROM work_items item
+		 LEFT JOIN project_goal_roots root ON root.namespace_id = item.namespace_id
+		 WHERE item.id = $1 AND item.namespace_id = $2 AND item.deleted_at IS NULL`,
+		workItemID, namespaceID,
+	).Scan(&goalID, &rootID); err != nil {
+		return nil, fmt.Errorf("read work goal alignment: %w", err)
+	}
+	if rootID == nil {
+		return goalID, nil
+	}
+	if goalID == nil {
+		if err := tx.QueryRow(ctx,
+			`UPDATE work_items SET goal_id = $2, updated_at = now()
+			 WHERE id = $1 RETURNING goal_id`, workItemID, *rootID,
+		).Scan(&goalID); err != nil {
+			return nil, fmt.Errorf("bind work to shared project goal: %w", err)
+		}
+		return goalID, nil
+	}
+	var aligned bool
+	if err := tx.QueryRow(ctx,
+		`WITH RECURSIVE ancestors AS (
+		    SELECT goal.id, goal.parent_id, ARRAY[goal.id]::bigint[] AS path
+		    FROM goals goal
+		    WHERE goal.id = $1 AND goal.namespace_id = $2
+		      AND goal.status = 'active' AND goal.deleted_at IS NULL
+		    UNION ALL
+		    SELECT parent.id, parent.parent_id, child.path || parent.id
+		    FROM goals parent JOIN ancestors child ON child.parent_id = parent.id
+		    WHERE parent.namespace_id = $2 AND parent.deleted_at IS NULL
+		      AND NOT parent.id = ANY(child.path)
+		 )
+		 SELECT EXISTS (SELECT 1 FROM ancestors WHERE id = $3)`,
+		*goalID, namespaceID, *rootID,
+	).Scan(&aligned); err != nil {
+		return nil, fmt.Errorf("check work goal alignment: %w", err)
+	}
+	if !aligned {
+		return nil, fmt.Errorf("brain: work goal must belong to the active shared project goal tree")
+	}
+	return goalID, nil
 }
 
 func hasUnfinishedWorkBlockers(ctx context.Context, tx pgx.Tx, workItemID int64) (bool, error) {
@@ -733,6 +842,9 @@ func (b *Brain) PrepareWork(ctx context.Context, workItemID int64, nextAction st
 	if namespaceID != graphNamespaceID {
 		return nil, fmt.Errorf("brain: work item namespace changed while preparing work")
 	}
+	if _, err := ensureWorkGoalAlignmentTx(ctx, tx, namespaceID, workItemID); err != nil {
+		return nil, err
+	}
 	receipt, err := loadWorkActionReceipt(ctx, tx, workItemID, nil, "prepare", actionKey, requestHash)
 	if err != nil {
 		return nil, err
@@ -823,6 +935,34 @@ func (b *Brain) StartWorkAttempt(ctx context.Context, workItemID int64, agentID 
 // item and binds it to the server-verified authentication principal. Stale
 // leases are expired under the same work-item lock before a new attempt starts.
 func (b *Brain) StartWorkAttemptForPrincipal(ctx context.Context, workItemID int64, agentID, principalID string, worktreeID *int64, leaseDuration time.Duration, actionKey string) (*models.WorkAttemptLease, error) {
+	tx, err := b.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin work attempt: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	lease, err := b.startWorkAttemptForPrincipalTx(ctx, tx, workItemID, agentID, principalID, worktreeID, leaseDuration, actionKey)
+	if err != nil {
+		if errors.Is(err, ErrWorkAttemptLease) || errors.Is(err, ErrWorkBlockersUnfinished) {
+			if commitErr := tx.Commit(ctx); commitErr != nil {
+				return nil, fmt.Errorf("commit rejected work attempt state: %w", commitErr)
+			}
+		}
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit work attempt: %w", err)
+	}
+	if goalContext, contextErr := b.GetWorkGoalContext(ctx, workItemID); contextErr == nil {
+		lease.GoalContext = goalContext
+	}
+	return lease, nil
+}
+
+// startWorkAttemptForPrincipalTx contains the shared claim transition used by
+// start_work and claim_workspace. The caller owns the transaction. Two
+// expected rejections mutate durable state: an expired replay and unfinished
+// blockers; callers must commit those errors just like StartWorkAttempt does.
+func (b *Brain) startWorkAttemptForPrincipalTx(ctx context.Context, tx pgx.Tx, workItemID int64, agentID, principalID string, worktreeID *int64, leaseDuration time.Duration, actionKey string) (*models.WorkAttemptLease, error) {
 	agentID = strings.TrimSpace(agentID)
 	if err := validateContent(agentID); err != nil {
 		return nil, fmt.Errorf("brain: work attempt agent: %w", err)
@@ -852,12 +992,6 @@ func (b *Brain) StartWorkAttemptForPrincipal(ctx context.Context, workItemID int
 	if err != nil {
 		return nil, err
 	}
-	tx, err := b.pool.Begin(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("begin work attempt: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
 	graphNamespaceID, err := lockWorkGraphForItem(ctx, tx, workItemID)
 	if err != nil {
 		return nil, err
@@ -868,6 +1002,10 @@ func (b *Brain) StartWorkAttemptForPrincipal(ctx context.Context, workItemID int
 	}
 	if namespaceID != graphNamespaceID {
 		return nil, fmt.Errorf("brain: work item namespace changed while starting work")
+	}
+	goalID, err := ensureWorkGoalAlignmentTx(ctx, tx, namespaceID, workItemID)
+	if err != nil {
+		return nil, err
 	}
 	receipt, err := loadWorkActionReceipt(ctx, tx, workItemID, nil, "start", actionKey, requestHash)
 	if err != nil {
@@ -894,9 +1032,6 @@ func (b *Brain) StartWorkAttemptForPrincipal(ctx context.Context, workItemID int
 			if err := expireStaleWorkAttempts(ctx, tx, namespaceID, workItemID); err != nil {
 				return nil, err
 			}
-			if err := tx.Commit(ctx); err != nil {
-				return nil, fmt.Errorf("commit stale start replay: %w", err)
-			}
 			return nil, ErrWorkAttemptLease
 		}
 		token, tokenHash, err := newWorkLeaseToken()
@@ -920,9 +1055,6 @@ func (b *Brain) StartWorkAttemptForPrincipal(ctx context.Context, workItemID int
 			attempt.ID, principalID, tokenHash,
 		); err != nil {
 			return nil, fmt.Errorf("store replayed work lease token: %w", err)
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return nil, fmt.Errorf("commit work attempt replay: %w", err)
 		}
 		return &models.WorkAttemptLease{Attempt: *attempt, LeaseToken: token}, nil
 	}
@@ -963,15 +1095,12 @@ func (b *Brain) StartWorkAttemptForPrincipal(ctx context.Context, workItemID int
 		); err != nil {
 			return nil, fmt.Errorf("mark blocked work item: %w", err)
 		}
-		if err := tx.Commit(ctx); err != nil {
-			return nil, fmt.Errorf("commit blocked work start: %w", err)
-		}
 		return nil, ErrWorkBlockersUnfinished
 	}
 	if worktreeID != nil {
 		var worktreeNamespaceID int64
 		if err := tx.QueryRow(ctx,
-			`SELECT namespace_id FROM worktrees WHERE id = $1 AND deleted_at IS NULL`,
+			`SELECT namespace_id FROM worktrees WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
 			*worktreeID,
 		).Scan(&worktreeNamespaceID); errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrWorktreeNotFound
@@ -979,6 +1108,21 @@ func (b *Brain) StartWorkAttemptForPrincipal(ctx context.Context, workItemID int
 			return nil, fmt.Errorf("check attempt worktree: %w", err)
 		} else if worktreeNamespaceID != namespaceID {
 			return nil, fmt.Errorf("brain: work attempt worktree must share the work item namespace")
+		}
+		if err := expireStaleWorktreeAttempts(ctx, tx, namespaceID, *worktreeID, workItemID); err != nil {
+			return nil, err
+		}
+		var worktreeActive bool
+		if err := tx.QueryRow(ctx,
+			`SELECT EXISTS (
+			    SELECT 1 FROM work_attempts
+			    WHERE worktree_id = $1 AND status = 'active'
+			)`, *worktreeID,
+		).Scan(&worktreeActive); err != nil {
+			return nil, fmt.Errorf("check active worktree attempt: %w", err)
+		}
+		if worktreeActive {
+			return nil, ErrActiveWorktreeAttempt
 		}
 	}
 	var attemptNumber int
@@ -1000,6 +1144,10 @@ func (b *Brain) StartWorkAttemptForPrincipal(ctx context.Context, workItemID int
 		workItemID, worktreeID, attemptNumber, agentID, principalID, leaseDuration.Seconds(),
 	))
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.ConstraintName == "work_attempts_one_active_per_worktree_idx" {
+			return nil, ErrActiveWorktreeAttempt
+		}
 		return nil, fmt.Errorf("start work attempt: %w", err)
 	}
 	if _, err := tx.Exec(ctx,
@@ -1045,15 +1193,13 @@ func (b *Brain) StartWorkAttemptForPrincipal(ctx context.Context, workItemID int
 		"agent_id":         attempt.AgentID,
 		"principal_id":     attempt.PrincipalID,
 		"worktree_id":      attempt.WorktreeID,
+		"goal_id":          goalID,
 		"lease_expires_at": attempt.LeaseExpiresAt,
 	}); err != nil {
 		return nil, err
 	}
 	if err := storeWorkActionReceipt(ctx, tx, workItemID, nil, "start", actionKey, requestHash, &attemptID, attempt); err != nil {
 		return nil, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit work attempt: %w", err)
 	}
 	return &models.WorkAttemptLease{Attempt: *attempt, LeaseToken: token}, nil
 }
@@ -1700,13 +1846,20 @@ func (b *Brain) FinishWorkAttemptForPrincipal(ctx context.Context, attemptID int
 	); err != nil {
 		return nil, fmt.Errorf("revoke completed work lease tokens: %w", err)
 	}
-	if _, err := tx.Exec(ctx,
+	var completedGoalID *int64
+	if err := tx.QueryRow(ctx,
 		`UPDATE work_items
 		 SET status = 'done', completed_at = now(), updated_at = now()
-		 WHERE id = $1`,
+		 WHERE id = $1
+		 RETURNING goal_id`,
 		leased.Attempt.WorkItemID,
-	); err != nil {
+	).Scan(&completedGoalID); err != nil {
 		return nil, fmt.Errorf("complete work item: %w", err)
+	}
+	if completedGoalID != nil {
+		if err := autoCompleteGoalChain(ctx, tx, *completedGoalID); err != nil {
+			return nil, err
+		}
 	}
 	if _, err := tx.Exec(ctx,
 		`UPDATE work_plan_items
@@ -1995,8 +2148,10 @@ func (b *Brain) GetWorkResumeBundle(ctx context.Context, workItemID int64, recen
 
 	worktreeRows, err := tx.Query(ctx,
 		`SELECT linked.work_item_id, linked.relation, linked.created_at,
-		        tree.id, tree.namespace_id, tree.repository, tree.worktree_path, tree.branch,
-		        tree.head_sha, tree.status, tree.agent_id, tree.last_seen_at, tree.metadata,
+		        tree.id, tree.namespace_id, tree.workspace_repository_id, tree.worktree_key,
+		        tree.repository, tree.worktree_path, tree.git_dir, tree.worktree_slot, tree.branch,
+		        tree.head_sha, tree.status, tree.agent_id, tree.last_seen_at, tree.stale_at,
+		        tree.missing_since, tree.removed_at, tree.metadata,
 		        tree.created_at, tree.updated_at, tree.deleted_at
 		 FROM work_item_worktrees linked
 		 JOIN worktrees tree ON tree.id = linked.worktree_id AND tree.deleted_at IS NULL
@@ -2012,11 +2167,13 @@ func (b *Brain) GetWorkResumeBundle(ctx context.Context, workItemID int64, recen
 		var link models.WorktreeLink
 		if err := worktreeRows.Scan(
 			&link.WorkItemID, &link.Relation, &link.LinkedAt,
-			&link.Worktree.ID, &link.Worktree.NamespaceID, &link.Worktree.Repository,
-			&link.Worktree.WorktreePath, &link.Worktree.Branch, &link.Worktree.HeadSHA,
-			&link.Worktree.Status, &link.Worktree.AgentID, &link.Worktree.LastSeenAt,
-			&link.Worktree.Metadata, &link.Worktree.CreatedAt, &link.Worktree.UpdatedAt,
-			&link.Worktree.DeletedAt,
+			&link.Worktree.ID, &link.Worktree.NamespaceID, &link.Worktree.WorkspaceRepositoryID,
+			&link.Worktree.WorktreeKey, &link.Worktree.Repository, &link.Worktree.WorktreePath,
+			&link.Worktree.GitDir, &link.Worktree.WorktreeSlot, &link.Worktree.Branch,
+			&link.Worktree.HeadSHA, &link.Worktree.Status, &link.Worktree.AgentID,
+			&link.Worktree.LastSeenAt, &link.Worktree.StaleAt, &link.Worktree.MissingSince,
+			&link.Worktree.RemovedAt, &link.Worktree.Metadata, &link.Worktree.CreatedAt,
+			&link.Worktree.UpdatedAt, &link.Worktree.DeletedAt,
 		); err != nil {
 			worktreeRows.Close()
 			return nil, fmt.Errorf("scan worktree link for resume: %w", err)
@@ -2160,6 +2317,10 @@ func (b *Brain) GetWorkResumeBundle(ctx context.Context, workItemID int64, recen
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit work resume read: %w", err)
+	}
+	bundle.GoalContext, err = b.GetWorkGoalContext(ctx, workItemID)
+	if err != nil {
+		return nil, err
 	}
 	return bundle, nil
 }

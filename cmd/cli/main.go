@@ -15,6 +15,9 @@ func main() {
 		Name:  "stash",
 		Usage: "Stash - Persistent Memory for AI",
 		Before: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
+			if !commandNeedsBootstrap(os.Args) {
+				return ctx, nil
+			}
 			if _, ok := cmd.Root().Metadata["bootstrapCtx"]; ok {
 				return ctx, nil
 			}
@@ -163,7 +166,7 @@ func main() {
 						Usage:  "Set working context focus",
 						Action: contextSetCmd,
 						Flags: []cli.Flag{
-							&cli.StringFlag{Name: "namespace", Aliases: []string{"n"}, Value: "/", Usage: "Namespace path"},
+							&cli.StringFlag{Name: "namespace", Aliases: []string{"n"}, Usage: "Project namespace for the first binding; later syncs use local Git config"},
 							&cli.DurationFlag{Name: "expires", Value: 1 * time.Hour, Usage: "Context TTL"},
 						},
 					},
@@ -491,6 +494,23 @@ func main() {
 									&cli.IntFlag{Name: "offset", Usage: "Result offset"},
 								},
 							},
+						},
+					},
+				},
+			},
+			{
+				Name:  "workspace",
+				Usage: "Inspect the local Git identity used by workspace-aware agents",
+				Commands: []*cli.Command{
+					{
+						Name:   "facts",
+						Usage:  "Print Git facts for resolve_workspace without opening the database",
+						Action: workspaceFactsCmd,
+						Flags: []cli.Flag{
+							&cli.StringFlag{Name: "cwd", Value: ".", Usage: "Current directory inside a Git worktree"},
+							&cli.StringFlag{Name: "agent-id", Usage: "Agent or session identifier"},
+							&cli.StringFlag{Name: "project-namespace", Usage: "Project namespace to bind on first use"},
+							&cli.BoolFlag{Name: "no-init", Usage: "Do not create missing local Stash Git config"},
 						},
 					},
 				},

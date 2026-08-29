@@ -25,8 +25,9 @@ type WorkAttempt struct {
 // WorkAttemptLease is returned only when an attempt starts. Callers must keep
 // LeaseToken private and present it for every later mutation of that attempt.
 type WorkAttemptLease struct {
-	Attempt    WorkAttempt `json:"attempt"`
-	LeaseToken string      `json:"lease_token"`
+	Attempt     WorkAttempt      `json:"attempt"`
+	GoalContext *WorkGoalContext `json:"goal_context,omitempty"`
+	LeaseToken  string           `json:"lease_token"`
 }
 
 // WorkCheckpoint is an append-only summary of an attempt's current state.
@@ -141,6 +142,7 @@ type WorkResumeTruncated struct {
 // item without reconstructing state from a previous chat session.
 type WorkResumeBundle struct {
 	WorkItem             WorkItem                  `json:"work_item"`
+	GoalContext          *WorkGoalContext          `json:"goal_context,omitempty"`
 	NextAction           string                    `json:"next_action"`
 	LatestAttempt        *WorkAttempt              `json:"latest_attempt,omitempty"`
 	LatestCheckpoint     *WorkCheckpoint           `json:"latest_checkpoint,omitempty"`

@@ -2,6 +2,7 @@ package brain
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -10,8 +11,9 @@ import (
 )
 
 var (
-	ErrGoalNotFound  = fmt.Errorf("brain: goal not found")
-	ErrGoalNotActive = fmt.Errorf("brain: goal is not active")
+	ErrGoalNotFound               = fmt.Errorf("brain: goal not found")
+	ErrGoalNotActive              = fmt.Errorf("brain: goal is not active")
+	ErrGoalContributorsIncomplete = fmt.Errorf("brain: goal still has unfinished child goals or work")
 )
 
 const goalColumns = `id, namespace_id, parent_id, content, status, priority, notes,
@@ -149,25 +151,42 @@ func (b *Brain) GetGoalProgress(ctx context.Context, id int64) (total, completed
 	return total, completed, nil
 }
 
-// CompleteGoal marks a goal as completed. If all siblings are completed, auto-completes the parent.
+// CompleteGoal marks a goal as completed. A composed goal cannot bypass
+// unfinished child goals or executable work. Satisfied parents roll up in the
+// same transaction.
 func (b *Brain) CompleteGoal(ctx context.Context, id int64, notes string) (*models.Goal, error) {
-	current, err := b.GetGoal(ctx, id)
+	tx, err := b.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin complete goal: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var status string
+	if err := tx.QueryRow(ctx,
+		`SELECT status FROM goals WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, id,
+	).Scan(&status); errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrGoalNotFound
+	} else if err != nil {
+		return nil, fmt.Errorf("lock goal for completion: %w", err)
+	}
+	if status != "active" {
+		return nil, fmt.Errorf("%w: goal %d is %s, must be active", ErrGoalNotActive, id, status)
+	}
+	hasContributors, pending, err := goalContributorState(ctx, tx, id)
 	if err != nil {
 		return nil, err
 	}
-
-	if current.Status != "active" {
-		return nil, fmt.Errorf("%w: goal %d is %s, must be active", ErrGoalNotActive, id, current.Status)
+	if hasContributors && pending {
+		return nil, ErrGoalContributorsIncomplete
 	}
 
-	now := time.Now().UTC()
-
 	var g models.Goal
-	err = b.pool.QueryRow(ctx,
-		`UPDATE goals SET status = 'completed', completed_at = $2, notes = CASE WHEN $3 = '' THEN notes ELSE $3 END, updated_at = $2
+	err = tx.QueryRow(ctx,
+		`UPDATE goals SET status = 'completed', completed_at = clock_timestamp(),
+		        notes = CASE WHEN $2 = '' THEN notes ELSE $2 END, updated_at = now()
 		 WHERE id = $1 AND status = 'active' AND deleted_at IS NULL
 		 RETURNING `+goalColumns,
-		id, now, notes,
+		id, notes,
 	).Scan(
 		&g.ID, &g.NamespaceID, &g.ParentID, &g.Content, &g.Status, &g.Priority, &g.Notes,
 		&g.CompletedAt, &g.AbandonedAt, &g.CreatedAt, &g.UpdatedAt, &g.DeletedAt,
@@ -177,48 +196,86 @@ func (b *Brain) CompleteGoal(ctx context.Context, id int64, notes string) (*mode
 	}
 
 	if g.ParentID != nil {
-		if err := b.autoCompleteParent(ctx, *g.ParentID); err != nil {
-			return &g, nil
+		if err := autoCompleteGoalChain(ctx, tx, *g.ParentID); err != nil {
+			return nil, err
 		}
 	}
-
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit complete goal: %w", err)
+	}
 	return &g, nil
 }
 
-func (b *Brain) autoCompleteParent(ctx context.Context, parentID int64) error {
-	var total, completed int
-	err := b.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FILTER (WHERE status IN ('active', 'completed')),
-		        COUNT(*) FILTER (WHERE status = 'completed')
-		 FROM goals WHERE parent_id = $1 AND deleted_at IS NULL`,
-		parentID,
-	).Scan(&total, &completed)
-	if err != nil {
-		return err
-	}
-
-	if total > 0 && total == completed {
-		now := time.Now().UTC()
-		_, err := b.pool.Exec(ctx,
-			`UPDATE goals SET status = 'completed', completed_at = $2, updated_at = $2 WHERE id = $1 AND status = 'active' AND deleted_at IS NULL`,
-			parentID, now,
+func goalContributorState(ctx context.Context, tx pgx.Tx, goalID int64) (hasContributors, pending bool, err error) {
+	err = tx.QueryRow(ctx,
+		`WITH RECURSIVE goal_tree AS (
+		    SELECT id, namespace_id, status, ARRAY[id]::bigint[] AS path
+		    FROM goals WHERE id = $1 AND deleted_at IS NULL
+		    UNION ALL
+		    SELECT child.id, child.namespace_id, child.status, parent.path || child.id
+		    FROM goals child JOIN goal_tree parent ON child.parent_id = parent.id
+		    WHERE child.namespace_id = parent.namespace_id
+		      AND child.deleted_at IS NULL
+		      AND NOT child.id = ANY(parent.path)
+		), executable_work AS (
+		    SELECT item.id, item.status
+		    FROM work_items item
+		    WHERE item.goal_id IN (SELECT id FROM goal_tree) AND item.deleted_at IS NULL
+		      AND NOT EXISTS (
+		          SELECT 1 FROM work_items child
+		          WHERE child.parent_id = item.id AND child.deleted_at IS NULL
+		      )
+		      AND NOT EXISTS (
+		          SELECT 1 FROM work_plan_items plan
+		          WHERE plan.work_item_id = item.id AND plan.kind = 'component'
+		      )
 		)
-		if err != nil {
-			return err
-		}
-
-		var grandparentID *int64
-		err = b.pool.QueryRow(ctx,
-			"SELECT parent_id FROM goals WHERE id = $1 AND deleted_at IS NULL", parentID,
-		).Scan(&grandparentID)
-		if err != nil {
-			return err
-		}
-		if grandparentID != nil {
-			return b.autoCompleteParent(ctx, *grandparentID)
-		}
+		SELECT
+		    EXISTS (SELECT 1 FROM goal_tree WHERE id <> $1) OR EXISTS (SELECT 1 FROM executable_work),
+		    EXISTS (SELECT 1 FROM goal_tree WHERE id <> $1 AND status <> 'completed')
+		      OR EXISTS (SELECT 1 FROM executable_work WHERE status NOT IN ('done', 'canceled'))`,
+		goalID,
+	).Scan(&hasContributors, &pending)
+	if err != nil {
+		return false, false, fmt.Errorf("check goal contributors: %w", err)
 	}
+	return hasContributors, pending, nil
+}
 
+func autoCompleteGoalChain(ctx context.Context, tx pgx.Tx, goalID int64) error {
+	for goalID > 0 {
+		var parentID *int64
+		var status string
+		if err := tx.QueryRow(ctx,
+			`SELECT parent_id, status FROM goals WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, goalID,
+		).Scan(&parentID, &status); errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		} else if err != nil {
+			return fmt.Errorf("lock goal rollup: %w", err)
+		}
+		if status == "abandoned" {
+			return nil
+		}
+		if status == "active" {
+			hasContributors, pending, err := goalContributorState(ctx, tx, goalID)
+			if err != nil {
+				return err
+			}
+			if !hasContributors || pending {
+				return nil
+			}
+			if _, err := tx.Exec(ctx,
+				`UPDATE goals SET status = 'completed', completed_at = clock_timestamp(), updated_at = now()
+				 WHERE id = $1 AND status = 'active' AND deleted_at IS NULL`, goalID,
+			); err != nil {
+				return fmt.Errorf("roll up completed goal: %w", err)
+			}
+		}
+		if parentID == nil {
+			return nil
+		}
+		goalID = *parentID
+	}
 	return nil
 }
 

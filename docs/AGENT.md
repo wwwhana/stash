@@ -1,73 +1,67 @@
 # Stash Work Plan Convention
 
-Maintain the Stash work plan as the living plan. The project owner reads the Plan view, not an agent's private checklist, so write it for the owner. Stash is the source of current plan state; Git remains the source of code and diffs.
+Use Stash as the living, owner-facing plan. Git remains the source for code and diffs. Load the `stash-work-plan` skill before changing plan state when it is available.
 
-If the `stash-work-plan` skill is installed, load it before changing plan state. It contains the MCP workflow and the same convention described here.
+## Resolve the workspace first
 
-## Work execution continuity
+1. Collect local facts with `stash workspace facts --cwd . --agent-id <agent>`. A hook may provide the same fields.
+2. Call `resolve_workspace` with those facts. Supply `project_namespace` only for the first binding or an explicit owner choice. Never infer it from a folder or worktree name.
+3. Call `resume_workspace` with the returned namespace and worktree ID before creating or changing work. Use its default `brief` view first.
+4. Continue an existing matching item. Create new work only after the project snapshot and any required paginated search show no match.
 
-- Before creating tracked work, search the exact project namespace with `get_work_plan` and `list_work_items`. If a matching item exists, call `resume_work` with its ID and continue it. Never create a second item because the previous session is missing from the current chat.
-- Call `resume_work` before acting on an existing item. Prepare completion conditions only when they are missing or the owner deliberately changes them, then call `start_work` with a fresh random UUIDv4 action key to acquire the item. Keep every returned `lease_token` private and use it only for that attempt. An exact retry returns the same attempt with a fresh valid token; all returned tokens end together on handoff, completion, or expiry.
-- A live lease belongs to one attempt. If `start_work` reports an active lease, do not bypass it, change the completion conditions, or create replacement work. Continue only after the owner hands it off or the lease expires.
-- Call `checkpoint_work` after every meaningful action. Record the observed result and exactly one concrete, non-empty `next_action`; routine narration is not a checkpoint.
-- Submit observable evidence with `submit_work_evidence`, link it to the relevant condition, and call `verify_work_condition`. Never mark an execution-managed item done without linked evidence for every required condition.
-- Call `finish_work` only after all required conditions have passed or have an evidence-backed waiver and all blocking items are finished. For a plan task, `start_work` and `finish_work` record `started_by` and `completed_by` in the same transactions.
-- Before ending an unfinished attempt, write a final checkpoint through `handoff_work`. Its `next_action` must tell the next agent exactly what to do. If the session ends unexpectedly, the next agent must call `resume_work` on the same item and wait for the live lease to expire instead of duplicating the work.
+Paths, remote URLs, provider IDs, and agent IDs are identity hints. They never replace MCP authentication or grant namespace access.
 
-See [WORK_EXECUTION.md](WORK_EXECUTION.md) for the complete call sequence, ownership rules, recovery flow, and interruption test.
+## Follow the shared goal tree
 
-## Component map
+- Read the shared root and `goal_context.path` from every workspace or work resume response. The path runs from the project outcome to the specific outcome this item contributes to.
+- Model A-1, A-2, and deeper outcomes as child goals under A. Attach each component and task to the narrowest matching goal with `goal_id`.
+- Never start detached work. When a project root exists, Stash binds legacy unassigned work to the root and rejects work assigned outside that tree.
+- Link only durable context, constraints, decisions, failures, evidence, and results to goals or work. Routine narration stays out of memory.
+- `finish_work` rolls verified leaf work into its goal and completes eligible parent goals. Do not mark a parent complete while child goals or executable work remain unfinished.
 
-- Plan nodes are **components of the system being built**, not phases, sprints, or a chronological to-do list. Create them with `create_plan_component`.
-- Keep the map at **5 to 9 components** regardless of repository size. Grow child tasks instead of adding cards. Split a component only when one agent could no longer own it for a session.
-- A component's `issue_key` is its stable identifier. Do not reuse it for a different component. Add or remove nodes instead of changing their identity.
-- Use `update_plan_component` to clarify a component's wording, completion condition, implementation note, or owned paths without changing its stable identity.
-- Use `delete_plan_component` or `delete_plan_task` to remove an obsolete node. Do not recycle it by changing its purpose.
-- Titles are verb-led, plain-language, and concrete enough for the owner to recognize completion. Prefer `Read alerts out loud` over `Audio pipeline`, and never use vague labels such as `Decide what matters`.
-- Put implementation wording in `technical_details`, not in the title. Put the owner-facing scope and done condition in `description`.
+## Keep agent input small
 
-## Tasks and live state
+- The default `resume_workspace` and `resume_work` responses are briefs. Request `detail: full` only when a referenced plan, event, evidence record, or worktree detail is necessary for the next action.
+- Save `context_digest`. Send it back as `known_context_digest`; an unchanged project or work item returns a small receipt instead of repeating the same context.
+- Read only the current goal path, current action, pending conditions, relevant memory, and blockers. Use IDs to fetch one missing record rather than loading every list.
+- `get_goal_map` is for owner monitoring. Routine worker turns must not load the full map when a resume brief already contains their goal path.
 
-- Create executable child tasks with `create_plan_task` and its `component_id`. A component is the map; its tasks are the work.
-- Use `update_plan_task` when a task's outcome, completion condition, implementation note, or provenance needs clarification. It keeps the component, issue key, state, agents, and worktree links intact.
-- Map task state as follows: `ready` is not started, `doing` is in progress, `done` is complete, and `blocked` is stuck. Use `review` only when the owner explicitly needs a review state.
-- Prepare the task's completion conditions, then call `start_work` **before** implementation. It records `doing`, the task's `owner`, and immutable `started_by` data immediately.
-- Call `finish_work` the moment the verified task is complete. It retains who started and completed the task. If work is stuck, checkpoint the observed blocker, hand off the active attempt, and then use `block_plan_task`; call `unblock_plan_task` when the blocker is removed.
-- Never batch plan updates at the end of a session. Every state change is an API write when it happens.
-- For an open task, set `provenance` to `agent` when an agent is declaring its imminent build intent, or `roadmap` when the task comes from durable planning material. Leave it empty only when neither is true.
+## Claim work atomically
 
-## Dependencies, paths, and worktrees
+- Call `prepare_work` only when observable completion conditions are missing or intentionally changed.
+- Call `claim_workspace` immediately before implementation with the work item ID, the same Git facts, agent ID, and a fresh random UUIDv4 action key.
+- Keep the returned lease token private. Never store it or the action key in a checkpoint, memory, evidence, event, comment, or log.
+- Do not replace `claim_workspace` with a manual register, attach, and start sequence. Use `start_work` only when no Git workspace is involved.
+- If another live attempt owns the item or worktree, stop and follow the server response. Do not bypass it or create replacement work.
 
-- Connect components with `link_plan_components`. `needs` means the component must come after the related component; `links` means the two components are connected. The underlying `blocks` edge remains directed.
-- Put repository paths and glob patterns owned by a component in `owned_paths`. Keep them current with `set_plan_component_paths`; this tells the owner which component an agent is actually changing, including follow-up work on a completed component.
-- Sync local worktrees before work starts:
+## Maintain the component map
 
-```bash
-stash worktree sync --repo . --namespace /projects/myapp --agent-id my-agent
-```
+- Components are parts of the system, not phases, sprints, milestones, or chronological buckets.
+- Keep 5 to 9 components for the project. Grow child tasks. Split a component only when one agent could no longer own it for a working session.
+- Keep component issue keys stable. Remove and add a component instead of changing its identity.
+- Use verb-led, concrete titles whose completion is visible to the owner. Put implementation language in `technical_details` and the done condition in `description`.
+- Keep `owned_paths` current.
+- `needs` imposes order between components. `links` records interaction without order.
 
-Attach the returned worktree to the active task with `attach_worktree_to_item`. Sync again when work ends or a worktree disappears.
+## Update state as work happens
 
-## Decisions and evidence
+- Create executable work as child tasks and set the narrowest matching `goal_id`. Use `provenance: agent` for imminent agent work and `provenance: roadmap` for durable planned work.
+- Record a plan-changing decision before implementing it.
+- Call `checkpoint_work` after each meaningful action with the observed result and exactly one concrete `next_action`.
+- Call `renew_work_lease` before a long action could cross the lease deadline.
+- Call `resolve_workspace` again after a long pause or worktree move to refresh its heartbeat.
+- Do not batch plan updates at session end.
 
-- Record a plan-affecting decision with `record_plan_decision` **before** implementing it. Attach it to the affected component or task when possible.
-- Attach evidence and lessons with `link_work_item_memory`; inspect it with `list_work_item_memory_links`.
-- Use `add_work_item_comment` for handoff details, reproduction notes, and decisions that do not change the plan itself.
+## Prove and finish
 
-## Semantic review
+1. Exercise each completion condition through its named path. Keep source review, builds, tests, HTTP, UI, devices, and deployment as separate observations when required.
+2. Submit the observed result with `submit_work_evidence`.
+3. Accept the condition with `verify_work_condition` and that evidence. Use a waiver only with an explicit reason and supporting evidence.
+4. Call `finish_work` only after every required condition is accepted and all blockers are finished.
+5. If unfinished, call `handoff_work` with the current result and exactly one next action. A chat summary, status edit, or heartbeat does not release the lease.
 
-- `get_work_plan` returns deterministic convention warnings without calling a model. Resolve those warnings directly.
-- Call `validate_work_plan` after meaningful component, task, dependency, or decision changes and before handing off the plan. It uses the configured Reasoner model, not the embedding model.
-- Treat model findings as review advice. Fix supported component findings with `update_plan_component` and task findings with `update_plan_task`, then run `validate_work_plan` again.
-- If `get_work_plan.validation.stale` is true, the saved review predates the current plan. Run it again before relying on the result.
-- A plan review does not replace builds, tests, or observing the product.
+## Review plan meaning
 
-## Session start and end
+Resolve deterministic warnings from `get_work_plan` first. Run `validate_work_plan` after meaningful plan changes and before plan handoff. It uses the reasoning model and provides review advice; it does not replace building, testing, or observing the product.
 
-1. Call `init` if the Stash namespace has not been initialized.
-2. Verify the exact project namespace exists, then call `recall` for it.
-3. Call `get_work_plan`, `list_work_items`, and `list_worktrees` before making a new plan card. If matching work exists, call `resume_work` with that item ID; create new work only after confirming there is no match.
-4. Run `validate_work_plan` when the plan meaning changed or its saved validation is stale.
-5. Before ending an active attempt, either finish it with verified evidence or call `handoff_work` with one concrete next action. Save durable facts with `remember_work` or short-lived focus with `set_context`.
-
-Use `create_work_item` for ad-hoc local bugs, questions, and tracker entries that do not belong in the component map. Use the plan API for the owner-facing plan; do not maintain a separate live `PLAN.md` alongside it.
+If a response contains `has_more: true`, fetch the next chunk with `offset: next_offset` and process chunks separately. Never combine every page into one model prompt.

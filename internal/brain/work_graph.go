@@ -27,6 +27,10 @@ const workItemColumns = `id, namespace_id, goal_id, parent_id, issue_key, issue_
 
 const workItemCommentColumns = `id, work_item_id, author, body, created_at, updated_at, deleted_at`
 
+const worktreeColumns = `id, namespace_id, workspace_repository_id, worktree_key,
+ repository, worktree_path, git_dir, worktree_slot, branch, head_sha, status, agent_id,
+ last_seen_at, stale_at, missing_since, removed_at, metadata, created_at, updated_at, deleted_at`
+
 var workItemStatuses = map[string]struct{}{
 	"backlog":  {},
 	"ready":    {},
@@ -50,6 +54,7 @@ var worktreeStatuses = map[string]struct{}{
 	"unknown": {},
 	"clean":   {},
 	"dirty":   {},
+	"stale":   {},
 	"missing": {},
 	"merged":  {},
 	"removed": {},
@@ -164,11 +169,11 @@ func scanWorkItemRows(rows pgx.Rows) ([]models.WorkItem, error) {
 func scanWorktree(row pgx.Row) (*models.Worktree, error) {
 	var worktree models.Worktree
 	err := row.Scan(
-		&worktree.ID, &worktree.NamespaceID, &worktree.Repository,
-		&worktree.WorktreePath, &worktree.Branch, &worktree.HeadSHA,
-		&worktree.Status, &worktree.AgentID, &worktree.LastSeenAt,
-		&worktree.Metadata, &worktree.CreatedAt, &worktree.UpdatedAt,
-		&worktree.DeletedAt,
+		&worktree.ID, &worktree.NamespaceID, &worktree.WorkspaceRepositoryID, &worktree.WorktreeKey,
+		&worktree.Repository, &worktree.WorktreePath, &worktree.GitDir, &worktree.WorktreeSlot,
+		&worktree.Branch, &worktree.HeadSHA, &worktree.Status, &worktree.AgentID,
+		&worktree.LastSeenAt, &worktree.StaleAt, &worktree.MissingSince, &worktree.RemovedAt,
+		&worktree.Metadata, &worktree.CreatedAt, &worktree.UpdatedAt, &worktree.DeletedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -182,11 +187,11 @@ func scanWorktreeRows(rows pgx.Rows) ([]models.Worktree, error) {
 	for rows.Next() {
 		var worktree models.Worktree
 		if err := rows.Scan(
-			&worktree.ID, &worktree.NamespaceID, &worktree.Repository,
-			&worktree.WorktreePath, &worktree.Branch, &worktree.HeadSHA,
-			&worktree.Status, &worktree.AgentID, &worktree.LastSeenAt,
-			&worktree.Metadata, &worktree.CreatedAt, &worktree.UpdatedAt,
-			&worktree.DeletedAt,
+			&worktree.ID, &worktree.NamespaceID, &worktree.WorkspaceRepositoryID, &worktree.WorktreeKey,
+			&worktree.Repository, &worktree.WorktreePath, &worktree.GitDir, &worktree.WorktreeSlot,
+			&worktree.Branch, &worktree.HeadSHA, &worktree.Status, &worktree.AgentID,
+			&worktree.LastSeenAt, &worktree.StaleAt, &worktree.MissingSince, &worktree.RemovedAt,
+			&worktree.Metadata, &worktree.CreatedAt, &worktree.UpdatedAt, &worktree.DeletedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan worktree: %w", err)
 		}
@@ -328,6 +333,22 @@ func (b *Brain) CreateWorkItemWithDetails(ctx context.Context, namespaceID int64
 	if err := b.ensureOrdinaryWorkItem(ctx, input); err != nil {
 		return nil, err
 	}
+	var inheritedGoalID *int64
+	if input.ParentID != nil {
+		parent, err := b.GetWorkItem(ctx, *input.ParentID)
+		if err != nil {
+			return nil, err
+		}
+		if parent.NamespaceID != namespaceID {
+			return nil, fmt.Errorf("brain: parent work item must share the target namespace")
+		}
+		inheritedGoalID = parent.GoalID
+	}
+	resolvedGoalID, err := b.resolveProjectGoalForWork(ctx, namespaceID, input.GoalID, inheritedGoalID)
+	if err != nil {
+		return nil, err
+	}
+	input.GoalID = resolvedGoalID
 	item, err := b.insertWorkItem(ctx, b.pool, namespaceID, input)
 	if err != nil {
 		return nil, err
@@ -903,12 +924,11 @@ func (b *Brain) RegisterWorktree(ctx context.Context, namespaceID int64, reposit
 	worktree, err := scanWorktree(b.pool.QueryRow(ctx,
 		`INSERT INTO worktrees (namespace_id, repository, worktree_path, branch, head_sha, status, agent_id, last_seen_at, metadata, deleted_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, now(), $8, NULL)
-		 ON CONFLICT (namespace_id, worktree_path) DO UPDATE SET
+		 ON CONFLICT (namespace_id, worktree_path) WHERE deleted_at IS NULL DO UPDATE SET
 		   repository = EXCLUDED.repository, branch = EXCLUDED.branch, head_sha = EXCLUDED.head_sha,
 		   status = EXCLUDED.status, agent_id = EXCLUDED.agent_id, last_seen_at = now(),
 		   metadata = EXCLUDED.metadata, updated_at = now(), deleted_at = NULL
-		 RETURNING id, namespace_id, repository, worktree_path, branch, head_sha, status, agent_id,
-		           last_seen_at, metadata, created_at, updated_at, deleted_at`,
+		 RETURNING `+worktreeColumns,
 		namespaceID, repository, worktreePath, branch, headSHA, status, agentID, metadata,
 	))
 	if err != nil {
@@ -919,8 +939,7 @@ func (b *Brain) RegisterWorktree(ctx context.Context, namespaceID int64, reposit
 
 func (b *Brain) listWorktreesByNamespaceIDs(ctx context.Context, nsIDs []int64) ([]models.Worktree, error) {
 	rows, err := b.pool.Query(ctx,
-		`SELECT id, namespace_id, repository, worktree_path, branch, head_sha, status, agent_id,
-		        last_seen_at, metadata, created_at, updated_at, deleted_at
+		`SELECT `+worktreeColumns+`
 		 FROM worktrees WHERE namespace_id = ANY($1) AND deleted_at IS NULL
 		 ORDER BY updated_at DESC, id`, nsIDs,
 	)
@@ -938,8 +957,7 @@ func (b *Brain) ListWorktrees(ctx context.Context, namespaceSlugs []string, page
 	}
 	page = b.sanitizePage(page)
 	rows, err := b.pool.Query(ctx,
-		`SELECT id, namespace_id, repository, worktree_path, branch, head_sha, status, agent_id,
-		        last_seen_at, metadata, created_at, updated_at, deleted_at
+		`SELECT `+worktreeColumns+`
 		 FROM worktrees WHERE namespace_id = ANY($1) AND deleted_at IS NULL
 		 ORDER BY updated_at DESC, id LIMIT $2 OFFSET $3`, nsIDs, page.Limit, page.Offset,
 	)
@@ -952,8 +970,7 @@ func (b *Brain) ListWorktrees(ctx context.Context, namespaceSlugs []string, page
 // GetWorktree returns one active registered worktree.
 func (b *Brain) GetWorktree(ctx context.Context, id int64) (*models.Worktree, error) {
 	worktree, err := scanWorktree(b.pool.QueryRow(ctx,
-		`SELECT id, namespace_id, repository, worktree_path, branch, head_sha, status, agent_id,
-		        last_seen_at, metadata, created_at, updated_at, deleted_at
+		`SELECT `+worktreeColumns+`
 		 FROM worktrees WHERE id = $1 AND deleted_at IS NULL`, id,
 	))
 	if errors.Is(err, pgx.ErrNoRows) {

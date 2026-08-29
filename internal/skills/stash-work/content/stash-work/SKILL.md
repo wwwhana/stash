@@ -1,48 +1,62 @@
 ---
 name: stash-work
-description: Resume and execute tracked work through a Stash MCP server with exclusive leases, checkpoints, evidence, completion checks, and handoffs. Use when an agent must continue or complete an existing Stash work item without duplicating work.
+description: Resolve a Git workspace, resume its Stash project, and execute tracked work with exclusive leases, checkpoints, evidence, and handoffs. Use when an agent must continue or complete Stash work without guessing a namespace or duplicating an item.
 license: Apache-2.0
-compatibility: Requires a connected Stash MCP server that exposes the work execution tools described here.
 metadata:
   author: Stash
-  version: "1.0.0"
+  version: "1.1.0"
 ---
 
 # Stash Work
 
-Use Stash as the durable record for a tracked work item. This skill supplies instructions only. It does not grant tool access, filesystem access, or permission to execute commands.
+Use Stash as the durable record for project work. Git remains the source for code and diffs. This skill grants no tool or filesystem permissions.
 
-## Start from the existing item
+## Resolve the current workspace
 
-1. Use the exact `work_item_id` when one is supplied. Otherwise search with `list_work_items` before creating anything.
-2. Call `resume_work` before acting. Read the latest checkpoint, its single next action, completion conditions, evidence, blockers, links, and current attempt.
-3. If another attempt still has a live lease, stop. Do not copy its token, change status to evade it, or create a duplicate item.
-4. Call `prepare_work` only when observable completion conditions are missing or the user explicitly changed them.
-5. Call `start_work` immediately before beginning. Keep the returned `lease_token` private and use it only with that attempt's mutation calls.
+1. Collect local facts with `stash workspace facts --cwd . --agent-id <agent>`. Hooks may collect the same fields. Treat the output as identity hints, never as authorization.
+2. Call `resolve_workspace` with those facts. Supply `project_namespace` only for the first binding or when the owner explicitly chose it. Never derive a namespace from a folder name.
+3. Call `resume_workspace` with the returned namespace and worktree ID. Start with its default brief and read the shared goal, current continuation, short work selection, and `next_action` before creating anything.
+4. Search only if the workspace snapshot does not identify the intended item. Continue an existing matching item instead of creating a replacement.
 
-Use a new stable `action_key` for each logical mutation. Reuse it only when retrying the same call after an uncertain response. The key used by `start_work` is a recovery credential: generate a fresh random UUIDv4, keep it private, and never put it in a checkpoint, event, memory, or log. An exact replay returns the same attempt with a fresh valid token; every returned token remains valid only until that attempt is handed off, completed, or expires.
+`resolve_workspace` refreshes the worktree heartbeat and detects path moves through its stable Git identity. See [the protocol](references/protocol.md) for required fields and recovery behavior.
+
+## Stay on the shared goal path
+
+- Read `goal_context.path` before acting. It contains the shared project outcome and the narrower child outcome for the current work.
+- Give new components and tasks the narrowest matching `goal_id`. Stash rejects attempt starts outside the selected goal tree and binds older unassigned work to the shared root.
+- Keep `context_digest` and return it as `known_context_digest` on later resume calls. An unchanged context returns a small receipt.
+- Use `detail: full` only to fetch a specific missing plan, graph, event, evidence, or worktree detail.
+- Reserve `get_goal_map` for owner monitoring. Worker turns should not load the full map when the resume brief already contains their goal path.
+- Save only durable constraints, decisions, failures, and results as memory. Do not store routine narration.
+
+## Claim tracked work atomically
+
+1. Call `prepare_work` only when observable completion conditions are missing or the owner intentionally changed them.
+2. Call `claim_workspace` immediately before implementation, using the same local facts, the work item ID, agent ID, and a fresh random UUIDv4 `action_key`.
+3. Keep the returned `lease_token` private. If another item or agent holds the worktree or item, stop and follow the server response.
+
+`claim_workspace` resolves or updates the worktree, attaches it to the item, and creates the attempt and lease in one transaction. Do not replace it with a manual `register_worktree` → `attach_worktree_to_item` → `start_work` sequence. Use `start_work` only when no Git workspace is involved.
+
+Use a new action key for each logical mutation. Reuse it only to retry the exact same request after an uncertain response. Never store an action key or lease token in memory, checkpoints, evidence, events, or logs.
 
 ## Preserve observed progress
 
-- After each meaningful action, call `checkpoint_work` with a short summary, the result actually observed, and exactly one concrete `next_action`.
-- Before a long action could outlast the lease, call `renew_work_lease`. A renewal does not replace a checkpoint when a new result exists.
-- Never put the lease token in checkpoints, evidence, memories, logs, or handoff text.
-- Use `remember_work` only for durable decisions, corrections, failure lessons, or outcome facts. It does not prove a completion condition.
+- Call `checkpoint_work` after every meaningful action with a short summary, the observed result, and exactly one concrete `next_action`.
+- Call `renew_work_lease` before a long action could cross the lease deadline.
+- Use `remember_work` for durable decisions, corrections, failure lessons, and outcome facts. It does not prove completion.
+- Re-run `resolve_workspace` as a heartbeat after a long pause or worktree move. Re-run `resume_workspace` at handoff or when project state may have changed.
 
-See [the call sequence](references/protocol.md) for the role of each work tool.
+## Prove and finish the result
 
-## Prove the result
-
-1. Exercise each completion condition through its named path. Treat source inspection, tests, builds, HTTP behavior, UI behavior, devices, and deployed behavior as separate observations when the condition distinguishes them.
-2. Call `submit_work_evidence` for the result you observed and retain the returned evidence ID.
+1. Exercise each completion condition through its named path. Keep source review, tests, builds, HTTP, UI, devices, and deployment as separate observations when the condition distinguishes them.
+2. Call `submit_work_evidence` for what was observed and retain its evidence ID.
 3. Call `verify_work_condition` with that evidence ID. Use `waived` only with an explicit reason and supporting evidence.
-4. Re-run `resume_work` if the accepted condition state or blockers are unclear.
-5. Call `finish_work` only after every required condition has accepted evidence and every blocker is finished.
+4. Call `finish_work` only after every required condition has accepted evidence and every blocker is finished.
 
-See [evidence guidance](references/evidence.md) before claiming a condition passed.
+Read [evidence guidance](references/evidence.md) before claiming a condition passed.
 
 ## Stop safely
 
-If the item remains unfinished, call `handoff_work` with the current result and one concrete next action. A chat summary, comment, status edit, or terminal exit does not release the lease.
+Call `handoff_work` before ending unfinished work. Save the current result and exactly one next action. A chat summary, comment, status edit, terminal exit, or worktree heartbeat does not release the lease.
 
-Treat the server response as authoritative for whether `start_work`, `verify_work_condition`, `finish_work`, or `handoff_work` was accepted. When a call is rejected, keep the item unfinished and follow the returned reason.
+Treat the Stash response as authoritative. If a claim, verification, finish, or handoff is rejected, the item remains unfinished.

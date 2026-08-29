@@ -65,18 +65,6 @@ func parseGitWorktreeList(output string) ([]gitWorktree, error) {
 	return result, nil
 }
 
-func worktreeRepository(ctx context.Context, path string) (string, error) {
-	commonDir, err := runGit(ctx, path, "rev-parse", "--git-common-dir")
-	if err != nil {
-		return "", err
-	}
-	commonDirValue := strings.TrimSpace(string(commonDir))
-	if !filepath.IsAbs(commonDirValue) {
-		commonDirValue = filepath.Join(path, commonDirValue)
-	}
-	return filepath.Clean(commonDirValue), nil
-}
-
 func worktreeStatus(ctx context.Context, path string) (string, error) {
 	output, err := runGit(ctx, path, "status", "--porcelain", "--untracked-files=all")
 	if err != nil {
@@ -110,69 +98,92 @@ func worktreeSyncCmd(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	bc := getBootstrap(cmd)
-	_, namespaceID, err := exactNamespaceID(ctx, bc, cmd.String("namespace"))
-	if err != nil {
-		return err
-	}
+	requestedNamespace := strings.TrimSpace(cmd.String("namespace"))
 	agentID := strings.TrimSpace(cmd.String("agent-id"))
 	if agentID == "" {
 		agentID = strings.TrimSpace(os.Getenv("STASH_AGENT_ID"))
 	}
 
 	registered := make([]models.Worktree, 0, len(worktrees))
+	seenKeys := make([]string, 0, len(worktrees))
+	var repositoryID int64
+	var namespaceID int64
+	var projectNamespace string
 	for _, item := range worktrees {
 		path, err := filepath.Abs(item.Path)
 		if err != nil {
 			return fmt.Errorf("resolve worktree path %q: %w", item.Path, err)
 		}
-		status := "missing"
-		repository, repoErr := worktreeRepository(ctx, path)
-		if _, statErr := os.Stat(path); statErr == nil {
-			if repoErr != nil {
-				return fmt.Errorf("resolve repository for %s: %w", path, repoErr)
+		if _, statErr := os.Stat(path); statErr != nil {
+			if os.IsNotExist(statErr) {
+				// A complete sync reconciles previously registered entries below.
+				continue
 			}
-			status, err = worktreeStatus(ctx, path)
-			if err != nil {
-				return fmt.Errorf("read status for %s: %w", path, err)
-			}
-		} else {
-			// Git can retain a prunable worktree entry after its directory is
-			// removed. Keep it visible so the board can show stale workspaces.
-			repository, err = worktreeRepository(ctx, repoPath)
-			if err != nil {
-				return fmt.Errorf("resolve repository for missing worktree %s: %w", path, err)
-			}
+			return fmt.Errorf("read worktree path %s: %w", path, statErr)
 		}
+		facts, err := collectWorkspaceFacts(ctx, path, agentID, requestedNamespace, true)
+		if err != nil {
+			return fmt.Errorf("collect workspace facts for %s: %w", path, err)
+		}
+		if strings.TrimSpace(facts.ProjectNamespace) == "" {
+			return fmt.Errorf("project namespace is not bound; pass --namespace once or run stash workspace facts --project-namespace <namespace>")
+		}
+		if projectNamespace == "" {
+			projectNamespace = facts.ProjectNamespace
+			_, namespaceID, err = exactNamespaceID(ctx, bc, projectNamespace)
+			if err != nil {
+				return err
+			}
+		} else if facts.ProjectNamespace != projectNamespace {
+			return fmt.Errorf("Git worktrees resolve to different project namespaces")
+		}
+		facts.Branch = item.Branch
+		facts.HeadSHA = item.HeadSHA
 		metadata, err := json.Marshal(map[string]any{
 			"repo_path": repoPath,
 			"detached":  item.Detached,
-			"source":    "git worktree list",
+			"source":    "stash worktree sync",
 		})
 		if err != nil {
 			return fmt.Errorf("marshal worktree metadata: %w", err)
 		}
-		worktree, err := bc.Brain.RegisterWorktree(ctx, namespaceID, repository, path, item.Branch, item.HeadSHA, status, agentID, metadata)
+		facts.Metadata = metadata
+		targetNamespaceID := namespaceID
+		resolution, err := bc.Brain.ResolveWorkspace(ctx, []int64{namespaceID}, &targetNamespaceID, facts.WorkspaceIdentityInput)
 		if err != nil {
 			return err
 		}
-		keyHash := sha256.Sum256([]byte(fmt.Sprintf("%d:%s:%s:%s:%s", worktree.ID, item.HeadSHA, item.Branch, status, agentID)))
+		if repositoryID == 0 {
+			repositoryID = resolution.Repository.ID
+		} else if repositoryID != resolution.Repository.ID {
+			return fmt.Errorf("git worktree list resolved to more than one repository instance")
+		}
+		if resolution.Worktree.WorktreeKey != nil {
+			seenKeys = append(seenKeys, *resolution.Worktree.WorktreeKey)
+		}
+		keyHash := sha256.Sum256([]byte(fmt.Sprintf("%d:%s:%s:%s:%s", resolution.Worktree.ID, item.HeadSHA, item.Branch, facts.Status, agentID)))
 		eventKey := "sync_" + hex.EncodeToString(keyHash[:16])
 		eventPayload, err := json.Marshal(map[string]any{
-			"repository":    repository,
+			"repository":    resolution.Repository.RemoteURL,
 			"worktree_path": path,
 			"branch":        item.Branch,
 			"head_sha":      item.HeadSHA,
-			"status":        status,
+			"status":        facts.Status,
 			"agent_id":      agentID,
 		})
 		if err != nil {
 			return fmt.Errorf("marshal worktree event: %w", err)
 		}
-		worktreeID := worktree.ID
+		worktreeID := resolution.Worktree.ID
 		if _, err := bc.Brain.RecordWorkEvent(ctx, namespaceID, &worktreeID, nil, "worktree.synced", eventKey, eventPayload, nil); err != nil {
 			return err
 		}
-		registered = append(registered, *worktree)
+		registered = append(registered, resolution.Worktree)
+	}
+	if repositoryID > 0 {
+		if _, err := bc.Brain.ReconcileWorkspaceWorktrees(ctx, repositoryID, seenKeys); err != nil {
+			return err
+		}
 	}
 	return printJSON(registered)
 }

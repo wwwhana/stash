@@ -103,6 +103,7 @@ func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 		mcp.WithString("description", mcp.Description("Owner-facing scope and done condition")),
 		mcp.WithString("technical_details", mcp.Description("Optional implementation detail for the technical line")),
 		mcp.WithString("owned_paths", mcp.Description("Comma-separated repository paths or glob patterns owned by this component")),
+		mcp.WithNumber("goal_id", mcp.Description("Goal this component contributes to; defaults to the shared project goal")),
 		mcp.WithString("labels", mcp.Description("Comma-separated labels")),
 		mcp.WithString("reporter"), mcp.WithString("owner"), mcp.WithString("status", mcp.DefaultString("ready")),
 		mcp.WithNumber("priority", mcp.DefaultNumber(0)), mcp.WithNumber("position", mcp.DefaultNumber(0)),
@@ -120,8 +121,12 @@ func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 		if err != nil {
 			return nil, err
 		}
+		goalID, err := optionalID(request, "goal_id")
+		if err != nil {
+			return nil, err
+		}
 		component, err := bc.Brain.CreateWorkPlanComponent(ctx, namespaceID, brain.WorkPlanComponentInput{
-			Title: request.GetString("title", ""), Description: request.GetString("description", ""),
+			GoalID: goalID, Title: request.GetString("title", ""), Description: request.GetString("description", ""),
 			TechnicalDetails: request.GetString("technical_details", ""), OwnedPaths: paths, Labels: labels,
 			Reporter: request.GetString("reporter", ""), Owner: request.GetString("owner", ""),
 			Status: request.GetString("status", "ready"), Priority: request.GetInt("priority", 0), Position: request.GetFloat("position", 0),
@@ -135,6 +140,7 @@ func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 	mcpServer.AddTool(mcp.NewTool("update_plan_component",
 		mcp.WithDescription("Update selected wording or technical metadata on a plan component while preserving its stable ID, status, tasks, worktrees, and lifecycle history."),
 		mcp.WithNumber("component_id", mcp.Required()),
+		mcp.WithNumber("goal_id", mcp.Description("Replacement goal in the shared project goal tree")),
 		mcp.WithString("title", mcp.Description("Replacement owner-facing component outcome")),
 		mcp.WithString("description", mcp.Description("Replacement owner-facing scope and done condition")),
 		mcp.WithString("technical_details", mcp.Description("Replacement implementation detail; send an empty string to clear")),
@@ -167,11 +173,15 @@ func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 		if err != nil {
 			return nil, err
 		}
-		if title == nil && description == nil && technicalDetails == nil && paths == nil {
+		goalID, err := optionalID(request, "goal_id")
+		if err != nil {
+			return nil, err
+		}
+		if title == nil && description == nil && technicalDetails == nil && paths == nil && goalID == nil {
 			return nil, fmt.Errorf("provide at least one component field to update")
 		}
 		component, err := bc.Brain.UpdateWorkPlanComponent(ctx, componentID, brain.WorkPlanComponentUpdate{
-			Title: title, Description: description, TechnicalDetails: technicalDetails, OwnedPaths: paths,
+			GoalID: goalID, Title: title, Description: description, TechnicalDetails: technicalDetails, OwnedPaths: paths,
 		})
 		if err != nil {
 			return nil, err
@@ -182,6 +192,7 @@ func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 	mcpServer.AddTool(mcp.NewTool("create_plan_task",
 		mcp.WithDescription("Create one executable child task under a plan component. Set provenance to agent for the caller's imminent intent or roadmap for durable planning intent."),
 		mcp.WithNumber("component_id", mcp.Required()),
+		mcp.WithNumber("goal_id", mcp.Description("Specific child goal this task completes; defaults to the component goal")),
 		mcp.WithString("title", mcp.Required(), mcp.Description("Plain-language outcome that can be recognized as done")),
 		mcp.WithString("description", mcp.Description("Owner-facing scope and done condition")),
 		mcp.WithString("technical_details", mcp.Description("Optional implementation detail for the technical line")),
@@ -202,8 +213,12 @@ func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 		if err != nil {
 			return nil, err
 		}
+		goalID, err := optionalID(request, "goal_id")
+		if err != nil {
+			return nil, err
+		}
 		task, err := bc.Brain.CreateWorkPlanTask(ctx, namespaceID, brain.WorkPlanTaskInput{
-			ComponentID: componentID, Title: request.GetString("title", ""), Description: request.GetString("description", ""),
+			ComponentID: componentID, GoalID: goalID, Title: request.GetString("title", ""), Description: request.GetString("description", ""),
 			TechnicalDetails: request.GetString("technical_details", ""), Labels: labels, Reporter: request.GetString("reporter", ""),
 			Provenance: request.GetString("provenance", ""), Priority: request.GetInt("priority", 0), Position: request.GetFloat("position", 0),
 		})
@@ -216,6 +231,7 @@ func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 	mcpServer.AddTool(mcp.NewTool("update_plan_task",
 		mcp.WithDescription("Update selected wording, completion criteria, technical detail, or provenance on a plan task while preserving its component, stable ID, state, agents, and worktree links."),
 		mcp.WithNumber("task_id", mcp.Required()),
+		mcp.WithNumber("goal_id", mcp.Description("Replacement goal in the shared project goal tree")),
 		mcp.WithString("title", mcp.Description("Replacement plain-language outcome")),
 		mcp.WithString("description", mcp.Description("Replacement owner-facing scope and done condition")),
 		mcp.WithString("technical_details", mcp.Description("Replacement implementation detail; send an empty string to clear")),
@@ -248,11 +264,15 @@ func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 		if err != nil {
 			return nil, err
 		}
-		if title == nil && description == nil && technicalDetails == nil && provenance == nil {
+		goalID, err := optionalID(request, "goal_id")
+		if err != nil {
+			return nil, err
+		}
+		if title == nil && description == nil && technicalDetails == nil && provenance == nil && goalID == nil {
 			return nil, fmt.Errorf("provide at least one task field to update")
 		}
 		task, err := bc.Brain.UpdateWorkPlanTask(ctx, taskID, brain.WorkPlanTaskUpdate{
-			Title: title, Description: description, TechnicalDetails: technicalDetails, Provenance: provenance,
+			GoalID: goalID, Title: title, Description: description, TechnicalDetails: technicalDetails, Provenance: provenance,
 		})
 		if err != nil {
 			return nil, err

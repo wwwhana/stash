@@ -166,17 +166,18 @@ Stash는 AI 에이전트와 현실 세계 사이의 인지적 계층(Cognitive l
 
 ## 작업 그래프와 Git 워크트리
 
-작업 카드는 기억 데이터와 분리해 저장하고, 목표·작업·의존성·워크트리·작업 이벤트를 하나의 그래프로 연결할 수 있습니다. 이슈 종류(버그·기능·작업), 라벨, 담당자, 댓글도 함께 관리하므로 별도 서비스 없이 로컬 이슈 트래커로 사용할 수 있습니다. 같은 데이터가 상태별 칸반 보드와 의존성 그래프로 표시됩니다. 작업 카드는 관련 사실·실패·가설에도 연결할 수 있어, 에이전트가 작업을 이어받을 때 필요한 근거를 함께 불러옵니다.
+작업 카드는 기억 데이터와 분리해 저장하고, 목표·작업·의존성·워크트리·작업 이벤트를 연결합니다. 프로젝트마다 공통 최상위 목표 하나를 정하고 A-1·A-2 같은 자식 목표로 나눌 수 있습니다. 목표 지도는 `기억 → 작업 → 하위 목표 → 공통 목표` 흐름과 진행률, 작업 중인 에이전트, 막힌 지점, 다음 행동, 최근 결과를 함께 보여줍니다. 작업 카드는 관련 사실·실패·가설에도 연결할 수 있어 다음 에이전트가 필요한 내용만 이어받습니다.
 
 웹 콘솔의 작업 그래프는 `/projects/<프로젝트명>` 네임스페이스를 프로젝트 목록으로 보여줍니다. 프로젝트를 고르면 그 프로젝트와 하위 네임스페이스만 그래프에 표시하고, `모든 프로젝트`를 고르면 `/projects` 아래 작업을 한 그래프로 표시합니다. MCP에서는 `get_work_graph`에 `project: "/projects/myapp"`를 넘겨 한 프로젝트만 조회할 수 있습니다.
 
 소유자가 읽는 작업 계획은 바뀌는 `PLAN.md` 대신 작업 계획 API에 저장합니다. 계획은 5~9개의 고정된 구성 요소로 만들고, 각 구성 요소에는 맡는 경로, 실제 작업, 선행 관계, 워크트리, 구현 전 결정 내용을 넣습니다. `get_work_plan`이 모두가 보는 현재 계획이며, `create_plan_component`, `update_plan_component`, `create_plan_task`, `update_plan_task`, 작업 상태 도구, `link_plan_components`, `record_plan_decision`으로 갱신합니다. `validate_work_plan`은 설정된 Reasoner 모델로 계획의 의미를 검사하고 최신 결과를 저장합니다. 임베딩 모델은 이때 사용하지 않습니다. 계획 내용이 바뀌면 `get_work_plan.validation.stale`이 이전 검사 결과임을 표시합니다. 일반 이슈 보드는 별도의 로컬 이슈용이며 계획에 속한 카드를 섞어 보여주지 않습니다.
 
-실제 작업에는 이어받을 수 있는 실행 기록을 남깁니다. `prepare_work`가 확인 가능한 완료 조건과 다음 행동 하나를 저장하고, `start_work`가 기한이 있는 작업권 하나를 발급합니다. 중간 기록, 에이전트가 제출한 근거, 조건 확인, 인계, 완료는 같은 작업 키로 다시 요청해도 중복 저장되지 않습니다. 새 에이전트는 이전 대화 없이 작업 ID만으로 `resume_work`를 호출해 최근 기록, 다음 행동, 완료 조건과 근거, 막는 작업, 워크트리, 연결된 기억을 읽고 이어갈 수 있습니다. 필수 조건마다 근거가 연결되고 막는 작업이 모두 끝나기 전에는 `finish_work`가 완료를 거부합니다.
+실제 작업에는 이어받을 수 있는 실행 기록을 남깁니다. `resolve_workspace`가 로컬 Git 정보를 프로젝트와 안정적인 워크트리 식별자로 바꿉니다. `resume_workspace`와 `resume_work`는 기본으로 공통 목표 경로, 현재 행동, 남은 완료 조건, 관련 기억과 막는 작업만 담은 짧은 응답을 보냅니다. 같은 `context_digest`를 다시 보내면 바뀌지 않은 내용을 반복하지 않으며, 꼭 필요할 때만 `detail: full`로 전체 자료를 읽습니다. `claim_workspace`는 워크트리 연결, 작업권 발급과 같은 목표 경로 반환을 한 번에 처리합니다. `finish_work`는 조건과 근거를 확인한 뒤 충족된 하위 목표를 부모 목표에 반영합니다.
 
 로컬 에이전트는 현재 저장소의 워크트리를 Stash에 동기화할 수 있습니다. 코드와 실제 변경 내용은 Git에 남고, Stash에는 경로·브랜치·커밋·상태·작업 기록이 저장됩니다.
 
 ```bash
+stash workspace facts --cwd . --agent-id codex --project-namespace /projects/myapp
 stash worktree sync --repo . --namespace /projects/myapp
 stash worktree list --namespaces /projects/myapp
 stash issue create --namespace / "로그인 오류" --type bug --labels auth,login
@@ -184,7 +185,7 @@ stash issue list --namespaces / --status doing --label auth
 stash issue comment add W-000001 --body "재현 조건을 확인했습니다"
 ```
 
-영문 에이전트 규칙 예시는 [docs/AGENT.md](docs/AGENT.md)에서 복사할 수 있습니다. 작업 계획과 실행에는 `get_work_plan`, `validate_work_plan`, 구성 요소·작업·결정 도구와 `prepare_work`, `start_work`, `resume_work`, `checkpoint_work`, `submit_work_evidence`, `verify_work_condition`, `renew_work_lease`, `handoff_work`, `finish_work`, `remember_work`를 사용합니다. 일반 작업 카드, 의존 관계, 그래프, 댓글, 기억 연결, 워크트리, 작업 이벤트 도구는 로컬 이슈 관리에 계속 사용할 수 있습니다. 처음 한 번 `init`을 호출하면 기본 작업 공간이 만들어집니다.
+영문 에이전트 규칙 예시는 [docs/AGENT.md](docs/AGENT.md)에서 복사할 수 있습니다. 워크트리를 쓰는 에이전트는 `resolve_workspace`, `resume_workspace`, `claim_workspace`로 프로젝트를 찾고 작업을 맡은 뒤, 중간 기록·근거·조건 확인·인계·완료 도구를 사용합니다. 계획, 일반 작업 카드, 의존 관계, 그래프, 댓글, 기억 연결, 워크트리, 작업 이벤트 도구도 함께 사용할 수 있습니다. 첫 저장소 연결 전에 사용할 프로젝트 네임스페이스를 만들어 두세요.
 
 ### 작업 계획 스킬
 

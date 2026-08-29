@@ -1010,8 +1010,10 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 	})
 
 	registerWorkGraphTools(mcpServer, bc)
+	registerGoalMapTools(mcpServer, bc)
 	registerWorkPlanTools(mcpServer, bc)
 	registerWorkExecutionTools(mcpServer, bc)
+	registerWorkspaceTools(mcpServer, bc)
 	registerStashSkills(mcpServer)
 	return mcpServer
 }
@@ -1077,10 +1079,14 @@ func serveMCPHTTP(ctx context.Context, bc *bootstrap.Context, options mcpHTTPOpt
 	defer cancel()
 
 	var wg sync.WaitGroup
-	wg.Add(1)
+	wg.Add(2)
 	go func() {
 		defer wg.Done()
 		runEmbeddingRetryTicker(ctx, bc)
+	}()
+	go func() {
+		defer wg.Done()
+		runWorkspaceLifecycleTicker(ctx, bc)
 	}()
 
 	if options.Consolidation != nil {
@@ -1172,10 +1178,14 @@ func mcpExecuteCmd(ctx context.Context, cmd *cli.Command) error {
 	workerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var wg sync.WaitGroup
-	wg.Add(1)
+	wg.Add(2)
 	go func() {
 		defer wg.Done()
 		runEmbeddingRetryTicker(workerCtx, bc)
+	}()
+	go func() {
+		defer wg.Done()
+		runWorkspaceLifecycleTicker(workerCtx, bc)
 	}()
 
 	if cmd.Bool("with-consolidation") {
@@ -1241,6 +1251,40 @@ func runEmbeddingRetryTicker(ctx context.Context, bc *bootstrap.Context) {
 		case <-ticker.C:
 			run()
 		case <-wake:
+			run()
+		}
+	}
+}
+
+func runWorkspaceLifecycleTicker(ctx context.Context, bc *bootstrap.Context) {
+	if bc == nil || bc.Brain == nil {
+		return
+	}
+	const (
+		interval    = 5 * time.Minute
+		staleAfter  = 24 * time.Hour
+		removeAfter = 7 * 24 * time.Hour
+	)
+	run := func() {
+		result, err := bc.Brain.MaintainWorkspaceLifecycle(ctx, staleAfter, removeAfter)
+		if err != nil {
+			if ctx.Err() == nil && bc.Logger != nil {
+				bc.Logger.Error("workspace lifecycle maintenance failed", "error", err)
+			}
+			return
+		}
+		if bc.Logger != nil && (result.Stale > 0 || result.Removed > 0) {
+			bc.Logger.Info("workspace lifecycle maintenance completed", "stale", result.Stale, "removed", result.Removed)
+		}
+	}
+	run()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
 			run()
 		}
 	}

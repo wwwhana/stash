@@ -209,19 +209,26 @@ type WorkItemEdge struct {
 // Worktree is a local Git worktree registered by an agent-side bridge.
 // Paths and repository names are metadata; Git remains the source of code.
 type Worktree struct {
-	ID           int64           `db:"id" json:"id"`
-	NamespaceID  int64           `db:"namespace_id" json:"namespace_id"`
-	Repository   string          `db:"repository" json:"repository"`
-	WorktreePath string          `db:"worktree_path" json:"worktree_path"`
-	Branch       string          `db:"branch" json:"branch"`
-	HeadSHA      string          `db:"head_sha" json:"head_sha"`
-	Status       string          `db:"status" json:"status"`
-	AgentID      string          `db:"agent_id" json:"agent_id"`
-	LastSeenAt   *time.Time      `db:"last_seen_at" json:"last_seen_at,omitempty"`
-	Metadata     json.RawMessage `db:"metadata" json:"metadata"`
-	CreatedAt    time.Time       `db:"created_at" json:"created_at"`
-	UpdatedAt    time.Time       `db:"updated_at" json:"updated_at"`
-	DeletedAt    *time.Time      `db:"deleted_at" json:"deleted_at,omitempty"`
+	ID                    int64           `db:"id" json:"id"`
+	NamespaceID           int64           `db:"namespace_id" json:"namespace_id"`
+	WorkspaceRepositoryID *int64          `db:"workspace_repository_id" json:"workspace_repository_id,omitempty"`
+	WorktreeKey           *string         `db:"worktree_key" json:"worktree_key,omitempty"`
+	Repository            string          `db:"repository" json:"repository"`
+	WorktreePath          string          `db:"worktree_path" json:"worktree_path"`
+	GitDir                string          `db:"git_dir" json:"git_dir,omitempty"`
+	WorktreeSlot          string          `db:"worktree_slot" json:"worktree_slot,omitempty"`
+	Branch                string          `db:"branch" json:"branch"`
+	HeadSHA               string          `db:"head_sha" json:"head_sha"`
+	Status                string          `db:"status" json:"status"`
+	AgentID               string          `db:"agent_id" json:"agent_id"`
+	LastSeenAt            *time.Time      `db:"last_seen_at" json:"last_seen_at,omitempty"`
+	StaleAt               *time.Time      `db:"stale_at" json:"stale_at,omitempty"`
+	MissingSince          *time.Time      `db:"missing_since" json:"missing_since,omitempty"`
+	RemovedAt             *time.Time      `db:"removed_at" json:"removed_at,omitempty"`
+	Metadata              json.RawMessage `db:"metadata" json:"metadata"`
+	CreatedAt             time.Time       `db:"created_at" json:"created_at"`
+	UpdatedAt             time.Time       `db:"updated_at" json:"updated_at"`
+	DeletedAt             *time.Time      `db:"deleted_at" json:"deleted_at,omitempty"`
 }
 
 // WorkEvent is an append-only structured observation from a local agent or

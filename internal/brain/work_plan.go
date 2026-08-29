@@ -35,6 +35,7 @@ var (
 // WorkPlanComponentInput creates one owner-facing system component. It is a
 // parent work item; executable work lives in child WorkPlanTask records.
 type WorkPlanComponentInput struct {
+	GoalID           *int64
 	Title            string
 	Description      string
 	TechnicalDetails string
@@ -50,6 +51,7 @@ type WorkPlanComponentInput struct {
 // WorkPlanTaskInput creates an executable task under a plan component.
 type WorkPlanTaskInput struct {
 	ComponentID      int64
+	GoalID           *int64
 	Title            string
 	Description      string
 	TechnicalDetails string
@@ -63,6 +65,7 @@ type WorkPlanTaskInput struct {
 // WorkPlanComponentUpdate changes owner-facing wording and technical metadata
 // without changing the component's stable work item identity.
 type WorkPlanComponentUpdate struct {
+	GoalID           *int64
 	Title            *string
 	Description      *string
 	TechnicalDetails *string
@@ -72,6 +75,7 @@ type WorkPlanComponentUpdate struct {
 // WorkPlanTaskUpdate changes an executable task without moving it to a
 // different component or rewriting its lifecycle history.
 type WorkPlanTaskUpdate struct {
+	GoalID           *int64
 	Title            *string
 	Description      *string
 	TechnicalDetails *string
@@ -104,6 +108,7 @@ type workPlanItemRecord struct {
 
 type workPlanDigestTask struct {
 	ID               int64  `json:"id"`
+	GoalID           int64  `json:"goal_id,omitempty"`
 	Title            string `json:"title"`
 	Description      string `json:"description"`
 	TechnicalDetails string `json:"technical_details"`
@@ -111,6 +116,7 @@ type workPlanDigestTask struct {
 
 type workPlanDigestComponent struct {
 	ID               int64                `json:"id"`
+	GoalID           int64                `json:"goal_id,omitempty"`
 	IssueKey         string               `json:"issue_key"`
 	Title            string               `json:"title"`
 	Description      string               `json:"description"`
@@ -130,6 +136,7 @@ type workPlanDigestDecision struct {
 }
 
 type workPlanDigestInput struct {
+	RootGoalID int64                     `json:"root_goal_id,omitempty"`
 	Components []workPlanDigestComponent `json:"components"`
 	Decisions  []workPlanDigestDecision  `json:"decisions"`
 }
@@ -291,6 +298,10 @@ func (b *Brain) CreateWorkPlanComponent(ctx context.Context, namespaceID int64, 
 	if input.Status == "" {
 		input.Status = "ready"
 	}
+	goalID, err := b.resolveProjectGoalForWork(ctx, namespaceID, input.GoalID, nil)
+	if err != nil {
+		return nil, err
+	}
 
 	tx, err := b.pool.Begin(ctx)
 	if err != nil {
@@ -299,7 +310,7 @@ func (b *Brain) CreateWorkPlanComponent(ctx context.Context, namespaceID int64, 
 	defer tx.Rollback(ctx)
 
 	item, err := b.insertWorkItem(ctx, tx, namespaceID, WorkItemInput{
-		IssueType: "component", Labels: input.Labels, Reporter: input.Reporter,
+		GoalID: goalID, IssueType: "component", Labels: input.Labels, Reporter: input.Reporter,
 		Title: input.Title, Description: input.Description, Status: input.Status,
 		Priority: input.Priority, Position: input.Position, Owner: input.Owner,
 	})
@@ -336,6 +347,13 @@ func (b *Brain) UpdateWorkPlanComponent(ctx context.Context, componentID int64, 
 	if current.Metadata.Kind != workPlanComponentKind {
 		return nil, ErrWorkPlanComponentNotFound
 	}
+	goalID := current.Item.GoalID
+	if input.GoalID != nil {
+		goalID, err = b.resolveProjectGoalForWork(ctx, current.Item.NamespaceID, input.GoalID, nil)
+		if err != nil {
+			return nil, err
+		}
+	}
 	title := current.Item.Title
 	if input.Title != nil {
 		title = *input.Title
@@ -365,6 +383,9 @@ func (b *Brain) UpdateWorkPlanComponent(ctx context.Context, componentID int64, 
 	})
 	if err != nil {
 		return nil, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE work_items SET goal_id = $2, updated_at = now() WHERE id = $1`, componentID, goalID); err != nil {
+		return nil, fmt.Errorf("update work plan component goal: %w", err)
 	}
 	if _, err := tx.Exec(ctx,
 		`UPDATE work_plan_items SET technical_details = $2, owned_paths = $3, updated_at = now() WHERE work_item_id = $1`,
@@ -405,8 +426,12 @@ func (b *Brain) CreateWorkPlanTask(ctx context.Context, namespaceID int64, input
 	if component.Metadata.Kind != workPlanComponentKind || component.Item.NamespaceID != namespaceID {
 		return nil, ErrWorkPlanComponentNotFound
 	}
+	goalID, err := b.resolveProjectGoalForWork(ctx, namespaceID, input.GoalID, component.Item.GoalID)
+	if err != nil {
+		return nil, err
+	}
 	item, err := b.insertWorkItem(ctx, tx, namespaceID, WorkItemInput{
-		ParentID: &input.ComponentID, IssueType: "task", Labels: input.Labels, Reporter: input.Reporter,
+		GoalID: goalID, ParentID: &input.ComponentID, IssueType: "task", Labels: input.Labels, Reporter: input.Reporter,
 		Title: input.Title, Description: input.Description, Status: "ready",
 		Priority: input.Priority, Position: input.Position,
 	})
@@ -443,6 +468,13 @@ func (b *Brain) UpdateWorkPlanTask(ctx context.Context, taskID int64, input Work
 	if current.Metadata.Kind != workPlanTaskKind {
 		return nil, ErrWorkPlanTaskNotFound
 	}
+	goalID := current.Item.GoalID
+	if input.GoalID != nil {
+		goalID, err = b.resolveProjectGoalForWork(ctx, current.Item.NamespaceID, input.GoalID, nil)
+		if err != nil {
+			return nil, err
+		}
+	}
 	title := current.Item.Title
 	if input.Title != nil {
 		title = *input.Title
@@ -472,6 +504,9 @@ func (b *Brain) UpdateWorkPlanTask(ctx context.Context, taskID int64, input Work
 	})
 	if err != nil {
 		return nil, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE work_items SET goal_id = $2, updated_at = now() WHERE id = $1`, taskID, goalID); err != nil {
+		return nil, fmt.Errorf("update work plan task goal: %w", err)
 	}
 	if _, err := tx.Exec(ctx,
 		`UPDATE work_plan_items SET technical_details = $2, provenance = $3, updated_at = now() WHERE work_item_id = $1`,
@@ -630,6 +665,11 @@ func (b *Brain) transitionWorkPlanTask(ctx context.Context, taskID int64, status
 		)
 		if err != nil {
 			return nil, fmt.Errorf("record work plan task blocker: %w", err)
+		}
+	}
+	if status == "done" && record.Item.GoalID != nil {
+		if err := autoCompleteGoalChain(ctx, tx, *record.Item.GoalID); err != nil {
+			return nil, err
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -793,6 +833,9 @@ func workPlanDigest(plan *models.WorkPlan) (string, error) {
 		Components: make([]workPlanDigestComponent, 0, len(plan.Components)),
 		Decisions:  make([]workPlanDigestDecision, 0, len(plan.Decisions)),
 	}
+	if plan.GoalTree.RootGoalID != nil {
+		input.RootGoalID = *plan.GoalTree.RootGoalID
+	}
 	for _, component := range plan.Components {
 		item := workPlanDigestComponent{
 			ID:               component.ID,
@@ -805,6 +848,9 @@ func workPlanDigest(plan *models.WorkPlan) (string, error) {
 			Links:            make([]int64, 0, len(component.Links)),
 			Tasks:            make([]workPlanDigestTask, 0, len(component.Tasks)),
 		}
+		if component.GoalID != nil {
+			item.GoalID = *component.GoalID
+		}
 		for _, needed := range component.Needs {
 			item.Needs = append(item.Needs, needed.ID)
 		}
@@ -812,12 +858,16 @@ func workPlanDigest(plan *models.WorkPlan) (string, error) {
 			item.Links = append(item.Links, linked.ID)
 		}
 		for _, task := range component.Tasks {
-			item.Tasks = append(item.Tasks, workPlanDigestTask{
+			digestTask := workPlanDigestTask{
 				ID:               task.ID,
 				Title:            task.Title,
 				Description:      task.Description,
 				TechnicalDetails: task.TechnicalDetails,
-			})
+			}
+			if task.GoalID != nil {
+				digestTask.GoalID = *task.GoalID
+			}
+			item.Tasks = append(item.Tasks, digestTask)
 		}
 		input.Components = append(input.Components, item)
 	}
@@ -945,6 +995,10 @@ func (b *Brain) ValidateWorkPlan(ctx context.Context, namespaceID int64) (*model
 // and recent decisions for one namespace. Completed nodes stay in this view so
 // an owner can read the plan as a living record.
 func (b *Brain) GetWorkPlan(ctx context.Context, namespaceID int64) (*models.WorkPlan, error) {
+	goalTree, err := b.GetProjectGoalTree(ctx, namespaceID)
+	if err != nil {
+		return nil, err
+	}
 	componentRows, err := b.pool.Query(ctx,
 		`SELECT `+workPlanItemColumns+`
 		 FROM work_items wi JOIN work_plan_items pi ON pi.work_item_id = wi.id
@@ -965,6 +1019,7 @@ func (b *Brain) GetWorkPlan(ctx context.Context, namespaceID int64) (*models.Wor
 	}
 
 	plan := &models.WorkPlan{
+		GoalTree:   *goalTree,
 		Components: make([]models.WorkPlanComponent, len(components)),
 		Warnings:   make([]models.WorkPlanWarning, 0),
 	}
@@ -1054,11 +1109,28 @@ func (b *Brain) GetWorkPlan(ctx context.Context, namespaceID int64) (*models.Wor
 	} else if len(plan.Components) > 9 {
 		plan.Warnings = append(plan.Warnings, models.WorkPlanWarning{Code: "component_count_high", Count: len(plan.Components)})
 	}
+	goalSet := make(map[int64]struct{}, len(plan.GoalTree.Goals))
+	for _, goal := range plan.GoalTree.Goals {
+		goalSet[goal.ID] = struct{}{}
+	}
+	if plan.GoalTree.RootGoalID == nil {
+		plan.Warnings = append(plan.Warnings, models.WorkPlanWarning{Code: "no_project_goal"})
+	}
 	for _, component := range plan.Components {
+		if component.GoalID == nil {
+			plan.Warnings = append(plan.Warnings, models.WorkPlanWarning{Code: "component_without_goal", ComponentID: component.ID})
+		} else if _, ok := goalSet[*component.GoalID]; !ok {
+			plan.Warnings = append(plan.Warnings, models.WorkPlanWarning{Code: "component_goal_outside_tree", ComponentID: component.ID})
+		}
 		if len(component.OwnedPaths) == 0 {
 			plan.Warnings = append(plan.Warnings, models.WorkPlanWarning{Code: "component_without_paths", ComponentID: component.ID})
 		}
 		for _, task := range component.Tasks {
+			if task.GoalID == nil {
+				plan.Warnings = append(plan.Warnings, models.WorkPlanWarning{Code: "task_without_goal", TaskID: task.ID})
+			} else if _, ok := goalSet[*task.GoalID]; !ok {
+				plan.Warnings = append(plan.Warnings, models.WorkPlanWarning{Code: "task_goal_outside_tree", TaskID: task.ID})
+			}
 			if task.Status != "done" && task.Status != "canceled" && task.Provenance == "" {
 				plan.Warnings = append(plan.Warnings, models.WorkPlanWarning{Code: "open_task_without_provenance", TaskID: task.ID})
 			}

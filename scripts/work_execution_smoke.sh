@@ -302,6 +302,9 @@ tools = {tool.get("name"): tool for tool in response.get("result", {}).get("tool
 expected = {
     "create_namespace": {"slug", "name"},
     "create_work_item": {"namespace", "title"},
+    "resolve_workspace": {"cwd", "repository_instance_id", "git_common_dir", "git_dir", "worktree_path"},
+    "resume_workspace": {"namespace"},
+    "claim_workspace": {"work_item_id", "cwd", "repository_instance_id", "git_common_dir", "git_dir", "worktree_path", "agent_id", "lease_seconds", "action_key"},
     "resume_work": {"work_item_id"},
     "prepare_work": {"work_item_id", "next_action", "conditions", "action_key"},
     "start_work": {"work_item_id", "agent_id", "lease_seconds", "action_key"},
@@ -510,6 +513,82 @@ ARGS="$(json_object \
     s description "Isolated namespace created by scripts/work_execution_smoke.sh")"
 mcp_call create_namespace "$ARGS"
 
+say "checking the legacy worktree registration path"
+LEGACY_WORKTREE_PATH="/smoke/legacy-worktree-${RUN_SUFFIX}"
+ARGS="$(json_object \
+    s namespace "$PROJECT_NAMESPACE" \
+    s repository "https://example.invalid/legacy.git" \
+    s worktree_path "$LEGACY_WORKTREE_PATH" \
+    s branch main \
+    s head_sha legacy-head \
+    s status clean \
+    s agent_id legacy-smoke)"
+mcp_call register_worktree "$ARGS"
+LEGACY_WORKTREE_ID="$(json_get "$MCP_VALUE" id)"
+ARGS="$(json_object \
+    s namespace "$PROJECT_NAMESPACE" \
+    s repository "https://example.invalid/legacy.git" \
+    s worktree_path "$LEGACY_WORKTREE_PATH" \
+    s branch main \
+    s head_sha legacy-head-2 \
+    s status dirty \
+    s agent_id legacy-smoke)"
+mcp_call register_worktree "$ARGS"
+if [[ "$(json_get "$MCP_VALUE" id)" != "$LEGACY_WORKTREE_ID" ]]; then
+    die "legacy register_worktree did not update the active path"
+fi
+
+REPOSITORY_INSTANCE_ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+WORKTREE_PATH="/smoke/worktree-${RUN_SUFFIX}"
+GIT_COMMON_DIR="${WORKTREE_PATH}/.git"
+GIT_DIR="$GIT_COMMON_DIR"
+REMOTE_URL="git@github.com:example/work-execution-smoke.git"
+
+say "binding and resolving the workspace"
+ARGS="$(json_object \
+    s cwd "$WORKTREE_PATH" \
+    s repository_instance_id "$REPOSITORY_INSTANCE_ID" \
+    s git_common_dir "$GIT_COMMON_DIR" \
+    s git_dir "$GIT_DIR" \
+    s worktree_path "$WORKTREE_PATH" \
+    s remote_url "$REMOTE_URL" \
+    s branch main \
+    s head_sha 0123456789abcdef \
+    s worktree_status clean \
+    s agent_id "$AGENT_A" \
+    s project_namespace "$PROJECT_NAMESPACE")"
+mcp_call resolve_workspace "$ARGS"
+WORKTREE_ID="$(json_get "$MCP_VALUE" worktree.id)"
+if [[ "$(json_get "$MCP_VALUE" namespace.slug)" != "$PROJECT_NAMESPACE" ]]; then
+    die "resolve_workspace returned the wrong project namespace"
+fi
+
+say "asserting a moved checkout keeps its worktree identity"
+WORKTREE_PATH="/smoke/moved-worktree-${RUN_SUFFIX}"
+GIT_COMMON_DIR="${WORKTREE_PATH}/.git"
+GIT_DIR="$GIT_COMMON_DIR"
+ARGS="$(json_object \
+    s cwd "$WORKTREE_PATH" \
+    s repository_instance_id "$REPOSITORY_INSTANCE_ID" \
+    s git_common_dir "$GIT_COMMON_DIR" \
+    s git_dir "$GIT_DIR" \
+    s worktree_path "$WORKTREE_PATH" \
+    s remote_url "$REMOTE_URL" \
+    s branch main \
+    s head_sha 0123456789abcdef \
+    s worktree_status clean \
+    s agent_id "$AGENT_A")"
+mcp_call resolve_workspace "$ARGS"
+if [[ "$(json_get "$MCP_VALUE" worktree.id)" != "$WORKTREE_ID" ]]; then
+    die "moving the checkout created a duplicate worktree"
+fi
+
+say "reading the project-wide resume bundle"
+mcp_call resume_workspace "$(json_object s namespace "$PROJECT_NAMESPACE" n worktree_id "$WORKTREE_ID" n recent_limit 20)"
+if [[ "$(json_get "$MCP_VALUE" namespace.slug)" != "$PROJECT_NAMESPACE" ]]; then
+    die "resume_workspace returned the wrong project"
+fi
+
 ARGS="$(json_object \
     s namespace "$PROJECT_NAMESPACE" \
     s title "Exercise the complete work execution flow" \
@@ -529,26 +608,80 @@ ARGS="$(json_object \
     s action_key "${ACTION_PREFIX}:prepare")"
 mcp_call prepare_work "$ARGS"
 
-say "starting the first leased attempt"
+say "claiming the first leased attempt and its worktree atomically"
 ARGS="$(json_object \
     n work_item_id "$WORK_ITEM_ID" \
+    s cwd "$WORKTREE_PATH" \
+    s repository_instance_id "$REPOSITORY_INSTANCE_ID" \
+    s git_common_dir "$GIT_COMMON_DIR" \
+    s git_dir "$GIT_DIR" \
+    s worktree_path "$WORKTREE_PATH" \
+    s remote_url "$REMOTE_URL" \
+    s branch main \
+    s head_sha 0123456789abcdef \
+    s worktree_status clean \
     s agent_id "$AGENT_A" \
     n lease_seconds 600 \
     s action_key "${ACTION_PREFIX}:start-a")"
-mcp_call start_work "$ARGS"
-ATTEMPT_A_ID="$(json_get "$MCP_VALUE" attempt.id)"
-LEASE_A_TOKEN="$(json_get "$MCP_VALUE" lease_token)"
+mcp_call claim_workspace "$ARGS"
+ATTEMPT_A_ID="$(json_get "$MCP_VALUE" lease.attempt.id)"
+LEASE_A_TOKEN="$(json_get "$MCP_VALUE" lease.lease_token)"
 
 say "asserting a competing agent cannot claim or mutate the active lease"
 ARGS="$(json_object \
     n work_item_id "$WORK_ITEM_ID" \
+    s cwd "$WORKTREE_PATH" \
+    s repository_instance_id "$REPOSITORY_INSTANCE_ID" \
+    s git_common_dir "$GIT_COMMON_DIR" \
+    s git_dir "$GIT_DIR" \
+    s worktree_path "$WORKTREE_PATH" \
+    s remote_url "$REMOTE_URL" \
+    s branch main \
+    s head_sha 0123456789abcdef \
+    s worktree_status clean \
     s agent_id "$AGENT_B" \
     n lease_seconds 600 \
     s action_key "${ACTION_PREFIX}:start-b-conflict")"
-mcp_call_expect_error start_work "$ARGS"
+mcp_call_expect_error claim_workspace "$ARGS"
 MCP_ERROR_LOWER="$(printf '%s' "$MCP_ERROR" | tr '[:upper:]' '[:lower:]')"
 if ! [[ "$MCP_ERROR_LOWER" =~ lease|active[[:space:]_-]*attempt|already[[:space:]_-]*active|claimed|owned ]]; then
     die "competing start failed for an unrelated reason: $MCP_ERROR"
+fi
+
+say "asserting the same worktree cannot claim a different item"
+ARGS="$(json_object \
+    s namespace "$PROJECT_NAMESPACE" \
+    s title "Competing item for checkout exclusion" \
+    s description "Must not share the active worktree" \
+    s issue_type task \
+    s status ready \
+    s reporter "$AGENT_B")"
+mcp_call create_work_item "$ARGS"
+COMPETING_ITEM_ID="$(json_get "$MCP_VALUE" id)"
+ARGS="$(json_object \
+    n work_item_id "$COMPETING_ITEM_ID" \
+    s next_action "Try to claim the already active worktree" \
+    j conditions "$CONDITIONS" \
+    s action_key "${ACTION_PREFIX}:prepare-competing")"
+mcp_call prepare_work "$ARGS"
+ARGS="$(json_object \
+    n work_item_id "$COMPETING_ITEM_ID" \
+    s cwd "$WORKTREE_PATH" \
+    s repository_instance_id "$REPOSITORY_INSTANCE_ID" \
+    s git_common_dir "$GIT_COMMON_DIR" \
+    s git_dir "$GIT_DIR" \
+    s worktree_path "$WORKTREE_PATH" \
+    s remote_url "$REMOTE_URL" \
+    s branch main \
+    s head_sha 0123456789abcdef \
+    s worktree_status clean \
+    s agent_id "$AGENT_B" \
+    n lease_seconds 600 \
+    s action_key "${ACTION_PREFIX}:claim-competing-item")"
+mcp_call_expect_error claim_workspace "$ARGS"
+MCP_ERROR_LOWER="$(printf '%s' "$MCP_ERROR" | tr '[:upper:]' '[:lower:]')"
+if ! [[ "$MCP_ERROR_LOWER" =~ worktree.*active|active.*worktree|already.*active ]]; then
+    die "same-worktree claim failed for an unrelated reason: $MCP_ERROR"
 fi
 
 ARGS="$(json_object \
@@ -632,15 +765,31 @@ if [[ "$HANDOFF_STATUS" != "handed_off" || "$HANDOFF_NEXT_ACTION" != "Reclaim th
     die "handoff was not preserved by resume_work: status=$HANDOFF_STATUS next_action=$HANDOFF_NEXT_ACTION"
 fi
 
+mcp_call resume_workspace "$(json_object s namespace "$PROJECT_NAMESPACE" n worktree_id "$WORKTREE_ID" n recent_limit 20)"
+WORKSPACE_HANDOFF_STATUS="$(json_get "$MCP_VALUE" current_work.latest_attempt.status)"
+WORKSPACE_HANDOFF_NEXT_ACTION="$(json_get "$MCP_VALUE" latest_checkpoint.next_action)"
+if [[ "$WORKSPACE_HANDOFF_STATUS" != "handed_off" || "$WORKSPACE_HANDOFF_NEXT_ACTION" != "Reclaim the handed-off issue and finish it" ]]; then
+    die "handoff was not preserved by resume_workspace: status=$WORKSPACE_HANDOFF_STATUS next_action=$WORKSPACE_HANDOFF_NEXT_ACTION"
+fi
+
 say "reclaiming the handed-off issue"
 ARGS="$(json_object \
     n work_item_id "$WORK_ITEM_ID" \
+    s cwd "$WORKTREE_PATH" \
+    s repository_instance_id "$REPOSITORY_INSTANCE_ID" \
+    s git_common_dir "$GIT_COMMON_DIR" \
+    s git_dir "$GIT_DIR" \
+    s worktree_path "$WORKTREE_PATH" \
+    s remote_url "$REMOTE_URL" \
+    s branch main \
+    s head_sha 0123456789abcdef \
+    s worktree_status clean \
     s agent_id "$AGENT_B" \
     n lease_seconds 600 \
     s action_key "${ACTION_PREFIX}:reclaim")"
-mcp_call start_work "$ARGS"
-ATTEMPT_B_ID="$(json_get "$MCP_VALUE" attempt.id)"
-LEASE_B_TOKEN="$(json_get "$MCP_VALUE" lease_token)"
+mcp_call claim_workspace "$ARGS"
+ATTEMPT_B_ID="$(json_get "$MCP_VALUE" lease.attempt.id)"
+LEASE_B_TOKEN="$(json_get "$MCP_VALUE" lease.lease_token)"
 if [[ "$ATTEMPT_A_ID" == "$ATTEMPT_B_ID" ]]; then
     die "the reclaimed start reused the handed-off attempt instead of creating a new attempt"
 fi
@@ -673,11 +822,11 @@ fi
 
 say "checking execution metrics"
 METRICS="$(curl --fail --silent --show-error "${STASH_BASE_URL}/metrics")"
-if ! printf '%s' "$METRICS" | grep -Fq 'stash_work_execution_transitions_total{action="start",result="success"}'; then
-    die "the successful start execution metric was not exported"
+if ! printf '%s' "$METRICS" | grep -Fq 'stash_work_execution_transitions_total{action="claim_workspace",result="success"}'; then
+    die "the successful workspace claim metric was not exported"
 fi
-if ! printf '%s' "$METRICS" | grep -Fq 'stash_work_execution_transitions_total{action="start",result="rejected"}'; then
-    die "the rejected competing start execution metric was not exported"
+if ! printf '%s' "$METRICS" | grep -Fq 'stash_work_execution_transitions_total{action="claim_workspace",result="rejected"}'; then
+    die "the rejected competing workspace claim metric was not exported"
 fi
 
-say "passed: full flow, lease conflict, replay, provenance, bounded resume, and execution metrics were verified"
+say "passed: workspace binding, stable moves, atomic claims, checkout exclusion, handoff, evidence, bounded resume, and metrics were verified"

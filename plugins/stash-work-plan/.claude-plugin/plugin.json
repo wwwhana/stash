@@ -1,7 +1,7 @@
 {
   "name": "stash-work-plan",
-  "version": "0.1.0",
-  "description": "Resume and execute shared component-oriented work through a configured Stash MCP server.",
+  "version": "0.2.0",
+  "description": "Resolve Git workspaces and resume shared component-oriented work through Stash.",
   "author": {
     "name": "wwwhana",
     "url": "https://github.com/wwwhana"
