@@ -23,7 +23,10 @@ Namespace paths, remote URLs, provider IDs, capabilities, and agent IDs are rout
 
 - `resume_project` returns at most three active items and three runnable candidates. The default `resume_work` response is a brief. Request `detail: full` only when a referenced plan, event, evidence record, or connector detail is necessary for the next action.
 - Save `context_digest`. Send it back as `known_context_digest`; an unchanged project or work item returns a small receipt instead of repeating the same context.
-- Read only the current goal path, parent plan component, owned scopes, current action, pending conditions, relevant memory, and blockers. Use IDs to fetch one missing record rather than loading every list.
+- When `context_window.next_query` is present, copy its digest and `fact_offset` fields into the next `resume_work` call. Continue until the response points at its own current digest with offset zero. If the target changed between pages, restart from the returned reset cursor.
+- Treat `changed_facts` as a delta: it contains only facts added, updated, or removed since the saved digest. `evidence_references` and resource summaries are pointers; fetch one payload only when the next action requires it.
+- Keep `context_window.input_bytes` within `input_limit_bytes`. A truncated brief tells you how to continue or when to request `detail: full`; never combine every page into one model prompt.
+- Read only the current goal path, parent plan component, owned scopes, current action, pending conditions, relevant non-fact memory, changed facts, and blockers. Use IDs to fetch one missing record rather than loading every list.
 - `get_goal_map` is for owner monitoring. Routine worker turns must not load the full map when a resume brief already contains their goal path.
 
 ## Claim work atomically

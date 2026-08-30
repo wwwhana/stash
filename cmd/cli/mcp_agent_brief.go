@@ -13,7 +13,9 @@ import (
 
 const (
 	agentBriefConditionLimit  = 16
+	agentBriefEvidenceLimit   = 6
 	agentBriefMemoryLimit     = 6
+	agentBriefFactChangeLimit = 8
 	agentBriefResourceLimit   = 6
 	agentBriefDependencyLimit = 6
 	agentBriefBlockerLimit    = 8
@@ -93,7 +95,9 @@ func buildWorkResumeBrief(bundle *models.WorkResumeBundle) (*models.WorkResumeBr
 	brief := &models.WorkResumeBrief{
 		WorkItem:             agentWorkItem(bundle.WorkItem),
 		CompletionConditions: make([]models.AgentCondition, 0),
+		EvidenceReferences:   make([]models.AgentEvidenceReference, 0),
 		RelevantMemory:       make([]models.AgentMemory, 0),
+		ChangedFacts:         make([]models.WorkContextFactChange, 0),
 		Resources:            make([]models.WorkResourceRef, 0),
 		DependencyResults:    make([]models.WorkDependencyResult, 0),
 		Blockers:             make([]models.AgentWorkItem, 0),
@@ -114,6 +118,10 @@ func buildWorkResumeBrief(bundle *models.WorkResumeBundle) (*models.WorkResumeBr
 			goalContext.Siblings[index].Content, _ = truncateWorkResumeString(strings.TrimSpace(goalContext.Siblings[index].Content), 128)
 		}
 		brief.GoalContext = &goalContext
+		if len(goalContext.Path) > 0 {
+			sharedGoal := goalContext.Path[0]
+			brief.SharedGoal = &sharedGoal
+		}
 	}
 	if bundle.PlanContext != nil {
 		planContext := *bundle.PlanContext
@@ -170,6 +178,25 @@ func buildWorkResumeBrief(bundle *models.WorkResumeBundle) (*models.WorkResumeBr
 	}
 	brief.MoreConditions = len(conditions) > len(brief.CompletionConditions)
 
+	for _, evidence := range bundle.Evidence {
+		if len(brief.EvidenceReferences) >= agentBriefEvidenceLimit {
+			break
+		}
+		evidenceType, _ := truncateWorkResumeString(strings.TrimSpace(evidence.EvidenceType), 128)
+		summary, _ := truncateWorkResumeString(strings.TrimSpace(evidence.Summary), 384)
+		reference, _ := truncateWorkResumeString(strings.TrimSpace(evidence.Reference), 512)
+		conditionIDs := append([]int64(nil), evidence.ConditionIDs...)
+		if len(conditionIDs) > 16 {
+			conditionIDs = conditionIDs[:16]
+			brief.MoreEvidence = true
+		}
+		brief.EvidenceReferences = append(brief.EvidenceReferences, models.AgentEvidenceReference{
+			ID: evidence.ID, EvidenceType: evidenceType, Summary: summary, Reference: reference,
+			ContentDigest: evidence.ContentDigest, ConditionIDs: conditionIDs, SubmittedAt: evidence.SubmittedAt,
+		})
+	}
+	brief.MoreEvidence = brief.MoreEvidence || len(bundle.Evidence) > len(brief.EvidenceReferences)
+
 	memories := append([]models.WorkMemorySnapshot(nil), bundle.MemoryLinks...)
 	relationRank := func(relation string) int {
 		switch relation {
@@ -192,17 +219,39 @@ func buildWorkResumeBrief(bundle *models.WorkResumeBundle) (*models.WorkResumeBr
 		}
 		return memories[left].LinkedAt.After(memories[right].LinkedAt)
 	})
+	nonFactTotal := 0
+	factTotal := 0
 	for _, memory := range memories {
-		if len(brief.RelevantMemory) >= agentBriefMemoryLimit {
-			break
-		}
 		content, _ := truncateWorkResumeString(strings.TrimSpace(memory.Content), 384)
+		if memory.MemoryType == "fact" {
+			factTotal++
+			if memory.Status != "active" || len(brief.ChangedFacts) >= agentBriefFactChangeLimit {
+				continue
+			}
+			stateDigest, _ := agentContextDigest(struct {
+				FactID   int64  `json:"fact_id"`
+				Relation string `json:"relation"`
+				Content  string `json:"content"`
+				Status   string `json:"status"`
+			}{memory.MemoryID, memory.Relation, memory.Content, memory.Status})
+			brief.ChangedFacts = append(brief.ChangedFacts, models.WorkContextFactChange{
+				FactID: memory.MemoryID, Relation: memory.Relation, Change: "added", Content: content,
+				ContentTruncated: memory.ContentTruncated || len(content) < len(strings.TrimSpace(memory.Content)),
+				Status:           memory.Status, StateDigest: stateDigest,
+			})
+			continue
+		}
+		nonFactTotal++
+		if len(brief.RelevantMemory) >= agentBriefMemoryLimit {
+			continue
+		}
 		brief.RelevantMemory = append(brief.RelevantMemory, models.AgentMemory{
 			MemoryType: memory.MemoryType, MemoryID: memory.MemoryID, Relation: memory.Relation,
 			Content: content, Status: memory.Status,
 		})
 	}
-	brief.MoreMemory = len(memories) > len(brief.RelevantMemory)
+	brief.MoreMemory = nonFactTotal > len(brief.RelevantMemory)
+	brief.MoreChangedFacts = factTotal > len(brief.ChangedFacts)
 	for _, resource := range bundle.Resources {
 		if len(brief.Resources) >= agentBriefResourceLimit {
 			break
@@ -243,27 +292,37 @@ func buildWorkResumeBrief(bundle *models.WorkResumeBundle) (*models.WorkResumeBr
 		return nil, err
 	}
 	brief.ContextDigest = digest
-	fitWorkResumeBrief(brief)
+	brief.ContextWindow = models.AgentContextWindow{
+		InputLimitBytes: agentBriefMaxBytes,
+		NextQuery: models.AgentContextNextQuery{
+			KnownContextDigest: brief.ContextDigest, FactOffset: 0, Detail: "brief",
+		},
+	}
+	finalizeWorkResumeBrief(brief, agentBriefMaxBytes)
 	return brief, nil
 }
 
 // fitWorkResumeBrief enforces a small worker-input envelope even when every
 // bounded collection contains unusually long text. Items are already ordered
 // by usefulness, so removing from the tail preserves the most relevant entry.
-func fitWorkResumeBrief(brief *models.WorkResumeBrief) {
+func fitWorkResumeBrief(brief *models.WorkResumeBrief, maxBytes int) {
 	if brief == nil {
 		return
+	}
+	if maxBytes <= 0 {
+		maxBytes = agentBriefMaxBytes
 	}
 	type removable struct {
 		name string
 		size int
 	}
+	allowEmpty := false
 	for {
 		payload, err := json.Marshal(brief)
-		if err != nil || len(payload) <= agentBriefMaxBytes {
+		if err != nil || len(payload) <= maxBytes {
 			return
 		}
-		candidates := make([]removable, 0, 5)
+		candidates := make([]removable, 0, 7)
 		appendCandidate := func(name string, value any, count, minimum int) {
 			if count <= minimum {
 				return
@@ -271,22 +330,41 @@ func fitWorkResumeBrief(brief *models.WorkResumeBrief) {
 			encoded, _ := json.Marshal(value)
 			candidates = append(candidates, removable{name: name, size: len(encoded)})
 		}
+		minimum := 1
+		if allowEmpty {
+			minimum = 0
+		}
 		if len(brief.CompletionConditions) > 0 {
-			appendCandidate("conditions", brief.CompletionConditions[len(brief.CompletionConditions)-1], len(brief.CompletionConditions), 1)
+			appendCandidate("conditions", brief.CompletionConditions[len(brief.CompletionConditions)-1], len(brief.CompletionConditions), minimum)
+		}
+		if len(brief.EvidenceReferences) > 0 {
+			appendCandidate("evidence", brief.EvidenceReferences[len(brief.EvidenceReferences)-1], len(brief.EvidenceReferences), minimum)
 		}
 		if len(brief.RelevantMemory) > 0 {
-			appendCandidate("memory", brief.RelevantMemory[len(brief.RelevantMemory)-1], len(brief.RelevantMemory), 1)
+			appendCandidate("memory", brief.RelevantMemory[len(brief.RelevantMemory)-1], len(brief.RelevantMemory), minimum)
+		}
+		if len(brief.ChangedFacts) > 0 {
+			// A page must always advance. Dropping the final fact would return the
+			// same offset forever at the smallest supported input limit.
+			appendCandidate("facts", brief.ChangedFacts[len(brief.ChangedFacts)-1], len(brief.ChangedFacts), 1)
 		}
 		if len(brief.Resources) > 0 {
-			appendCandidate("resources", brief.Resources[len(brief.Resources)-1], len(brief.Resources), 1)
+			appendCandidate("resources", brief.Resources[len(brief.Resources)-1], len(brief.Resources), minimum)
 		}
 		if len(brief.DependencyResults) > 0 {
-			appendCandidate("dependencies", brief.DependencyResults[len(brief.DependencyResults)-1], len(brief.DependencyResults), 1)
+			appendCandidate("dependencies", brief.DependencyResults[len(brief.DependencyResults)-1], len(brief.DependencyResults), minimum)
 		}
 		if len(brief.Blockers) > 0 {
-			appendCandidate("blockers", brief.Blockers[len(brief.Blockers)-1], len(brief.Blockers), 1)
+			appendCandidate("blockers", brief.Blockers[len(brief.Blockers)-1], len(brief.Blockers), minimum)
 		}
 		if len(candidates) == 0 {
+			if compactWorkResumeBrief(brief) {
+				continue
+			}
+			if !allowEmpty {
+				allowEmpty = true
+				continue
+			}
 			return
 		}
 		sort.SliceStable(candidates, func(left, right int) bool { return candidates[left].size > candidates[right].size })
@@ -294,9 +372,15 @@ func fitWorkResumeBrief(brief *models.WorkResumeBrief) {
 		case "conditions":
 			brief.CompletionConditions = brief.CompletionConditions[:len(brief.CompletionConditions)-1]
 			brief.MoreConditions = true
+		case "evidence":
+			brief.EvidenceReferences = brief.EvidenceReferences[:len(brief.EvidenceReferences)-1]
+			brief.MoreEvidence = true
 		case "memory":
 			brief.RelevantMemory = brief.RelevantMemory[:len(brief.RelevantMemory)-1]
 			brief.MoreMemory = true
+		case "facts":
+			brief.ChangedFacts = brief.ChangedFacts[:len(brief.ChangedFacts)-1]
+			brief.MoreChangedFacts = true
 		case "resources":
 			brief.Resources = brief.Resources[:len(brief.Resources)-1]
 			brief.MoreResources = true
@@ -307,6 +391,293 @@ func fitWorkResumeBrief(brief *models.WorkResumeBrief) {
 			brief.Blockers = brief.Blockers[:len(brief.Blockers)-1]
 			brief.MoreBlockers = true
 		}
+	}
+}
+
+func compactWorkResumeBrief(brief *models.WorkResumeBrief) bool {
+	if brief == nil {
+		return false
+	}
+	changed := false
+	compact := func(value *string, limit int) {
+		if value == nil {
+			return
+		}
+		shortened, _ := truncateWorkResumeString(strings.TrimSpace(*value), limit)
+		if shortened != *value {
+			*value = shortened
+			changed = true
+		}
+	}
+	compact(&brief.WorkItem.IssueKey, 48)
+	compact(&brief.WorkItem.Title, 96)
+	compact(&brief.WorkItem.Owner, 48)
+	compact(&brief.WorkItem.NextAction, 96)
+	compact(&brief.NextAction, 128)
+	if len(brief.WorkItem.RequiredCapabilities) > 2 {
+		brief.WorkItem.RequiredCapabilities = brief.WorkItem.RequiredCapabilities[:2]
+		changed = true
+	}
+	for index := range brief.WorkItem.RequiredCapabilities {
+		compact(&brief.WorkItem.RequiredCapabilities[index], 48)
+	}
+	if brief.SharedGoal != nil {
+		compact(&brief.SharedGoal.Content, 96)
+	}
+	if brief.GoalContext != nil {
+		if len(brief.GoalContext.Path) > 2 {
+			brief.GoalContext.Path = []models.GoalBrief{brief.GoalContext.Path[0], brief.GoalContext.Path[len(brief.GoalContext.Path)-1]}
+			brief.GoalContext.PathTruncated = true
+			changed = true
+		}
+		if len(brief.GoalContext.Siblings) > 1 {
+			brief.GoalContext.Siblings = brief.GoalContext.Siblings[:1]
+			brief.GoalContext.SiblingsTruncated = true
+			changed = true
+		}
+		for index := range brief.GoalContext.Path {
+			compact(&brief.GoalContext.Path[index].Content, 80)
+		}
+		for index := range brief.GoalContext.Siblings {
+			compact(&brief.GoalContext.Siblings[index].Content, 64)
+		}
+	}
+	if brief.PlanContext != nil {
+		compact(&brief.PlanContext.Component.IssueKey, 48)
+		compact(&brief.PlanContext.Component.Title, 80)
+		compact(&brief.PlanContext.Outcome, 80)
+		compact(&brief.PlanContext.Guidance, 80)
+		compact(&brief.PlanContext.TaskDetails, 80)
+		if len(brief.PlanContext.OwnedScopes) > 1 {
+			brief.PlanContext.OwnedScopes = brief.PlanContext.OwnedScopes[:1]
+			brief.PlanContext.MoreOwnedScopes = true
+			changed = true
+		}
+		for index := range brief.PlanContext.OwnedScopes {
+			compact(&brief.PlanContext.OwnedScopes[index], 96)
+		}
+	}
+	if brief.LatestAttempt != nil {
+		compact(&brief.LatestAttempt.AgentID, 48)
+	}
+	if brief.LatestCheckpoint != nil {
+		compact(&brief.LatestCheckpoint.Summary, 80)
+		compact(&brief.LatestCheckpoint.Result, 80)
+		compact(&brief.LatestCheckpoint.NextAction, 80)
+	}
+	for index := range brief.CompletionConditions {
+		compact(&brief.CompletionConditions[index].Description, 80)
+	}
+	for index := range brief.EvidenceReferences {
+		compact(&brief.EvidenceReferences[index].EvidenceType, 48)
+		compact(&brief.EvidenceReferences[index].Summary, 80)
+		compact(&brief.EvidenceReferences[index].Reference, 96)
+	}
+	for index := range brief.RelevantMemory {
+		compact(&brief.RelevantMemory[index].Content, 80)
+	}
+	for index := range brief.ChangedFacts {
+		compact(&brief.ChangedFacts[index].Content, 80)
+	}
+	for index := range brief.Resources {
+		compact(&brief.Resources[index].ResourceKey, 64)
+		compact(&brief.Resources[index].Title, 80)
+		compact(&brief.Resources[index].URI, 96)
+		compact(&brief.Resources[index].Summary, 80)
+	}
+	for index := range brief.DependencyResults {
+		compact(&brief.DependencyResults[index].WorkItem.Title, 80)
+		compact(&brief.DependencyResults[index].Summary, 80)
+		compact(&brief.DependencyResults[index].Result, 80)
+	}
+	for index := range brief.Blockers {
+		compact(&brief.Blockers[index].Title, 80)
+	}
+	if changed {
+		brief.ContextWindow.Truncated = true
+		return true
+	}
+	if brief.PlanContext != nil {
+		brief.PlanContext = nil
+		brief.ContextWindow.Truncated = true
+		return true
+	}
+	if brief.GoalContext != nil {
+		brief.GoalContext = nil
+		brief.ContextWindow.Truncated = true
+		return true
+	}
+	if brief.LatestAttempt != nil {
+		brief.LatestAttempt = nil
+		brief.ContextWindow.Truncated = true
+		return true
+	}
+	if brief.LatestCheckpoint != nil {
+		brief.LatestCheckpoint = nil
+		brief.ContextWindow.Truncated = true
+		return true
+	}
+	compact(&brief.WorkItem.IssueKey, 32)
+	compact(&brief.WorkItem.Title, 16)
+	compact(&brief.WorkItem.Owner, 32)
+	if brief.WorkItem.NextAction != "" {
+		// The same value remains in the top-level next_action field.
+		brief.WorkItem.NextAction = ""
+		changed = true
+	}
+	compact(&brief.NextAction, 16)
+	if brief.SharedGoal != nil {
+		compact(&brief.SharedGoal.Content, 16)
+	}
+	if len(brief.WorkItem.RequiredCapabilities) > 1 {
+		brief.WorkItem.RequiredCapabilities = brief.WorkItem.RequiredCapabilities[:1]
+		changed = true
+	}
+	for index := range brief.WorkItem.RequiredCapabilities {
+		compact(&brief.WorkItem.RequiredCapabilities[index], 32)
+	}
+	if changed {
+		brief.ContextWindow.Truncated = true
+		return true
+	}
+	return false
+}
+
+func workResumeBriefTruncated(brief *models.WorkResumeBrief) bool {
+	return brief.MoreConditions || brief.MoreEvidence || brief.MoreMemory || brief.MoreChangedFacts ||
+		brief.MoreResources || brief.MoreDependencyResults || brief.MoreBlockers
+}
+
+func finalizeWorkResumeBrief(brief *models.WorkResumeBrief, maxBytes int) {
+	if brief == nil {
+		return
+	}
+	if maxBytes <= 0 || maxBytes > agentBriefMaxBytes {
+		maxBytes = agentBriefMaxBytes
+	}
+	brief.ContextWindow.InputLimitBytes = maxBytes
+	for iteration := 0; iteration < 8; iteration++ {
+		truncated := brief.ContextWindow.Truncated
+		fitWorkResumeBrief(brief, maxBytes)
+		brief.ContextWindow.Truncated = truncated || brief.ContextWindow.Truncated || workResumeBriefTruncated(brief)
+		if brief.ContextWindow.Truncated && brief.ContextWindow.NextQuery.Detail == "brief" && !brief.MoreChangedFacts {
+			brief.ContextWindow.NextQuery.Detail = "full"
+		}
+		payload, err := json.Marshal(brief)
+		if err != nil {
+			return
+		}
+		if brief.ContextWindow.InputBytes == len(payload) && len(payload) <= maxBytes {
+			return
+		}
+		brief.ContextWindow.InputBytes = len(payload)
+	}
+}
+
+func workContextDigest(bundle *models.WorkResumeBundle, states []models.WorkContextFactState) (string, error) {
+	type factMarker struct {
+		FactID      int64  `json:"fact_id"`
+		Relation    string `json:"relation"`
+		Status      string `json:"status"`
+		StateDigest string `json:"state_digest"`
+	}
+	markers := make([]factMarker, 0, len(states))
+	for _, state := range states {
+		markers = append(markers, factMarker{
+			FactID: state.FactID, Relation: state.Relation, Status: state.Status, StateDigest: state.StateDigest,
+		})
+	}
+	return agentContextDigest(struct {
+		Bundle *models.WorkResumeBundle `json:"bundle"`
+		Facts  []factMarker             `json:"facts"`
+	}{Bundle: bundle, Facts: markers})
+}
+
+func workContextInputLimit(bcMaxBytes int) int {
+	if bcMaxBytes > 0 && bcMaxBytes < agentBriefMaxBytes {
+		return bcMaxBytes
+	}
+	return agentBriefMaxBytes
+}
+
+func applyWorkContextFactDiff(brief *models.WorkResumeBrief, diff *models.WorkContextFactDiff, knownDigest, expectedDigest string, factOffset, maxBytes int) (bool, error) {
+	if brief == nil || diff == nil {
+		return false, fmt.Errorf("work context is unavailable")
+	}
+	if factOffset < 0 {
+		return false, fmt.Errorf("argument %q must be zero or greater", "fact_offset")
+	}
+	cursorReset := strings.TrimSpace(knownDigest) != "" && !diff.BaselineFound
+	if factOffset > 0 && strings.TrimSpace(expectedDigest) != brief.ContextDigest {
+		factOffset = 0
+		cursorReset = true
+	}
+	if factOffset > len(diff.Changes) {
+		return false, fmt.Errorf("argument %q exceeds the %d available fact changes", "fact_offset", len(diff.Changes))
+	}
+
+	end := factOffset + agentBriefFactChangeLimit
+	if end > len(diff.Changes) {
+		end = len(diff.Changes)
+	}
+	brief.ChangedFacts = append([]models.WorkContextFactChange(nil), diff.Changes[factOffset:end]...)
+	for index := range brief.ChangedFacts {
+		content, shortened := truncateWorkResumeString(strings.TrimSpace(brief.ChangedFacts[index].Content), 384)
+		brief.ChangedFacts[index].Content = content
+		brief.ChangedFacts[index].ContentTruncated = brief.ChangedFacts[index].ContentTruncated || shortened
+	}
+	brief.MoreChangedFacts = end < len(diff.Changes)
+	brief.ContextWindow = models.AgentContextWindow{
+		InputLimitBytes: maxBytes,
+		CursorReset:     cursorReset,
+		NextQuery: models.AgentContextNextQuery{
+			KnownContextDigest: brief.ContextDigest, FactOffset: 0, Detail: "brief",
+		},
+	}
+	if brief.MoreChangedFacts {
+		brief.ContextWindow.NextQuery = models.AgentContextNextQuery{
+			KnownContextDigest: knownDigest, ExpectedContextDigest: brief.ContextDigest,
+			FactOffset: end, Detail: "brief",
+		}
+	}
+	finalizeWorkResumeBrief(brief, maxBytes)
+
+	// The byte fitter may have removed additional fact changes. Advance only by
+	// the entries actually returned so a continuation cannot skip a fact.
+	returnedEnd := factOffset + len(brief.ChangedFacts)
+	complete := returnedEnd >= len(diff.Changes)
+	brief.MoreChangedFacts = !complete
+	if !complete {
+		brief.ContextWindow.NextQuery = models.AgentContextNextQuery{
+			KnownContextDigest: knownDigest, ExpectedContextDigest: brief.ContextDigest,
+			FactOffset: returnedEnd, Detail: "brief",
+		}
+	} else {
+		brief.ContextWindow.NextQuery = models.AgentContextNextQuery{
+			KnownContextDigest: brief.ContextDigest, FactOffset: 0, Detail: "brief",
+		}
+	}
+	finalizeWorkResumeBrief(brief, maxBytes)
+	return complete, nil
+}
+
+func finalizeAgentContextReceipt(receipt *models.AgentContextReceipt, maxBytes int) {
+	if receipt == nil {
+		return
+	}
+	window := &models.AgentContextWindow{
+		InputLimitBytes: maxBytes,
+		NextQuery: models.AgentContextNextQuery{
+			KnownContextDigest: receipt.ContextDigest, FactOffset: 0, Detail: "brief",
+		},
+	}
+	receipt.ContextWindow = window
+	for iteration := 0; iteration < 4; iteration++ {
+		payload, err := json.Marshal(receipt)
+		if err != nil || window.InputBytes == len(payload) {
+			return
+		}
+		window.InputBytes = len(payload)
 	}
 }
 

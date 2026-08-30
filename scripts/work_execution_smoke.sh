@@ -346,7 +346,7 @@ expected = {
     "resolve_workspace": {"cwd", "repository_instance_id", "git_common_dir", "git_dir", "worktree_path"},
     "resume_workspace": {"namespace"},
     "claim_workspace": {"work_item_id", "cwd", "repository_instance_id", "git_common_dir", "git_dir", "worktree_path", "agent_id", "lease_seconds", "action_key"},
-    "resume_work": {"work_item_id"},
+    "resume_work": {"work_item_id", "known_context_digest", "expected_context_digest", "fact_offset"},
     "prepare_work": {"work_item_id", "next_action", "conditions", "action_key"},
     "start_work": {"work_item_id", "agent_id", "lease_seconds", "action_key"},
     "checkpoint_work": {"attempt_id", "lease_token", "summary", "result", "next_action", "lease_seconds", "action_key"},
@@ -579,6 +579,7 @@ ARGS="$(json_object \
     s name "Work execution smoke ${RUN_SUFFIX}" \
     s description "Isolated namespace created by scripts/work_execution_smoke.sh")"
 mcp_call create_namespace "$ARGS"
+PROJECT_NAMESPACE_ID="$(json_get "$MCP_VALUE" id)"
 
 say "creating the shared project goal"
 ARGS="$(json_object \
@@ -659,6 +660,21 @@ if [[ "$(json_get "$MCP_VALUE" 0.id)" != "$GENERIC_RESOURCE_ID" || "$(json_get "
     die "the external resource reference was not returned for generic work"
 fi
 
+say "seeding one linked fact for bounded context verification"
+GENERIC_FACT_ID="$(docker exec "$PG_CONTAINER" \
+    psql -U stash_smoke -d stash_smoke -tAc \
+    "WITH inserted AS (
+         INSERT INTO facts (namespace_id, content, entity, property, value)
+         VALUES (${PROJECT_NAMESPACE_ID}, 'The human review stays authoritative in Jira APP-12', 'jira:APP-12', 'authority', 'external')
+         RETURNING id
+     )
+     INSERT INTO work_item_memory_links (work_item_id, memory_type, memory_id, relation)
+     SELECT ${GENERIC_WORK_ITEM_ID}, 'fact', id, 'constraint' FROM inserted
+     RETURNING memory_id" | awk 'NR == 1 { gsub(/[[:space:]]/, ""); print; exit }')"
+if ! [[ "$GENERIC_FACT_ID" =~ ^[1-9][0-9]*$ ]]; then
+    die "could not seed the linked work fact"
+fi
+
 say "spawning a prerequisite under the active generic attempt"
 SPAWN_CONDITIONS='[{"kind":"custom","description":"The source fact is recorded","verification":{"check":"source and observed result are present"},"required":true}]'
 mcp_call spawn_work "$(json_object \
@@ -680,6 +696,23 @@ mcp_call resume_work "$(json_object n work_item_id "$GENERIC_WORK_ITEM_ID")"
 GENERIC_PARENT_CONDITION_ID="$(json_get "$MCP_VALUE" completion_conditions.0.id)"
 if [[ "$(json_get "$MCP_VALUE" blockers.0.id)" != "$GENERIC_PREREQUISITE_ID" || "$(json_get "$MCP_VALUE" resources.0.id)" != "$GENERIC_RESOURCE_ID" ]]; then
     die "the generic work brief omitted its blocker or bounded resource"
+fi
+GENERIC_CONTEXT_DIGEST="$(json_get "$MCP_VALUE" context_digest)"
+if [[ "$(json_get "$MCP_VALUE" shared_goal.id)" != "$ROOT_GOAL_ID" || "$(json_get "$MCP_VALUE" changed_facts.0.fact_id)" != "$GENERIC_FACT_ID" || "$(json_get "$MCP_VALUE" changed_facts.0.change)" != "added" ]]; then
+    die "the generic work brief omitted its shared goal or changed fact"
+fi
+if [[ "$(json_get "$MCP_VALUE" context_window.next_query.known_context_digest)" != "$GENERIC_CONTEXT_DIGEST" ]]; then
+    die "the generic work brief returned an invalid bounded-input continuation"
+fi
+GENERIC_INPUT_BYTES="$(json_get "$MCP_VALUE" context_window.input_bytes)"
+GENERIC_INPUT_LIMIT="$(json_get "$MCP_VALUE" context_window.input_limit_bytes)"
+if (( GENERIC_INPUT_BYTES > GENERIC_INPUT_LIMIT )); then
+    die "the generic work brief exceeded its declared input limit: ${GENERIC_INPUT_BYTES} > ${GENERIC_INPUT_LIMIT}"
+fi
+
+mcp_call resume_work "$(json_object n work_item_id "$GENERIC_WORK_ITEM_ID" s known_context_digest "$GENERIC_CONTEXT_DIGEST")"
+if [[ "$(json_get "$MCP_VALUE" unchanged)" != "true" || "$(json_get "$MCP_VALUE" context_window.next_query.known_context_digest)" != "$GENERIC_CONTEXT_DIGEST" ]]; then
+    die "resume_work did not return the compact unchanged receipt"
 fi
 
 say "reading the bounded work and resource templates"
@@ -1129,4 +1162,4 @@ if ! printf '%s' "$METRICS" | grep -Fq 'stash_work_execution_transitions_total{a
     die "the successful spawned work metric was not exported"
 fi
 
-say "passed: generic Web MCP resume, bounded resource templates, prerequisite result flow, owner map, optional Git workspace binding, lease exclusion, handoff, evidence, and metrics were verified"
+say "passed: bounded changed-fact context, input continuation, generic Web MCP resume, prerequisite result flow, optional Git workspace binding, lease exclusion, handoff, evidence, and metrics were verified"

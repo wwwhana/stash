@@ -58,11 +58,12 @@ func TestBuildWorkResumeBriefBoundsAgentInputAndSupportsDigestReceipt(t *testing
 		t.Fatal(err)
 	}
 	if len(brief.CompletionConditions) < 1 || len(brief.CompletionConditions) > agentBriefConditionLimit || !brief.MoreConditions ||
-		len(brief.RelevantMemory) < 1 || len(brief.RelevantMemory) > agentBriefMemoryLimit || !brief.MoreMemory ||
+		len(brief.RelevantMemory) != 0 || brief.MoreMemory ||
+		len(brief.ChangedFacts) < 1 || len(brief.ChangedFacts) > agentBriefFactChangeLimit || !brief.MoreChangedFacts ||
 		len(brief.Resources) < 1 || len(brief.Resources) > agentBriefResourceLimit || !brief.MoreResources ||
 		len(brief.DependencyResults) < 1 || len(brief.DependencyResults) > agentBriefDependencyLimit || !brief.MoreDependencyResults ||
 		len(brief.Blockers) < 1 || len(brief.Blockers) > agentBriefBlockerLimit || !brief.MoreBlockers {
-		t.Fatalf("brief limits = conditions:%d memory:%d resources:%d dependencies:%d blockers:%d", len(brief.CompletionConditions), len(brief.RelevantMemory), len(brief.Resources), len(brief.DependencyResults), len(brief.Blockers))
+		t.Fatalf("brief limits = conditions:%d memory:%d facts:%d resources:%d dependencies:%d blockers:%d", len(brief.CompletionConditions), len(brief.RelevantMemory), len(brief.ChangedFacts), len(brief.Resources), len(brief.DependencyResults), len(brief.Blockers))
 	}
 	payload, err := json.Marshal(brief)
 	if err != nil {
@@ -98,6 +99,82 @@ func TestBuildWorkResumeBriefBoundsAgentInputAndSupportsDigestReceipt(t *testing
 	planChanged, err := buildWorkResumeBrief(bundle)
 	if err != nil || planChanged.ContextDigest == brief.ContextDigest {
 		t.Fatalf("plan digest = %q, previous %q, err=%v", planChanged.ContextDigest, brief.ContextDigest, err)
+	}
+}
+
+func TestApplyWorkContextFactDiffPaginatesWithoutSkipping(t *testing.T) {
+	knownDigest := "sha256:" + strings.Repeat("a", 64)
+	currentDigest := "sha256:" + strings.Repeat("b", 64)
+	changes := make([]models.WorkContextFactChange, 0, 10)
+	for index := 0; index < 10; index++ {
+		changes = append(changes, models.WorkContextFactChange{
+			FactID: int64(index + 1), Relation: "constraint", Change: "updated",
+			Content: fmt.Sprintf("바뀐 사실 %d", index+1), Status: "active",
+			StateDigest: "sha256:" + strings.Repeat(fmt.Sprintf("%x", index), 64),
+		})
+	}
+	diff := &models.WorkContextFactDiff{BaselineFound: true, Changes: changes}
+
+	first := &models.WorkResumeBrief{ContextDigest: currentDigest}
+	complete, err := applyWorkContextFactDiff(first, diff, knownDigest, "", 0, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if complete || len(first.ChangedFacts) != agentBriefFactChangeLimit || !first.MoreChangedFacts {
+		t.Fatalf("first page = complete:%v facts:%d more:%v", complete, len(first.ChangedFacts), first.MoreChangedFacts)
+	}
+	if first.ContextWindow.NextQuery.KnownContextDigest != knownDigest ||
+		first.ContextWindow.NextQuery.ExpectedContextDigest != currentDigest ||
+		first.ContextWindow.NextQuery.FactOffset != agentBriefFactChangeLimit {
+		t.Fatalf("first next query = %#v", first.ContextWindow.NextQuery)
+	}
+
+	second := &models.WorkResumeBrief{ContextDigest: currentDigest}
+	complete, err = applyWorkContextFactDiff(second, diff, knownDigest, currentDigest, agentBriefFactChangeLimit, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !complete || len(second.ChangedFacts) != 2 || second.MoreChangedFacts {
+		t.Fatalf("second page = complete:%v facts:%d more:%v", complete, len(second.ChangedFacts), second.MoreChangedFacts)
+	}
+	if second.ContextWindow.NextQuery.KnownContextDigest != currentDigest || second.ContextWindow.NextQuery.FactOffset != 0 {
+		t.Fatalf("second next query = %#v", second.ContextWindow.NextQuery)
+	}
+
+	reset := &models.WorkResumeBrief{ContextDigest: currentDigest}
+	complete, err = applyWorkContextFactDiff(reset, diff, knownDigest, knownDigest, agentBriefFactChangeLimit, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if complete || !reset.ContextWindow.CursorReset || len(reset.ChangedFacts) != agentBriefFactChangeLimit ||
+		reset.ContextWindow.NextQuery.FactOffset != agentBriefFactChangeLimit {
+		t.Fatalf("reset page = complete:%v window:%#v facts:%d", complete, reset.ContextWindow, len(reset.ChangedFacts))
+	}
+}
+
+func TestFinalizeWorkResumeBriefHonorsSmallInputLimit(t *testing.T) {
+	brief := &models.WorkResumeBrief{
+		ContextDigest: "sha256:" + strings.Repeat("c", 64),
+		SharedGoal:    &models.GoalBrief{ID: 1, Content: strings.Repeat("공통 목표 ", 80)},
+		WorkItem:      models.AgentWorkItem{ID: 2, Title: strings.Repeat("현재 작업 ", 80), Status: "doing"},
+		NextAction:    strings.Repeat("다음 행동 ", 80),
+		PlanContext: &models.WorkPlanExecutionContext{
+			Outcome: strings.Repeat("결과 ", 80), Guidance: strings.Repeat("지침 ", 80),
+		},
+		CompletionConditions: []models.AgentCondition{{ID: 3, Description: strings.Repeat("완료 조건 ", 80)}},
+		ChangedFacts:         []models.WorkContextFactChange{{FactID: 4, Change: "added", Content: strings.Repeat("사실 ", 80), Status: "active"}},
+		ContextWindow:        models.AgentContextWindow{NextQuery: models.AgentContextNextQuery{Detail: "brief"}},
+	}
+	finalizeWorkResumeBrief(brief, 1024)
+	payload, err := json.Marshal(brief)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(payload) > 1024 || brief.ContextWindow.InputBytes != len(payload) {
+		t.Fatalf("small context = payload:%d reported:%d", len(payload), brief.ContextWindow.InputBytes)
+	}
+	if len(brief.ChangedFacts) != 1 {
+		t.Fatalf("small context dropped its only changed fact: %s", payload)
 	}
 }
 

@@ -28,11 +28,12 @@ Continue active work first. Otherwise select one candidate and call `resume_work
 - the parent plan component, its outcome, and owned scopes
 - the current item and next action
 - pending completion conditions
-- a few relevant memories and linked resource summaries
+- short evidence references, relevant non-fact memories, and linked resource summaries
+- only facts added, updated, or removed since the previous digest
 - final results from completed prerequisites
 - unfinished blockers
 
-Keep the returned `context_digest` and send it as `known_context_digest` next time. An unchanged view returns a small receipt instead of the same context.
+Keep the returned `context_digest` and send it as `known_context_digest` next time. An unchanged view returns a small receipt instead of the same context. When `context_window.next_query` contains an offset or target digest, copy those fields into the next `resume_work` call until the response points at its current digest with offset zero. `input_bytes`, `input_limit_bytes`, and `truncated` make the model-input boundary explicit.
 
 ## Claim before acting
 
