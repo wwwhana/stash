@@ -8,6 +8,7 @@
     const routePaths = Object.freeze({
         'goal-map': '/ui/goal-map',
         plan: '/ui/plan',
+        monitor: '/ui/monitor',
         board: '/ui/issues',
         graph: '/ui/work-graph',
         worktrees: '/ui/git',
@@ -21,6 +22,7 @@
     const routeTitles = Object.freeze({
         'goal-map': '목표·지식 지도',
         plan: '작업 계획',
+        monitor: '작업 관제',
         board: '이슈 보드',
         graph: '작업 흐름',
         worktrees: 'Git 연결',
@@ -108,6 +110,11 @@
             setText(params, 'focus', value.focus);
         } else if (selected === 'plan') {
             setText(params, 'project', value.project);
+        } else if (selected === 'monitor') {
+            setText(params, 'project', value.project);
+            setText(params, 'status', value.status);
+            setText(params, 'agent', value.agent);
+            setText(params, 'focus', value.focus);
         } else if (selected === 'board') {
             setText(params, 'q', value.query);
             setText(params, 'type', value.issueType);
@@ -121,7 +128,7 @@
         } else if (selected === 'list_namespaces') {
             setOffset(params, value.offset);
         }
-        if (['goal-map', 'graph', 'board'].includes(selected)) {
+        if (['goal-map', 'monitor', 'graph', 'board'].includes(selected)) {
             const issueID = positiveInteger(value.issueID);
             if (issueID) params.set('issue', String(issueID));
         }

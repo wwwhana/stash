@@ -14,6 +14,7 @@
     <script defer src="/map-scope-view-model.js"></script>
     <script defer src="/work-graph-view-model.js"></script>
     <script defer src="/work-monitor-view-model.js"></script>
+    <script defer src="/project-monitor-view-model.js"></script>
     <script defer src="/goal-map-view-model.js"></script>
     <script defer src="/work-plan-view-model.js"></script>
     <script defer src="/issue-execution-view-model.js"></script>
@@ -528,6 +529,64 @@
         .stash-worktree-summary { display: flex; align-items: center; gap: 8px; margin-bottom: 13px; color: var(--stash-muted); font-size: 11px; }
         .stash-worktree-summary strong { color: var(--stash-ink); font-size: 18px; }
         .stash-worktree-card__path { margin-top: 10px; padding: 8px 9px; overflow-wrap: anywhere; border-radius: 7px; color: #475467; background: #f8fafc; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; line-height: 1.45; }
+        .stash-monitor { width: 100%; min-height: 100%; padding: 18px 20px 26px; color: var(--stash-ink); background: var(--stash-canvas); }
+        .stash-monitor-toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin-bottom: 12px; padding: 10px; border: 1px solid var(--stash-line); border-radius: 11px; background: #fff; box-shadow: var(--stash-shadow-sm); }
+        .stash-monitor-toolbar .stash-field { min-width: 170px; flex: 1 1 180px; max-width: 280px; }
+        .stash-monitor-toolbar select { width: 100%; min-height: 36px; padding: 7px 30px 7px 9px; border: 1px solid var(--stash-line); border-radius: 8px; color: var(--stash-ink); background: #fff; font-size: 11px; }
+        .stash-monitor-summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; margin-bottom: 12px; }
+        .stash-monitor-goal { min-width: 0; padding: 12px 14px; border: 1px solid #dfe3ff; border-radius: 11px; background: #fff; box-shadow: var(--stash-shadow-sm); }
+        .stash-monitor-goal span { display: block; color: var(--stash-indigo); font-size: 9px; font-weight: 850; }
+        .stash-monitor-goal strong { display: block; margin-top: 5px; overflow: hidden; color: #344054; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+        .stash-monitor-goal small { display: block; margin-top: 6px; color: var(--stash-muted); font-size: 10px; }
+        .stash-monitor-stats { display: grid; grid-template-columns: repeat(4, minmax(66px, 1fr)); gap: 7px; }
+        .stash-monitor-stat { min-width: 66px; padding: 10px; border: 1px solid var(--stash-line); border-radius: 10px; background: #fff; text-align: center; box-shadow: var(--stash-shadow-sm); }
+        .stash-monitor-stat strong { display: block; color: var(--stash-ink); font-size: 17px; line-height: 1; }
+        .stash-monitor-stat span { display: block; margin-top: 5px; color: var(--stash-subtle); font-size: 9px; }
+        .stash-monitor-stat.is-red strong { color: var(--stash-red); }
+        .stash-monitor-stat.is-green strong { color: var(--stash-green); }
+        .stash-monitor-state { display: grid; min-height: 260px; place-items: center; padding: 24px; border: 1px dashed #ccd3df; border-radius: 12px; color: var(--stash-muted); background: #fff; font-size: 12px; text-align: center; }
+        .stash-monitor-state.is-error { border-color: #f2b8b5; color: var(--stash-red); background: #fff8f7; }
+        .stash-monitor-selected { margin-bottom: 12px; padding: 12px; border: 1px solid #cdd3ff; border-radius: 11px; background: #fff; box-shadow: var(--stash-shadow-sm); }
+        .stash-monitor-selected__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+        .stash-monitor-selected__title { min-width: 0; }
+        .stash-monitor-selected__title span { color: var(--stash-indigo); font-size: 9px; font-weight: 850; }
+        .stash-monitor-selected__title strong { display: block; margin-top: 3px; overflow: hidden; color: #344054; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+        .stash-monitor-selected__actions { display: flex; flex: 0 0 auto; gap: 6px; }
+        .stash-monitor-selected__actions .stash-btn { min-height: 30px; padding: 5px 8px; font-size: 10px; }
+        .stash-monitor-detail { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; margin-top: 10px; }
+        .stash-monitor-detail > div { min-width: 0; padding: 8px 9px; border-radius: 8px; background: #f7f8fb; }
+        .stash-monitor-detail > div.is-wide { grid-column: span 2; }
+        .stash-monitor-detail span { display: block; color: var(--stash-subtle); font-size: 8px; font-weight: 800; }
+        .stash-monitor-detail strong { display: block; margin-top: 4px; overflow: hidden; color: #475467; font-size: 10px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
+        .stash-monitor-detail small { display: block; margin-top: 3px; overflow: hidden; color: #7b8497; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+        .stash-monitor-detail__path { display: flex; gap: 4px; margin-top: 4px; overflow: hidden; }
+        .stash-monitor-detail__path i { flex: 0 1 auto; min-width: 0; overflow: hidden; color: #475467; font-size: 9px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+        .stash-monitor-detail__path i + i::before { margin-right: 4px; color: #98a2b3; content: '›'; }
+        .stash-monitor-table-wrap { overflow: auto; border: 1px solid var(--stash-line); border-radius: 11px; background: #fff; box-shadow: var(--stash-shadow-sm); }
+        .stash-monitor-table { width: 100%; min-width: 820px; border-collapse: collapse; table-layout: fixed; }
+        .stash-monitor-table th { padding: 9px 10px; border-bottom: 1px solid var(--stash-line); color: #7b8497; background: #f8f9fb; font-size: 9px; font-weight: 850; text-align: left; }
+        .stash-monitor-table td { padding: 9px 10px; border-bottom: 1px solid #edf0f5; color: #475467; font-size: 10px; vertical-align: middle; }
+        .stash-monitor-table tr:last-child td { border-bottom: 0; }
+        .stash-monitor-table tr.is-selected td { background: #f5f6ff; }
+        .stash-monitor-table__work { width: 25%; }
+        .stash-monitor-table__agent { width: 13%; }
+        .stash-monitor-table__status { width: 11%; }
+        .stash-monitor-table__blocker { width: 12%; }
+        .stash-monitor-table__result { width: 18%; }
+        .stash-monitor-table__next { width: 21%; }
+        .stash-monitor-work-button { width: 100%; display: block; padding: 0; overflow: hidden; border: 0; color: #344054; background: transparent; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+        .stash-monitor-work-button:hover, .stash-monitor-work-button:focus-visible { color: var(--stash-indigo); text-decoration: underline; outline: none; }
+        .stash-monitor-work-button b { margin-right: 6px; color: var(--stash-indigo); font-size: 9px; }
+        .stash-monitor-agent strong, .stash-monitor-agent small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .stash-monitor-agent small { margin-top: 3px; color: var(--stash-subtle); font-size: 8px; }
+        .stash-monitor-status { display: inline-flex; min-height: 22px; align-items: center; padding: 3px 7px; border-radius: 999px; color: #475467; background: #f2f4f7; font-size: 9px; font-weight: 800; }
+        .stash-monitor-status.is-doing { color: #4338ca; background: #eef2ff; }
+        .stash-monitor-status.is-blocked { color: #b42318; background: #fff0f0; }
+        .stash-monitor-status.is-review { color: #7e22ce; background: #f6edff; }
+        .stash-monitor-status.is-done { color: #047857; background: #e8f7ef; }
+        .stash-monitor-blocker { display: block; overflow: hidden; color: #b42318; text-overflow: ellipsis; white-space: nowrap; }
+        .stash-monitor-cell-text { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .stash-monitor-empty-row { padding: 30px !important; color: var(--stash-muted) !important; text-align: center; }
         .stash-plan { width: 100%; min-height: 0; padding: 20px 24px 30px; color: var(--stash-ink); background: var(--stash-canvas); }
         .stash-plan-summary { display: flex; align-items: stretch; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
         .stash-plan-shared-goal { display: flex; align-items: center; gap: 7px; max-width: 620px; margin-top: 9px; padding: 7px 9px; border: 1px solid #dfe3ff; border-radius: 8px; color: #475467; background: #f8f8ff; font-size: 10px; }
@@ -664,6 +723,15 @@
             .stash-plan-form__actions { align-items: stretch; }
             .stash-plan-task { grid-template-columns: 1fr; }
             .stash-plan-task__actions { justify-content: flex-end; }
+            .stash-monitor { padding: 14px 10px 20px; }
+            .stash-monitor-toolbar { display: grid; grid-template-columns: 1fr; }
+            .stash-monitor-toolbar .stash-field { width: 100%; max-width: none; }
+            .stash-monitor-summary { grid-template-columns: 1fr; }
+            .stash-monitor-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .stash-monitor-selected__header { display: block; }
+            .stash-monitor-selected__actions { margin-top: 9px; }
+            .stash-monitor-detail { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .stash-monitor-detail > div.is-wide { grid-column: span 2; }
             .stash-goal-map { padding: 10px; }
             .stash-goal-map__header, .stash-goal-map__toolbar { display: block; }
             .stash-goal-map__legend, .stash-goal-map__summary { margin-top: 8px; }
@@ -770,6 +838,7 @@
                     <nav class="stash-nav flex flex-col gap-2">
                         <a :href="routeHref('goal-map')" @click.prevent="loadGoalMap()" :class="{'is-active': activeNav === 'goal-map'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">◎</span>목표·지식 지도</a>
                         <a :href="routeHref('plan')" @click.prevent="loadWorkPlan()" :class="{'is-active': activeNav === 'plan'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">◇</span>작업 계획</a>
+                        <a :href="routeHref('monitor')" @click.prevent="loadProjectMonitor()" :class="{'is-active': activeNav === 'monitor'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">◉</span>작업 관제</a>
                         <a :href="routeHref('board')" @click.prevent="loadWorkBoard()" :class="{'is-active': activeNav === 'board'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">▦</span>이슈 보드</a>
                         <a :href="routeHref('graph')" @click.prevent="loadWorkGraph()" :class="{'is-active': activeNav === 'graph'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">⌁</span>작업 흐름</a>
                         <a :href="routeHref('worktrees')" @click.prevent="loadWorktrees()" :class="{'is-active': activeNav === 'worktrees'}" class="stash-nav-item text-left px-3 py-2 rounded hover:bg-indigo-50 hover:text-indigo-600 transition-colors"><span class="stash-nav-icon" aria-hidden="true">⌘</span>Git 연결</a>
@@ -1112,6 +1181,72 @@
                             </div>
                         </div>
                         <section x-show="!loading && !goalMapError && goalMapVisible.unassigned_work.length" class="stash-goal-map__unassigned" aria-label="목표에 연결되지 않은 작업"><strong>목표 연결 필요</strong><div><template x-for="item in goalMapVisible.unassigned_work" :key="'unassigned-goal-work-' + item.id"><button type="button" @click="openIssue(item.id, $event.currentTarget)" x-text="(item.issue_key || '#' + item.id) + ' · ' + item.title"></button></template></div></section>
+                    </div>
+
+                    <div x-show="view === 'monitor'" x-cloak class="stash-monitor" aria-label="작업 관제">
+                        <div class="stash-monitor-toolbar" aria-label="작업 관제 필터">
+                            <label class="stash-field"><span>프로젝트</span><select x-model="projectMonitorProjectSlug" @change="changeProjectMonitorProject()" :disabled="mapNamespacesLoading || projectMonitorLoading" aria-label="작업 관제 프로젝트 선택"><option value="">프로젝트 선택</option><template x-for="project in projectMonitorProjects()" :key="'monitor-project-' + project.slug"><option :value="project.slug" x-text="project.label"></option></template></select></label>
+                            <label class="stash-field"><span>상태</span><select x-model="projectMonitorFilter.status" @change="projectMonitorFilterChanged()"><option value="">전체</option><option value="backlog">대기</option><option value="ready">준비</option><option value="doing">진행 중</option><option value="blocked">막힘</option><option value="review">검토</option><option value="done">완료</option></select></label>
+                            <label class="stash-field"><span>담당</span><select x-model="projectMonitorFilter.agent" @change="projectMonitorFilterChanged()"><option value="">전체</option><template x-for="agent in projectMonitorAgents()" :key="'monitor-agent-' + agent"><option :value="agent" x-text="agent"></option></template></select></label>
+                            <button type="button" class="stash-btn" @click="resetProjectMonitorFilters()" :disabled="!projectMonitorHasFilters()">초기화</button>
+                        </div>
+
+                        <div x-show="projectMonitorLoading" x-cloak class="stash-monitor-state" role="status">작업 현황을 불러오는 중</div>
+                        <div x-show="!projectMonitorLoading && projectMonitorError" x-cloak class="stash-monitor-state is-error" role="alert"><div><span x-text="projectMonitorError"></span><br><button type="button" class="stash-btn" @click="loadProjectMonitor(false)">다시 시도</button></div></div>
+                        <div x-show="!projectMonitorLoading && !projectMonitorError && !projectMonitorProjects().length" x-cloak class="stash-monitor-state">등록된 프로젝트가 없습니다.</div>
+                        <div x-show="!projectMonitorLoading && !projectMonitorError && projectMonitorProjects().length && !projectMonitorProjectSlug" x-cloak class="stash-monitor-state">프로젝트를 선택하세요.</div>
+
+                        <div x-show="!projectMonitorLoading && !projectMonitorError && projectMonitorProjectSlug" x-cloak>
+                            <div class="stash-monitor-summary">
+                                <div class="stash-monitor-goal"><span>공통 목표</span><strong x-text="projectMonitorRootGoal() ? projectMonitorRootGoal().content : '연결 안 됨'"></strong><small x-text="projectMonitorRootGoal() ? projectMonitorProgress(projectMonitorRootGoal().progress) : ''"></small></div>
+                                <div class="stash-monitor-stats" aria-label="작업 요약">
+                                    <div class="stash-monitor-stat"><strong x-text="projectMonitorCount('doing')"></strong><span>진행</span></div>
+                                    <div class="stash-monitor-stat is-red"><strong x-text="projectMonitorCount('blocked')"></strong><span>막힘</span></div>
+                                    <div class="stash-monitor-stat"><strong x-text="projectMonitorCount('review')"></strong><span>검토</span></div>
+                                    <div class="stash-monitor-stat is-green"><strong x-text="projectMonitorCount('done')"></strong><span>완료</span></div>
+                                </div>
+                            </div>
+
+                            <section x-show="projectMonitorSelectedItem()" x-cloak class="stash-monitor-selected" aria-label="선택한 작업 현황">
+                                <div class="stash-monitor-selected__header">
+                                    <div class="stash-monitor-selected__title"><span>선택한 작업</span><strong x-text="projectMonitorSelectedItem() ? (projectMonitorSelectedItem().issue_key || '#' + projectMonitorSelectedItem().id) + ' · ' + projectMonitorSelectedItem().title : ''"></strong></div>
+                                    <div class="stash-monitor-selected__actions">
+                                        <button type="button" class="stash-btn" @click="showProjectMonitorWorkFlow(projectMonitorSelectedItem())">흐름</button>
+                                        <button type="button" class="stash-btn" @click="openIssue(projectMonitorSelectedID, $event.currentTarget)">상세</button>
+                                        <button type="button" class="stash-btn" @click="clearProjectMonitorSelection()">닫기</button>
+                                    </div>
+                                </div>
+                                <template x-if="workMonitorLoading"><div class="stash-monitor-detail" role="status"><div class="is-wide"><span>작업 현황</span><strong>불러오는 중</strong></div></div></template>
+                                <template x-if="!workMonitorLoading && workMonitorError"><div class="stash-monitor-detail"><div class="is-wide"><span>오류</span><strong x-text="workMonitorError"></strong></div></div></template>
+                                <template x-if="!workMonitorLoading && !workMonitorError && workMonitorBrief"><div class="stash-monitor-detail">
+                                    <div class="is-wide"><span>공통 목표</span><strong x-text="monitorGoalText(selectedWorkMonitor().sharedGoal) || '연결 안 됨'"></strong></div>
+                                    <div class="is-wide"><span>목표 경로</span><div class="stash-monitor-detail__path"><template x-for="goal in selectedWorkMonitor().goalPath" :key="'project-monitor-goal-' + goal.id"><i x-text="monitorGoalText(goal)"></i></template><i x-show="!selectedWorkMonitor().goalPath.length">연결 안 됨</i></div></div>
+                                    <div><span>담당</span><strong x-text="selectedWorkMonitor().agent"></strong></div>
+                                    <div><span>상태</span><strong x-text="statusLabel(selectedWorkMonitor().status || (projectMonitorSelectedItem() && projectMonitorSelectedItem().status))"></strong></div>
+                                    <div><span>공유 입력</span><strong x-text="monitorInputLabel()"></strong></div>
+                                    <div><span>막힘</span><strong x-text="selectedWorkMonitor().blocker || '없음'"></strong></div>
+                                    <div class="is-wide"><span>최근 결과</span><strong x-text="selectedWorkMonitor().result || '없음'"></strong></div>
+                                    <div class="is-wide"><span>근거</span><strong x-text="selectedWorkMonitor().evidence || '없음'"></strong><small x-show="selectedWorkMonitor().evidenceReference" x-text="selectedWorkMonitor().evidenceReference"></small></div>
+                                </div></template>
+                            </section>
+
+                            <div class="stash-monitor-table-wrap">
+                                <table class="stash-monitor-table">
+                                    <thead><tr><th class="stash-monitor-table__work">작업</th><th class="stash-monitor-table__agent">담당</th><th class="stash-monitor-table__status">상태</th><th class="stash-monitor-table__blocker">막힘</th><th class="stash-monitor-table__result">최근 결과</th><th class="stash-monitor-table__next">다음 할 일</th></tr></thead>
+                                    <tbody>
+                                        <template x-for="item in projectMonitorRows()" :key="'project-monitor-work-' + item.id"><tr :class="{'is-selected': Number(projectMonitorSelectedID) === Number(item.id)}">
+                                            <td><button type="button" class="stash-monitor-work-button" @click="selectProjectMonitorWork(item)"><b x-text="item.issue_key || '#' + item.id"></b><span x-text="item.title"></span></button></td>
+                                            <td class="stash-monitor-agent"><strong x-text="projectMonitorAgent(item)"></strong><small x-text="projectMonitorAttemptLabel(item)"></small></td>
+                                            <td><span class="stash-monitor-status" :class="'is-' + item.status" x-text="statusLabel(item.status)"></span></td>
+                                            <td><span x-show="projectMonitorBlockers(item).length" class="stash-monitor-blocker" x-text="projectMonitorBlockers(item)[0] ? (projectMonitorBlockers(item)[0].issue_key || projectMonitorBlockers(item)[0].title) : ''"></span><span x-show="!projectMonitorBlockers(item).length">없음</span></td>
+                                            <td><span class="stash-monitor-cell-text" :title="item.latest_result || ''" x-text="item.latest_result || '없음'"></span></td>
+                                            <td><span class="stash-monitor-cell-text" :title="item.next_action || ''" x-text="item.next_action || '없음'"></span></td>
+                                        </tr></template>
+                                        <tr x-show="!projectMonitorRows().length"><td colspan="6" class="stash-monitor-empty-row">조건에 맞는 작업이 없습니다.</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
                     </div>
 
                     <div x-show="view === 'graph'" x-cloak class="stash-graph p-4 bg-slate-950 text-white" @pointermove.window="moveGraphNodeDrag($event)" @pointerup.window="finishGraphNodeDrag($event)" @pointercancel.window="finishGraphNodeDrag($event)" @keydown.escape.window="cancelGraphNodeDrag($event)">

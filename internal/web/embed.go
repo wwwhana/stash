@@ -17,6 +17,7 @@ var uiPagePaths = map[string]struct{}{
 	"/index.html":     {},
 	"/ui/goal-map":    {},
 	"/ui/plan":        {},
+	"/ui/monitor":     {},
 	"/ui/issues":      {},
 	"/ui/work-graph":  {},
 	"/ui/git":         {},

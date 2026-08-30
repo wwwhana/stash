@@ -19,7 +19,7 @@
 
             currentRouteName() {
                 if (routes.routePaths[this.activeNav]) return this.activeNav;
-                return ({ 'goal-map': 'goal-map', plan: 'plan', board: 'board', graph: 'graph', worktrees: 'worktrees', maintenance: 'maintenance', agent: 'agent' })[this.view] || 'goal-map';
+                return ({ 'goal-map': 'goal-map', plan: 'plan', monitor: 'monitor', board: 'board', graph: 'graph', worktrees: 'worktrees', maintenance: 'maintenance', agent: 'agent' })[this.view] || 'goal-map';
             },
 
             routeState(route = this.currentRouteName()) {
@@ -44,6 +44,13 @@
                         agent: this.graphFilter.agent,
                         relations: this.graphFilter.relations,
                         focus: this.graphFocusedKey
+                    });
+                } else if (route === 'monitor') {
+                    Object.assign(state, {
+                        project: this.projectMonitorProjectSlug,
+                        status: this.projectMonitorFilter.status,
+                        agent: this.projectMonitorFilter.agent,
+                        focus: this.projectMonitorSelectedID
                     });
                 } else if (route === 'board') {
                     Object.assign(state, {
@@ -76,6 +83,11 @@
             applyRouteState(route) {
                 if (route.route === 'goal-map' || route.route === 'graph') this.mapNamespaceSlug = route.namespace;
                 if (route.route === 'plan') this.planNamespaceSlug = route.project;
+                if (route.route === 'monitor') {
+                    this.projectMonitorProjectSlug = route.project;
+                    this.projectMonitorFilter = { status: route.status, agent: route.agent };
+                    this.projectMonitorSelectedID = Number(route.focus) || 0;
+                }
                 if (route.route === 'goal-map') {
                     this.goalMapFilters = {
                         query: route.query,
@@ -114,6 +126,7 @@
                 try {
                     if (route.route === 'goal-map') await this.loadGoalMap();
                     else if (route.route === 'plan') await this.loadWorkPlan();
+                    else if (route.route === 'monitor') await this.loadProjectMonitor();
                     else if (route.route === 'board') await this.loadWorkBoard(false);
                     else if (route.route === 'graph') await this.loadWorkGraph();
                     else if (route.route === 'worktrees') await this.loadWorktrees(false);
@@ -123,7 +136,7 @@
                         const args = route.route === 'list_namespaces' ? {} : { namespaces: route.namespace || '/' };
                         await this.callTool(route.route, args, route.offset);
                     }
-                    if (['goal-map', 'board', 'graph'].includes(route.route)) {
+                    if (['goal-map', 'monitor', 'board', 'graph'].includes(route.route)) {
                         if (route.issueID) await this.openIssue(route.issueID);
                         else if (this.selectedIssue) this.closeIssue();
                     }
