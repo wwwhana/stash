@@ -60,9 +60,12 @@ test('root and unknown paths safely select the goal map', () => {
 
 test('the console restores routes and exposes real navigation links', () => {
     const html = fs.readFileSync(require.resolve('./ui/index.html'), 'utf8');
-    const viewModel = html.match(/function createRouteViewModel\(\) \{[\s\S]*?\n        function createMapScopeViewModel/)?.[0] || '';
+    const viewModel = fs.readFileSync(require.resolve('./ui/route-view-model.js'), 'utf8');
+    const app = fs.readFileSync(require.resolve('./ui/console-app.js'), 'utf8');
 
     assert.match(html, /<script defer src="\/route-state\.js"><\/script>/);
+    assert.match(html, /<script defer src="\/route-view-model\.js"><\/script>/);
+    assert.match(html, /<script defer src="\/console-app\.js"><\/script>/);
     assert.match(html, /<a :href="routeHref\('plan'\)" @click\.prevent="loadWorkPlan\(\)"/);
     assert.match(html, /<a :href="routeHref\('graph'\)" @click\.prevent="loadWorkGraph\(\)"/);
     assert.match(viewModel, /window\.history\[replace \? 'replaceState' : 'pushState'\]/);
@@ -70,6 +73,6 @@ test('the console restores routes and exposes real navigation links', () => {
     assert.match(viewModel, /relations: this\.graphFilter\.relations/);
     assert.match(viewModel, /focus: this\.graphFocusedKey/);
     assert.match(viewModel, /this\.focusGraphNode\(route\.focus\)/);
-    assert.match(html, /window\.addEventListener\('popstate'/);
-    assert.match(html, /await this\.restoreRoute\(\)/);
+    assert.match(app, /window\.addEventListener\('popstate'/);
+    assert.match(app, /await this\.restoreRoute\(\)/);
 });

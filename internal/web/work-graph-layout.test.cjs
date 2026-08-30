@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const { buildWorkGraphLayout } = require('./ui/work-graph-layout.js');
+const { createWorkGraphViewModel } = require('./ui/work-graph-view-model.js');
 
 function node(id, status = 'ready', position = 0) {
     return { id, issue_key: id, title: `Task ${id}`, status, position };
@@ -16,12 +17,8 @@ function placed(layout, id) {
 }
 
 function workGraphViewModel() {
-    const html = fs.readFileSync(require.resolve('./ui/index.html'), 'utf8');
-    const source = html.match(/function createWorkGraphViewModel\(\) \{[\s\S]*?\n        \}(?=\n\n        function createGoalMapViewModel)/)?.[0];
-    assert.ok(source, 'work graph view-model source');
-    const create = new Function('window', `${source}; return createWorkGraphViewModel;`)({ StashWorkGraph: require('./ui/work-graph-layout.js') });
     return {
-        ...create(), loading: false, view: 'graph',
+        ...createWorkGraphViewModel(), loading: false, view: 'graph',
         syncRoute() {}, statusLabel(value) { return value; }, $nextTick() {}
     };
 }
@@ -255,7 +252,7 @@ test('the graph UI renders filter selection and direct parent-child navigation',
 
 test('drag handles stay in the graph view-model and never persist offsets', () => {
     const html = fs.readFileSync(require.resolve('./ui/index.html'), 'utf8');
-    const graphViewModel = html.match(/function createWorkGraphViewModel\(\) \{[\s\S]*?\n        function createGoalMapViewModel/)?.[0] || '';
+    const graphViewModel = fs.readFileSync(require.resolve('./ui/work-graph-view-model.js'), 'utf8');
 
     assert.match(graphViewModel, /graphNodeOffsets: \{\}/);
     assert.match(graphViewModel, /startGraphNodeDrag\(/);
