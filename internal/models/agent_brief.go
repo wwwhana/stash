@@ -47,10 +47,40 @@ type AgentMemory struct {
 	Status     string `json:"status"`
 }
 
+// AgentEvidenceReference keeps the observable result and its stable pointer,
+// while omitting arbitrary evidence payloads, principals, and lease metadata.
+type AgentEvidenceReference struct {
+	ID            int64     `json:"id"`
+	EvidenceType  string    `json:"evidence_type"`
+	Summary       string    `json:"summary"`
+	Reference     string    `json:"reference,omitempty"`
+	ContentDigest string    `json:"content_digest"`
+	ConditionIDs  []int64   `json:"condition_ids"`
+	SubmittedAt   time.Time `json:"submitted_at"`
+}
+
+type AgentContextNextQuery struct {
+	KnownContextDigest    string `json:"known_context_digest"`
+	ExpectedContextDigest string `json:"expected_context_digest,omitempty"`
+	FactOffset            int    `json:"fact_offset"`
+	Detail                string `json:"detail"`
+}
+
+// AgentContextWindow makes the model-input envelope and continuation basis
+// explicit in every brief or unchanged receipt.
+type AgentContextWindow struct {
+	InputLimitBytes int                   `json:"input_limit_bytes"`
+	InputBytes      int                   `json:"input_bytes"`
+	Truncated       bool                  `json:"truncated"`
+	CursorReset     bool                  `json:"cursor_reset,omitempty"`
+	NextQuery       AgentContextNextQuery `json:"next_query"`
+}
+
 // WorkResumeBrief is the default, quota-conscious work context. Lists with
 // full evidence, events, and worktree metadata are opt-in through detail=full.
 type WorkResumeBrief struct {
 	ContextDigest         string                    `json:"context_digest"`
+	SharedGoal            *GoalBrief                `json:"shared_goal,omitempty"`
 	WorkItem              AgentWorkItem             `json:"work_item"`
 	GoalContext           *WorkGoalContext          `json:"goal_context,omitempty"`
 	PlanContext           *WorkPlanExecutionContext `json:"plan_context,omitempty"`
@@ -58,16 +88,21 @@ type WorkResumeBrief struct {
 	LatestAttempt         *AgentAttempt             `json:"latest_attempt,omitempty"`
 	LatestCheckpoint      *AgentCheckpoint          `json:"latest_checkpoint,omitempty"`
 	CompletionConditions  []AgentCondition          `json:"completion_conditions"`
+	EvidenceReferences    []AgentEvidenceReference  `json:"evidence_references"`
 	RelevantMemory        []AgentMemory             `json:"relevant_memory"`
+	ChangedFacts          []WorkContextFactChange   `json:"changed_facts"`
 	Resources             []WorkResourceRef         `json:"resources"`
 	DependencyResults     []WorkDependencyResult    `json:"dependency_results"`
 	Blockers              []AgentWorkItem           `json:"blockers"`
 	Totals                WorkResumeTotals          `json:"totals"`
 	MoreConditions        bool                      `json:"more_conditions,omitempty"`
+	MoreEvidence          bool                      `json:"more_evidence,omitempty"`
 	MoreMemory            bool                      `json:"more_memory,omitempty"`
+	MoreChangedFacts      bool                      `json:"more_changed_facts,omitempty"`
 	MoreResources         bool                      `json:"more_resources,omitempty"`
 	MoreDependencyResults bool                      `json:"more_dependency_results,omitempty"`
 	MoreBlockers          bool                      `json:"more_blockers,omitempty"`
+	ContextWindow         AgentContextWindow        `json:"context_window"`
 }
 
 type AgentWorkspaceCounts struct {
@@ -96,9 +131,10 @@ type WorkspaceResumeBrief struct {
 
 // AgentContextReceipt is returned when the caller already has the same digest.
 type AgentContextReceipt struct {
-	Unchanged     bool   `json:"unchanged"`
-	ContextDigest string `json:"context_digest"`
-	Scope         string `json:"scope"`
-	ID            int64  `json:"id,omitempty"`
-	NextAction    string `json:"next_action,omitempty"`
+	Unchanged     bool                `json:"unchanged"`
+	ContextDigest string              `json:"context_digest"`
+	Scope         string              `json:"scope"`
+	ID            int64               `json:"id,omitempty"`
+	NextAction    string              `json:"next_action,omitempty"`
+	ContextWindow *AgentContextWindow `json:"context_window,omitempty"`
 }

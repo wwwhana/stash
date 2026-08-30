@@ -741,10 +741,12 @@ func registerWorkExecutionTools(mcpServer *server.MCPServer, bc *bootstrap.Conte
 	}))
 
 	mcpServer.AddTool(mcp.NewTool("resume_work",
-		mcp.WithDescription("Call before acting on tracked work and after a handoff. The default brief returns the goal path, parent plan component and owned scopes, current action, pending conditions, small resource references, completed dependency results, relevant memory, and blockers."),
+		mcp.WithDescription("Call before acting on tracked work and after a handoff. The default bounded context returns the shared goal, current work, prerequisites, completion conditions, latest checkpoint, evidence references, and only facts changed since the previous digest; Git is optional."),
 		mcp.WithNumber("work_item_id", mcp.Description("Work item to resume"), mcp.Required()),
-		mcp.WithString("detail", mcp.Description("brief minimizes model input; full also includes evidence, events, and optional Git worktree metadata"), mcp.DefaultString("brief"), mcp.Enum("brief", "full")),
-		mcp.WithString("known_context_digest", mcp.Description("Digest from the previous brief response; matching state returns only an unchanged receipt"), mcp.Pattern(`sha256:[0-9a-f]{64}`)),
+		mcp.WithString("detail", mcp.Description("brief minimizes model input; full also includes evidence payloads, events, and optional Git worktree metadata"), mcp.DefaultString("brief"), mcp.Enum("brief", "full")),
+		mcp.WithString("known_context_digest", mcp.Description("Digest from the previous brief; matching state returns a small receipt and changed state returns only fact changes since that cursor"), mcp.Pattern(`sha256:[0-9a-f]{64}`)),
+		mcp.WithString("expected_context_digest", mcp.Description("Target digest from next_query when continuing a truncated changed_facts page"), mcp.Pattern(`sha256:[0-9a-f]{64}`)),
+		mcp.WithNumber("fact_offset", mcp.Description("Continuation offset from next_query; use zero for a fresh context read"), mcp.DefaultNumber(0), mcp.Min(0)),
 		mcp.WithNumber("recent_event_limit", mcp.Description("Maximum recent events when detail is full"), mcp.DefaultNumber(8), mcp.Min(1), mcp.Max(100)),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -767,10 +769,41 @@ func registerWorkExecutionTools(mcpServer *server.MCPServer, bc *bootstrap.Conte
 		if err != nil {
 			return nil, err
 		}
+		principalID, err := workExecutionPrincipal(ctx)
+		if err != nil {
+			return nil, err
+		}
+		knownDigest := request.GetString("known_context_digest", "")
+		factDiff, err := bc.Brain.DiffWorkContextFacts(ctx, workItemID, principalID, knownDigest)
+		if err != nil {
+			return nil, err
+		}
+		brief.ContextDigest, err = workContextDigest(bundle, factDiff.CurrentStates)
+		if err != nil {
+			return nil, err
+		}
+		configuredMaxBytes := 0
+		if bc != nil && bc.Config != nil {
+			configuredMaxBytes = bc.Config.MCPMaxResponseBytes
+		}
+		inputLimit := workContextInputLimit(configuredMaxBytes)
 		if receipt := matchingAgentContextReceipt(
-			request.GetString("known_context_digest", ""), "work", workItemID, brief.NextAction, brief.ContextDigest,
+			knownDigest, "work", workItemID, brief.NextAction, brief.ContextDigest,
 		); receipt != nil {
+			finalizeAgentContextReceipt(receipt, inputLimit)
 			return jsonToolResult(bc, receipt)
+		}
+		complete, err := applyWorkContextFactDiff(
+			brief, factDiff, knownDigest, request.GetString("expected_context_digest", ""),
+			request.GetInt("fact_offset", 0), inputLimit,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if complete {
+			if err := bc.Brain.SaveWorkContextCursor(ctx, workItemID, principalID, brief.ContextDigest, factDiff.CurrentStates); err != nil {
+				return nil, err
+			}
 		}
 		return jsonToolResult(bc, brief)
 	}))

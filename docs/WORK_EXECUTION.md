@@ -35,12 +35,18 @@ Stash는 소유자가 보는 공통 목표 지도와 에이전트가 이어받�
 - 현재 작업과 다음 행동
 - 공통 목표에서 현재 목표까지의 경로
 - 아직 끝나지 않은 완료 조건
-- 관련 기억 최대 6개
+- 근거의 짧은 참조 최대 6개
+- 사실이 아닌 관련 기억 최대 6개
+- 이전에 읽은 뒤 추가·수정·삭제된 사실 최대 8개
 - 연결 자료 요약 최대 6개
 - 끝난 선행 작업의 최종 결과 최대 6개
 - 현재 작업을 막는 항목 최대 8개
 
-응답의 `context_digest`를 다음 호출의 `known_context_digest`에 넣는다. 내용이 그대로면 Stash는 같은 자료 대신 `unchanged: true`가 든 작은 응답을 보낸다. `detail: "full"`은 현재 행동에 꼭 필요한 특정 기록이 짧은 응답에 없을 때만 쓴다.
+응답의 `context_digest`를 다음 호출의 `known_context_digest`에 넣는다. 내용이 그대로면 Stash는 같은 자료 대신 `unchanged: true`가 든 작은 응답을 보낸다. 사실이 바뀌면 `changed_facts`에 달라진 사실만 들어간다.
+
+`context_window.next_query`에 값이 있으면 그 안의 변경 기준과 `fact_offset`을 다음 `resume_work` 호출에 그대로 넣는다. 응답이 현재 `context_digest`와 오프셋 0을 가리킬 때까지 이어서 읽는다. 읽는 사이 내용이 다시 바뀌면 `cursor_reset: true`와 새 시작점이 돌아오므로 그 값으로 처음부터 읽는다.
+
+`context_window.input_bytes`는 이번 짧은 응답의 크기이고 `input_limit_bytes`는 한도다. `truncated: true`면 `next_query`로 이어 읽거나, 현재 행동에 꼭 필요한 기록이 빠졌을 때만 `detail: "full"`을 쓴다. 여러 페이지를 한 번에 합쳐 에이전트 입력으로 보내지 않는다.
 
 `get_goal_map`은 소유자가 전체 진행을 살펴보는 화면용이다. 실작업 에이전트는 평소에 전체 지도를 읽지 않는다. 원문 대화를 통째로 기억에 넣지 않고, 오래 남길 제약·결정·실패·결과만 요약한다.
 
