@@ -98,9 +98,11 @@
             const hidden = kinds.filter(kind => value.kinds && value.kinds[kind] === false);
             if (hidden.length) params.set('hide', hidden.join(','));
         } else if (selected === 'graph') {
+            setText(params, 'project', value.project);
             setText(params, 'namespace', value.namespace);
             setText(params, 'q', value.query);
             setText(params, 'status', value.status);
+            setText(params, 'agent', value.agent);
             const hidden = relations.filter(relation => value.relations && value.relations[relation] === false);
             if (hidden.length) params.set('hide_relation', hidden.join(','));
             setText(params, 'focus', value.focus);

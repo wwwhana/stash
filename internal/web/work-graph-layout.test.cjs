@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const { buildWorkGraphLayout } = require('./ui/work-graph-layout.js');
+const { createWorkGraphViewModel } = require('./ui/work-graph-view-model.js');
 
 function node(id, status = 'ready', position = 0) {
     return { id, issue_key: id, title: `Task ${id}`, status, position };
@@ -16,12 +17,8 @@ function placed(layout, id) {
 }
 
 function workGraphViewModel() {
-    const html = fs.readFileSync(require.resolve('./ui/index.html'), 'utf8');
-    const source = html.match(/function createWorkGraphViewModel\(\) \{[\s\S]*?\n        \}(?=\n\n        function createGoalMapViewModel)/)?.[0];
-    assert.ok(source, 'work graph view-model source');
-    const create = new Function('window', `${source}; return createWorkGraphViewModel;`)({ StashWorkGraph: require('./ui/work-graph-layout.js') });
     return {
-        ...create(), loading: false, view: 'graph',
+        ...createWorkGraphViewModel(), loading: false, view: 'graph',
         syncRoute() {}, statusLabel(value) { return value; }, $nextTick() {}
     };
 }
@@ -239,6 +236,8 @@ test('the graph UI renders filter selection and direct parent-child navigation',
     assert.match(graphArea, /graphNodeMeta\(node\)/);
     assert.match(graphArea, /graphFilter\.query/);
     assert.match(graphArea, /graphFilter\.status/);
+    assert.match(graphArea, /graphFilter\.agent/);
+    assert.match(graphArea, /changeWorkGraphProject\(\)/);
     assert.match(graphArea, /class="stash-filter-trigger"/);
     assert.match(graphArea, /toggleGraphRelation\('part_of'\)/);
     assert.match(graphArea, /class="stash-filter-chips"/);
@@ -249,13 +248,15 @@ test('the graph UI renders filter selection and direct parent-child navigation',
     assert.match(graphArea, /class="stash-graph-node__actions"/);
     assert.match(graphArea, /graphNodeRoleLabel\(node\)/);
     assert.match(graphArea, /stash-graph-role-badge/);
+    assert.match(graphArea, /class="stash-work-monitor"/);
+    assert.match(graphArea, />공유 입력</);
     assert.doesNotMatch(graphArea, /workGraphLayout\.stages|stash-graph-stage/);
     assert.doesNotMatch(graphArea, /childLayout|stash-graph-child|toggleGraphParent/);
 });
 
 test('drag handles stay in the graph view-model and never persist offsets', () => {
     const html = fs.readFileSync(require.resolve('./ui/index.html'), 'utf8');
-    const graphViewModel = html.match(/function createWorkGraphViewModel\(\) \{[\s\S]*?\n        function createGoalMapViewModel/)?.[0] || '';
+    const graphViewModel = fs.readFileSync(require.resolve('./ui/work-graph-view-model.js'), 'utf8');
 
     assert.match(graphViewModel, /graphNodeOffsets: \{\}/);
     assert.match(graphViewModel, /startGraphNodeDrag\(/);

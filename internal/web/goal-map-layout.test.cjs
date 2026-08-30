@@ -114,7 +114,8 @@ test('empty maps have a stable empty layout', () => {
 
 test('goal map UI keeps resource and monitoring state in its own view-model', () => {
     const html = fs.readFileSync(require.resolve('./ui/index.html'), 'utf8');
-    const viewModel = html.match(/function createGoalMapViewModel\(\) \{[\s\S]*?\n        function createPlanViewModel/)?.[0] || '';
+    const viewModel = fs.readFileSync(require.resolve('./ui/goal-map-view-model.js'), 'utf8');
+    const executionViewModel = fs.readFileSync(require.resolve('./ui/issue-execution-view-model.js'), 'utf8');
 
     assert.match(viewModel, /resources: \[\]/);
     assert.match(viewModel, /goalMapAttentionItems\(\)/);
@@ -133,13 +134,13 @@ test('goal map UI keeps resource and monitoring state in its own view-model', ()
     assert.match(html, /x-for="ring in goalMapLayout\.rings"/);
     assert.doesNotMatch(html, /goalMapLayout\.columns|stash-goal-map__column/);
     assert.match(html, /@submit\.prevent="claimWork"/);
-    assert.match(html, /runExecutionMutation\('claim_work'/);
+    assert.match(executionViewModel, /runExecutionMutation\('claim_work'/);
     assert.match(html, /@media \(max-width: 680px\)[\s\S]*?\.stash-goal-map__summary \{ flex-wrap: wrap; \}/);
 });
 
 test('the work plan keeps project scope separate from map and memory scope', () => {
     const html = fs.readFileSync(require.resolve('./ui/index.html'), 'utf8');
-    const viewModel = html.match(/function createPlanViewModel\(\) \{[\s\S]*?\n        function createIssueExecutionViewModel/)?.[0] || '';
+    const viewModel = fs.readFileSync(require.resolve('./ui/work-plan-view-model.js'), 'utf8');
 
     assert.match(html, /x-model="planNamespaceSlug" @change="loadWorkPlan\(false\)"/);
     assert.match(html, /x-for="namespace in planProjects\(\)"/);
@@ -161,7 +162,7 @@ test('the work plan keeps project scope separate from map and memory scope', () 
 
 test('namespace selection is shared by relation views and memory lists', () => {
     const html = fs.readFileSync(require.resolve('./ui/index.html'), 'utf8');
-    const scopeViewModel = html.match(/function createMapScopeViewModel\(\) \{[\s\S]*?\n        function createWorkGraphViewModel/)?.[0] || '';
+    const scopeViewModel = fs.readFileSync(require.resolve('./ui/map-scope-view-model.js'), 'utf8');
 
     assert.match(scopeViewModel, /mapNamespaces: \[\]/);
     assert.match(scopeViewModel, /mapNamespaceSlug: ''/);

@@ -26,10 +26,27 @@ func TestUIPageRoutesServeTheWorkspace(t *testing.T) {
 func TestUIAssetsAndUnknownPathsKeepFileServerBehavior(t *testing.T) {
 	handler := GetUIHandler()
 
-	asset := httptest.NewRecorder()
-	handler.ServeHTTP(asset, httptest.NewRequest(http.MethodGet, "/route-state.js", nil))
-	if asset.Code != http.StatusOK || !strings.Contains(asset.Body.String(), "StashRouteState") {
-		t.Fatalf("GET /route-state.js status = %d body = %q", asset.Code, asset.Body.String())
+	assets := map[string]string{
+		"/route-state.js":                "StashRouteState",
+		"/state-store.js":                "StashStateStore",
+		"/api-client.js":                 "StashApiClient",
+		"/route-view-model.js":           "StashRouteViewModel",
+		"/map-scope-view-model.js":       "StashMapScopeViewModel",
+		"/work-graph-view-model.js":      "StashWorkGraphViewModel",
+		"/work-monitor-view-model.js":    "StashWorkMonitorViewModel",
+		"/goal-map-view-model.js":        "StashGoalMapViewModel",
+		"/work-plan-view-model.js":       "StashWorkPlanViewModel",
+		"/issue-execution-view-model.js": "StashIssueExecutionViewModel",
+		"/console-app.js":                "StashConsoleApp",
+	}
+	for path, marker := range assets {
+		t.Run(path, func(t *testing.T) {
+			asset := httptest.NewRecorder()
+			handler.ServeHTTP(asset, httptest.NewRequest(http.MethodGet, path, nil))
+			if asset.Code != http.StatusOK || !strings.Contains(asset.Body.String(), marker) {
+				t.Fatalf("GET %s status = %d body = %q", path, asset.Code, asset.Body.String())
+			}
+		})
 	}
 
 	missing := httptest.NewRecorder()
