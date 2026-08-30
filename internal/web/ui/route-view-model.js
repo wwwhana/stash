@@ -38,8 +38,10 @@
                     });
                 } else if (route === 'graph') {
                     Object.assign(state, {
+                        project: this.graphProjectSlug,
                         query: this.graphFilter.query,
                         status: this.graphFilter.status,
+                        agent: this.graphFilter.agent,
                         relations: this.graphFilter.relations,
                         focus: this.graphFocusedKey
                     });
@@ -84,9 +86,11 @@
                     };
                 }
                 if (route.route === 'graph') {
+                    this.graphProjectSlug = route.project;
                     this.graphFilter = {
                         query: route.query,
                         status: route.status,
+                        agent: route.agent,
                         relations: { ...defaultRelations(), ...route.relations }
                     };
                     this.graphFocusedKey = route.focus;

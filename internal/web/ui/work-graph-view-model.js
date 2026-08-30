@@ -17,7 +17,7 @@
         return {
             graph: { nodes: [], edges: [], worktrees: [] },
             workGraphLayout: layout.emptyLayout(),
-            graphFilter: { query: '', status: '', relations: defaultRelations() },
+            graphFilter: { query: '', status: '', agent: '', relations: defaultRelations() },
             graphFilterOpen: false,
             graphFocusedKey: '',
             graphNodeOffsets: {},
@@ -41,6 +41,7 @@
                 );
                 if (this.graph.nodes.length && this.graphFocusedKey && !validIDs.has(String(this.graphFocusedKey))) {
                     this.graphFocusedKey = '';
+                    if (typeof this.clearWorkMonitor === 'function') this.clearWorkMonitor();
                 }
                 this.refreshWorkGraphLayout();
             },
@@ -64,12 +65,14 @@
             refreshWorkGraphLayout() {
                 const query = String(this.graphFilter.query || '').trim().toLocaleLowerCase('ko');
                 const status = String(this.graphFilter.status || '').trim();
-                const hasNodeFilters = Boolean(query || status);
+                const agent = String(this.graphFilter.agent || '').trim();
+                const hasNodeFilters = Boolean(query || status || agent);
                 const relations = { ...defaultRelations(), ...(this.graphFilter.relations || {}) };
                 const relationIsVisible = edge => relations[relationGroup(String(edge && edge.edge_type || 'relates_to'))] !== false;
                 const byID = new Map(this.graph.nodes.map(item => [String(item.id), item]));
                 const matchedIDs = new Set(this.graph.nodes.filter(item => {
                     if (status && item.status !== status) return false;
+                    if (agent && String(item.agent_id || item.owner || '').trim() !== agent) return false;
                     if (!query) return true;
                     const values = [
                         item.issue_key, item.title, item.description, item.status, item.owner,
@@ -262,13 +265,14 @@
                 const relations = { ...defaultRelations(), ...(this.graphFilter.relations || {}) };
                 return Boolean(
                     String(this.graphFilter.query || '').trim() || String(this.graphFilter.status || '').trim() ||
+                    String(this.graphFilter.agent || '').trim() ||
                     Object.values(relations).some(value => value === false)
                 );
             },
 
             resetGraphFilters() {
                 if (!this.graphHasFilters()) return;
-                this.graphFilter = { query: '', status: '', relations: defaultRelations() };
+                this.graphFilter = { query: '', status: '', agent: '', relations: defaultRelations() };
                 this.refreshWorkGraphLayout();
             },
 
@@ -286,6 +290,7 @@
                 const relations = { ...defaultRelations(), ...(this.graphFilter.relations || {}) };
                 return Number(Boolean(String(this.graphFilter.query || '').trim())) +
                     Number(Boolean(String(this.graphFilter.status || '').trim())) +
+                    Number(Boolean(String(this.graphFilter.agent || '').trim())) +
                     Object.values(relations).filter(value => value === false).length;
             },
 
@@ -293,8 +298,10 @@
                 const chips = [];
                 const query = String(this.graphFilter.query || '').trim();
                 const status = String(this.graphFilter.status || '').trim();
+                const agent = String(this.graphFilter.agent || '').trim();
                 if (query) chips.push({ key: 'query', label: `검색: ${query}` });
                 if (status) chips.push({ key: 'status', label: `상태: ${this.statusLabel(status)}` });
+                if (agent) chips.push({ key: 'agent', label: `담당: ${agent}` });
                 const labels = { part_of: '상하 관계', blocks: '선후 관계', relates_to: '관련 관계' };
                 const relations = { ...defaultRelations(), ...(this.graphFilter.relations || {}) };
                 Object.keys(labels).filter(relation => relations[relation] === false).forEach(relation => {
@@ -306,6 +313,7 @@
             clearGraphFilter(key) {
                 if (key === 'query') this.graphFilter.query = '';
                 else if (key === 'status') this.graphFilter.status = '';
+                else if (key === 'agent') this.graphFilter.agent = '';
                 else if (String(key || '').startsWith('relation:')) {
                     const relation = String(key).slice('relation:'.length);
                     if (Object.prototype.hasOwnProperty.call(defaultRelations(), relation)) {
@@ -350,6 +358,18 @@
                 return this.graphChildrenFor(this.graphFocusedItem());
             },
 
+            graphFocusedPath() {
+                const path = [];
+                const visited = new Set();
+                let item = this.graphFocusedItem();
+                while (item && !visited.has(String(item.id))) {
+                    visited.add(String(item.id));
+                    path.unshift(item);
+                    item = this.graphParentFor(item);
+                }
+                return path;
+            },
+
             focusGraphNode(key, scroll = true) {
                 const normalized = String(key === undefined || key === null ? '' : key);
                 if (!normalized || !this.graph.nodes.some(item => String(item.id) === normalized)) return;
@@ -357,6 +377,7 @@
                 this.graphFocusedKey = normalized;
                 if (changed) this.syncRoute();
                 this.refreshWorkGraphLayout();
+                if (typeof this.loadWorkMonitor === 'function') this.loadWorkMonitor(Number(normalized));
                 if (scroll) this.scrollGraphNodeIntoView(normalized);
                 this.graphMoveAnnouncement = `${this.graphWorkLabel(this.graphFocusedItem())} 선택`;
             },
@@ -373,6 +394,7 @@
             clearGraphFocus() {
                 if (!this.graphFocusedKey) return;
                 this.graphFocusedKey = '';
+                if (typeof this.clearWorkMonitor === 'function') this.clearWorkMonitor();
                 this.syncRoute();
                 this.refreshWorkGraphLayout();
             },
@@ -393,6 +415,8 @@
 
             async changeWorkGraphNamespace() {
                 this.graphFocusedKey = '';
+                if (typeof this.clearWorkMonitor === 'function') this.clearWorkMonitor();
+                if (typeof this.syncGraphProjectFromNamespace === 'function') this.syncGraphProjectFromNamespace();
                 await this.loadWorkGraph(false);
             },
 
@@ -401,9 +425,10 @@
             },
 
             graphScopeLabel() {
-                if (!this.mapNamespaceSlug) return '전체 네임스페이스의 작업 순서와 포함 관계입니다.';
-                const namespace = this.mapNamespaces.find(item => item.slug === this.mapNamespaceSlug);
-                return (namespace ? namespace.label : this.mapNamespaceSlug) + ' 범위의 작업 순서와 포함 관계입니다.';
+                const scope = this.mapNamespaceSlug || this.graphProjectSlug;
+                if (!scope) return '전체 네임스페이스의 작업 순서와 포함 관계입니다.';
+                const namespace = this.mapNamespaces.find(item => item.slug === scope);
+                return (namespace ? namespace.label : scope) + ' 범위의 작업 순서와 포함 관계입니다.';
             },
 
             graphAriaLabel() {
@@ -432,6 +457,7 @@
                     'is-cycle': Boolean(node && node.cycle),
                     'is-moved': Boolean(node && node.offset && (node.offset.x || node.offset.y)),
                     'is-context': Boolean(node && node.context),
+                    'is-path': Boolean(node && this.graphFocusedPath().some(item => String(item.id) === String(node.key))),
                     'is-focused': Boolean(node && String(node.key) === String(this.graphFocusedKey))
                 };
             },
@@ -480,6 +506,7 @@
                 this.graphError = '';
                 this.loading = true;
                 await this.loadMapNamespaces(refreshNamespaces);
+                if (typeof this.syncGraphProjectFromNamespace === 'function') this.syncGraphProjectFromNamespace();
                 await this.loadWorkView('graph');
             }
         };

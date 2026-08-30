@@ -13,6 +13,7 @@
     <script defer src="/route-view-model.js"></script>
     <script defer src="/map-scope-view-model.js"></script>
     <script defer src="/work-graph-view-model.js"></script>
+    <script defer src="/work-monitor-view-model.js"></script>
     <script defer src="/goal-map-view-model.js"></script>
     <script defer src="/work-plan-view-model.js"></script>
     <script defer src="/issue-execution-view-model.js"></script>
@@ -400,6 +401,7 @@
         .stash-graph-edge-layer path { fill: none; vector-effect: non-scaling-stroke; }
         .stash-graph-node { position: absolute; z-index: 2; display: flex; flex-direction: column; padding: 0; overflow: hidden; border: 1px solid #475569; border-radius: 11px; color: #f8fafc; background: #18233a; box-shadow: 0 8px 18px rgba(2,6,23,.2); text-align: left; transition: border-color .15s ease, box-shadow .15s ease; }
         .stash-graph-node:hover { border-color: #818cf8; box-shadow: 0 10px 22px rgba(2,6,23,.28); }
+        .stash-graph-node.is-path { border-color: #6478a9; box-shadow: 0 0 0 2px rgba(129,140,248,.14), 0 8px 18px rgba(2,6,23,.2); }
         .stash-graph-node.is-focused { z-index: 3; border-color: #c7d2fe; box-shadow: 0 0 0 3px rgba(129,140,248,.3), 0 12px 26px rgba(2,6,23,.34); }
         .stash-graph-node.is-cycle { border-color: #fb7185; box-shadow: 0 0 0 1px rgba(251,113,133,.2), 0 8px 18px rgba(2,6,23,.2); }
         .stash-graph-node.is-moved { border-color: #a5b4fc; }
@@ -428,6 +430,19 @@
         .stash-graph-node__actions button { min-width: 0; flex: 1 1 auto; padding: 4px 6px; overflow: hidden; border: 0; border-right: 1px solid rgba(148,163,184,.16); color: #a5b4fc; background: rgba(15,23,42,.45); font-size: 8px; font-weight: 850; text-overflow: ellipsis; white-space: nowrap; }
         .stash-graph-node__actions button:last-child { border-right: 0; }
         .stash-graph-node__actions button:hover, .stash-graph-node__actions button:focus-visible { color: #fff; background: rgba(99,102,241,.22); outline: none; }
+        .stash-work-monitor { display: grid; grid-template-columns: minmax(180px, 1.2fr) repeat(4, minmax(120px, 1fr)) auto; gap: 7px; margin-bottom: 9px; padding: 9px 10px; border: 1px solid rgba(129,140,248,.34); border-radius: 10px; background: rgba(15,23,42,.74); }
+        .stash-work-monitor__item { min-width: 0; padding: 6px 7px; border-radius: 7px; background: rgba(30,41,59,.72); }
+        .stash-work-monitor__item span { display: block; margin-bottom: 3px; color: #94a3b8; font-size: 8px; font-weight: 850; }
+        .stash-work-monitor__item strong, .stash-work-monitor__item small { display: block; overflow: hidden; color: #f8fafc; font-size: 9px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
+        .stash-work-monitor__item small { color: #cbd5e1; }
+        .stash-work-monitor__item.is-wide { grid-column: span 2; }
+        .stash-work-monitor__contents { display: contents; }
+        .stash-work-monitor__path { display: flex; min-width: 0; gap: 4px; overflow: hidden; }
+        .stash-work-monitor__path i { overflow: hidden; color: #c7d2fe; font-size: 9px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+        .stash-work-monitor__path i + i::before { margin-right: 4px; color: #64748b; content: '›'; }
+        .stash-work-monitor__action { align-self: stretch; min-height: 0; }
+        .stash-work-monitor__state { grid-column: 1 / -1; color: #cbd5e1; font-size: 10px; }
+        .stash-work-monitor__state.is-error { color: #fecaca; }
         .stash-graph-drag-handle { position: absolute; top: 7px; right: 7px; z-index: 5; width: 25px; height: 25px; display: grid; padding: 0; place-items: center; border: 1px solid rgba(165,180,252,.48); border-radius: 7px; color: #c7d2fe; background: rgba(15,23,42,.92); box-shadow: 0 2px 5px rgba(2,6,23,.28); cursor: grab; touch-action: none; }
         .stash-graph-drag-handle:hover { border-color: #c7d2fe; color: #fff; background: #303d63; }
         .stash-graph-drag-handle:focus-visible { border-color: #fff; box-shadow: 0 0 0 3px rgba(129,140,248,.42); outline: none; }
@@ -687,6 +702,9 @@
             .stash-graph-reset { width: 100%; margin-top: 9px; }
             .stash-graph-navigator { grid-template-columns: 1fr; }
             .stash-graph-navigator__actions .stash-graph-reset { width: auto; margin-top: 0; }
+            .stash-work-monitor { grid-template-columns: 1fr; }
+            .stash-work-monitor__item.is-wide { grid-column: auto; }
+            .stash-work-monitor__action { width: 100%; margin-top: 0; }
             .stash-maintenance-intro { display: block; }
             .stash-maintenance-model { margin-top: 12px; }
             .stash-maintenance-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1099,12 +1117,14 @@
                     <div x-show="view === 'graph'" x-cloak class="stash-graph p-4 bg-slate-950 text-white" @pointermove.window="moveGraphNodeDrag($event)" @pointerup.window="finishGraphNodeDrag($event)" @pointercancel.window="finishGraphNodeDrag($event)" @keydown.escape.window="cancelGraphNodeDrag($event)">
                         <div class="stash-graph-header"><div><div class="stash-graph-title">작업 흐름</div><div class="stash-graph-scope" x-text="graphScopeLabel()"></div></div><div class="stash-graph-legend" aria-label="작업 연결 종류"><span><i class="stash-legend-line"></i>하위 → 상위</span><span><i class="stash-legend-line" style="border-color:#f97316"></i>먼저 → 다음</span><span><i class="stash-legend-line is-dashed"></i>관련</span></div></div>
                         <div class="stash-graph-toolbar" role="group" aria-label="작업 흐름 보기 설정">
-                            <label class="stash-graph-project"><span>네임스페이스</span><select x-model="mapNamespaceSlug" @change="changeWorkGraphNamespace()" :disabled="mapNamespacesLoading || loading" aria-label="작업 흐름 네임스페이스 선택"><option value="">전체</option><template x-for="namespace in mapNamespaces" :key="namespace.slug"><option :value="namespace.slug" x-text="namespace.label"></option></template></select></label>
+                            <label class="stash-graph-project"><span>프로젝트</span><select x-model="graphProjectSlug" @change="changeWorkGraphProject()" :disabled="mapNamespacesLoading || loading" aria-label="작업 흐름 프로젝트 선택"><option value="">전체</option><template x-for="project in graphProjects()" :key="'graph-project-' + project.slug"><option :value="project.slug" x-text="project.label"></option></template></select></label>
+                            <label class="stash-graph-project"><span>네임스페이스</span><select x-model="mapNamespaceSlug" @change="changeWorkGraphNamespace()" :disabled="mapNamespacesLoading || loading" aria-label="작업 흐름 네임스페이스 선택"><option value="" x-text="graphProjectSlug ? '프로젝트 전체' : '전체'"></option><template x-for="namespace in graphNamespaces()" :key="namespace.slug"><option :value="namespace.slug" x-text="namespace.label"></option></template></select></label>
                             <div class="stash-filter-picker" @keydown.escape.stop="graphFilterOpen = false">
                                 <button type="button" class="stash-filter-trigger" @click="graphFilterOpen = !graphFilterOpen" :aria-expanded="String(graphFilterOpen)" aria-controls="work-graph-filter-menu">필터<span x-show="graphFilterCount()" class="stash-filter-trigger__count" x-text="graphFilterCount()"></span></button>
                                 <div id="work-graph-filter-menu" x-show="graphFilterOpen" x-cloak @click.outside="graphFilterOpen = false" class="stash-filter-menu" role="group" aria-label="작업 흐름 필터 선택">
                                     <label class="stash-map-filter is-search"><span>검색</span><input type="search" x-model.debounce.180ms="graphFilter.query" @input.debounce.180ms="refreshWorkGraphLayout()" placeholder="작업, 담당, 지원 기능"></label>
                                     <label class="stash-map-filter"><span>상태</span><select x-model="graphFilter.status" @change="refreshWorkGraphLayout()"><option value="">전체</option><option value="backlog">대기</option><option value="ready">준비</option><option value="doing">진행 중</option><option value="blocked">막힘</option><option value="review">검토</option><option value="done">완료</option></select></label>
+                                    <label class="stash-map-filter"><span>담당</span><select x-model="graphFilter.agent" @change="refreshWorkGraphLayout()"><option value="">전체</option><template x-for="agent in graphAgents()" :key="'graph-agent-' + agent"><option :value="agent" x-text="agent"></option></template></select></label>
                                     <div class="stash-filter-menu__section"><span class="stash-filter-menu__label">관계</span><div class="stash-map-types" role="group" aria-label="표시할 관계"><button type="button" @click="toggleGraphRelation('part_of')" :aria-pressed="String(graphFilter.relations.part_of)">상하</button><button type="button" @click="toggleGraphRelation('blocks')" :aria-pressed="String(graphFilter.relations.blocks)">선후</button><button type="button" @click="toggleGraphRelation('relates_to')" :aria-pressed="String(graphFilter.relations.relates_to)">관련</button></div></div>
                                     <div class="stash-filter-menu__footer"><button type="button" class="stash-graph-reset" @click="resetGraphFilters()" :disabled="!graphHasFilters()">초기화</button></div>
                                 </div>
@@ -1126,6 +1146,21 @@
                                 <div class="stash-graph-navigator__group"><span>상위</span><div class="stash-graph-navigator__links"><button x-show="graphFocusedParent()" type="button" @click="focusGraphNodeByID(graphFocusedParent().id)" x-text="graphWorkLabel(graphFocusedParent())"></button><i x-show="!graphFocusedParent()" class="stash-graph-navigator__empty">없음</i></div></div>
                                 <div class="stash-graph-navigator__group"><span>하위</span><div class="stash-graph-navigator__links"><template x-for="child in graphFocusedChildren()" :key="'graph-child-link-' + child.id"><button type="button" @click="focusGraphNodeByID(child.id)" x-text="graphWorkLabel(child)"></button></template><i x-show="!graphFocusedChildren().length" class="stash-graph-navigator__empty">없음</i></div></div>
                                 <div class="stash-graph-navigator__actions"><button type="button" class="stash-graph-reset" @click="openIssue(graphFocusedItem().id, $event.currentTarget)">상세</button><button type="button" class="stash-graph-reset" @click="clearGraphFocus()">닫기</button></div>
+                            </section>
+                            <section x-show="graphFocusedItem()" x-cloak class="stash-work-monitor" aria-label="선택한 작업 현황">
+                                <div x-show="workMonitorLoading" class="stash-work-monitor__state">작업 현황을 불러오는 중</div>
+                                <div x-show="!workMonitorLoading && workMonitorError" class="stash-work-monitor__state is-error" x-text="workMonitorError"></div>
+                                <template x-if="!workMonitorLoading && !workMonitorError && workMonitorBrief"><div class="stash-work-monitor__contents">
+                                    <div class="stash-work-monitor__item is-wide"><span>공통 목표</span><strong x-text="monitorGoalText(selectedWorkMonitor().sharedGoal) || '연결 안 됨'"></strong></div>
+                                    <div class="stash-work-monitor__item is-wide"><span>목표 경로</span><div class="stash-work-monitor__path"><template x-for="goal in selectedWorkMonitor().goalPath" :key="'monitor-goal-' + goal.id"><i x-text="monitorGoalText(goal)"></i></template><i x-show="!selectedWorkMonitor().goalPath.length">연결 안 됨</i></div></div>
+                                    <div class="stash-work-monitor__item"><span>담당</span><strong x-text="selectedWorkMonitor().agent"></strong></div>
+                                    <div class="stash-work-monitor__item"><span>상태</span><strong x-text="statusLabel(selectedWorkMonitor().status || graphFocusedItem().status)"></strong></div>
+                                    <div class="stash-work-monitor__item"><span>공유 입력</span><strong x-text="monitorInputLabel()"></strong></div>
+                                    <div class="stash-work-monitor__item"><span>막힘</span><strong x-text="selectedWorkMonitor().blocker || '없음'"></strong></div>
+                                    <div class="stash-work-monitor__item is-wide"><span>최근 결과</span><strong x-text="selectedWorkMonitor().result || '없음'"></strong></div>
+                                    <div class="stash-work-monitor__item is-wide"><span>근거</span><strong x-text="selectedWorkMonitor().evidence || '없음'"></strong><small x-show="selectedWorkMonitor().evidenceReference" x-text="selectedWorkMonitor().evidenceReference"></small></div>
+                                </div></template>
+                                <button type="button" class="stash-graph-reset stash-work-monitor__action" @click="loadWorkMonitor(graphFocusedItem().id, true)" :disabled="workMonitorLoading">새로고침</button>
                             </section>
                             <div x-show="workGraphLayout.cycles.length" class="stash-graph-cycle-alert" role="status">
                                 <strong>서로 막는 작업이 있습니다.</strong>

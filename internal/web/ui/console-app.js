@@ -9,6 +9,7 @@
             require('./issue-execution-view-model.js'),
             require('./map-scope-view-model.js'),
             require('./work-graph-view-model.js'),
+            require('./work-monitor-view-model.js'),
             require('./goal-map-view-model.js')
         )
         : factory(
@@ -19,6 +20,7 @@
             root.StashIssueExecutionViewModel,
             root.StashMapScopeViewModel,
             root.StashWorkGraphViewModel,
+            root.StashWorkMonitorViewModel,
             root.StashGoalMapViewModel
         );
     if (commonJS) {
@@ -35,6 +37,7 @@
     issueExecutionViewModel,
     mapScopeViewModel,
     workGraphViewModel,
+    workMonitorViewModel,
     goalMapViewModel
 ) {
     'use strict';
@@ -46,6 +49,7 @@
             ...issueExecutionViewModel.createIssueExecutionViewModel(),
             ...mapScopeViewModel.createMapScopeViewModel(),
             ...workGraphViewModel.createWorkGraphViewModel(),
+            ...workMonitorViewModel.createWorkMonitorViewModel(),
             ...goalMapViewModel.createGoalMapViewModel(),
             ...stateStore.createStateStore(),
             ...apiClient.createApiClient(),
@@ -518,7 +522,8 @@
                         graph = { nodes: page.items, edges: [], worktrees: [] };
                     } else {
                         const graphArgs = { include_done: true };
-                        if (this.mapNamespaceSlug) graphArgs.project = this.mapNamespaceSlug;
+                        const selectedScope = this.mapNamespaceSlug || this.graphProjectSlug;
+                        if (selectedScope) graphArgs.project = selectedScope;
                         else graphArgs.namespaces = '/';
                         const data = await this.invokeTool('get_work_graph', graphArgs);
                         graph = this.toolValue(data);

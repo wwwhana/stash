@@ -33,6 +33,7 @@ func TestUIAssetsAndUnknownPathsKeepFileServerBehavior(t *testing.T) {
 		"/route-view-model.js":           "StashRouteViewModel",
 		"/map-scope-view-model.js":       "StashMapScopeViewModel",
 		"/work-graph-view-model.js":      "StashWorkGraphViewModel",
+		"/work-monitor-view-model.js":    "StashWorkMonitorViewModel",
 		"/goal-map-view-model.js":        "StashGoalMapViewModel",
 		"/work-plan-view-model.js":       "StashWorkPlanViewModel",
 		"/issue-execution-view-model.js": "StashIssueExecutionViewModel",

@@ -236,6 +236,8 @@ test('the graph UI renders filter selection and direct parent-child navigation',
     assert.match(graphArea, /graphNodeMeta\(node\)/);
     assert.match(graphArea, /graphFilter\.query/);
     assert.match(graphArea, /graphFilter\.status/);
+    assert.match(graphArea, /graphFilter\.agent/);
+    assert.match(graphArea, /changeWorkGraphProject\(\)/);
     assert.match(graphArea, /class="stash-filter-trigger"/);
     assert.match(graphArea, /toggleGraphRelation\('part_of'\)/);
     assert.match(graphArea, /class="stash-filter-chips"/);
@@ -246,6 +248,8 @@ test('the graph UI renders filter selection and direct parent-child navigation',
     assert.match(graphArea, /class="stash-graph-node__actions"/);
     assert.match(graphArea, /graphNodeRoleLabel\(node\)/);
     assert.match(graphArea, /stash-graph-role-badge/);
+    assert.match(graphArea, /class="stash-work-monitor"/);
+    assert.match(graphArea, />공유 입력</);
     assert.doesNotMatch(graphArea, /workGraphLayout\.stages|stash-graph-stage/);
     assert.doesNotMatch(graphArea, /childLayout|stash-graph-child|toggleGraphParent/);
 });
