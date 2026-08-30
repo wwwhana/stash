@@ -8,6 +8,7 @@ const { createRouteViewModel } = require('./ui/route-view-model.js');
 const { createMapScopeViewModel } = require('./ui/map-scope-view-model.js');
 const { createWorkGraphViewModel } = require('./ui/work-graph-view-model.js');
 const { createWorkMonitorViewModel } = require('./ui/work-monitor-view-model.js');
+const { createProjectMonitorViewModel } = require('./ui/project-monitor-view-model.js');
 const { createGoalMapViewModel } = require('./ui/goal-map-view-model.js');
 const { createWorkPlanViewModel } = require('./ui/work-plan-view-model.js');
 const { createIssueExecutionViewModel } = require('./ui/issue-execution-view-model.js');
@@ -27,6 +28,7 @@ test('the HTML loads every view-model before Alpine starts', () => {
         '/map-scope-view-model.js',
         '/work-graph-view-model.js',
         '/work-monitor-view-model.js',
+        '/project-monitor-view-model.js',
         '/goal-map-view-model.js',
         '/work-plan-view-model.js',
         '/issue-execution-view-model.js',
@@ -61,6 +63,7 @@ test('each screen factory owns its state and actions', () => {
     const scope = createMapScopeViewModel();
     const graph = createWorkGraphViewModel();
     const monitor = createWorkMonitorViewModel();
+    const projectMonitor = createProjectMonitorViewModel();
     const goalMap = createGoalMapViewModel();
     const plan = createWorkPlanViewModel();
     const execution = createIssueExecutionViewModel();
@@ -69,6 +72,7 @@ test('each screen factory owns its state and actions', () => {
     assert.equal(typeof scope.loadMapNamespaces, 'function');
     assert.equal(typeof graph.loadWorkGraph, 'function');
     assert.equal(typeof monitor.loadWorkMonitor, 'function');
+    assert.equal(typeof projectMonitor.loadProjectMonitor, 'function');
     assert.equal(typeof goalMap.loadGoalMap, 'function');
     assert.equal(typeof plan.loadWorkPlan, 'function');
     assert.equal(typeof execution.finishWork, 'function');
@@ -83,11 +87,14 @@ test('the console composes modules into one Alpine view-model without shared sta
     assert.equal(typeof first.restoreRoute, 'function');
     assert.equal(typeof first.loadWorkGraph, 'function');
     assert.equal(typeof first.loadWorkMonitor, 'function');
+    assert.equal(typeof first.loadProjectMonitor, 'function');
     assert.equal(typeof first.loadGoalMap, 'function');
     assert.equal(typeof first.loadWorkPlan, 'function');
     assert.equal(typeof first.finishWork, 'function');
     assert.notStrictEqual(first.graph, second.graph);
     first.graphProjectSlug = '/projects/first';
     assert.equal(second.graphProjectSlug, '');
+    first.projectMonitorFilter.status = 'doing';
+    assert.equal(second.projectMonitorFilter.status, '');
     assert.notStrictEqual(first.workExecution, second.workExecution);
 });

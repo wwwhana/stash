@@ -5,12 +5,13 @@ const { routePaths, readRoute, buildRoute, routeTitle } = require('./ui/route-st
 
 test('every workspace page has a stable address', () => {
     assert.deepEqual(routePaths, {
-        'goal-map': '/ui/goal-map', plan: '/ui/plan', board: '/ui/issues', graph: '/ui/work-graph',
+        'goal-map': '/ui/goal-map', plan: '/ui/plan', monitor: '/ui/monitor', board: '/ui/issues', graph: '/ui/work-graph',
         worktrees: '/ui/git', list_namespaces: '/ui/namespaces', query_facts: '/ui/facts',
         list_hypotheses: '/ui/hypotheses', list_goals: '/ui/goals', agent: '/ui/agent-guide',
         maintenance: '/ui/maintenance'
     });
     assert.equal(routeTitle('plan'), '작업 계획');
+    assert.equal(routeTitle('monitor'), '작업 관제');
 });
 
 test('work graph address restores namespace and filters', () => {
@@ -48,6 +49,20 @@ test('project plan and issue drawer keep only their own query state', () => {
     assert.equal(buildRoute('graph', { namespace: '/projects/demo', issueID: 17 }), '/ui/work-graph?namespace=%2Fprojects%2Fdemo&issue=17');
 });
 
+test('project monitor address restores project filters and focused work', () => {
+    const href = buildRoute('monitor', {
+        project: '/projects/demo', status: 'doing', agent: 'codex', focus: 42, issueID: 17
+    });
+    assert.equal(href, '/ui/monitor?project=%2Fprojects%2Fdemo&status=doing&agent=codex&focus=42&issue=17');
+    const route = readRoute(href);
+    assert.equal(route.route, 'monitor');
+    assert.equal(route.project, '/projects/demo');
+    assert.equal(route.status, 'doing');
+    assert.equal(route.agent, 'codex');
+    assert.equal(route.focus, '42');
+    assert.equal(route.issueID, 17);
+});
+
 test('root and unknown paths safely select the goal map', () => {
     assert.deepEqual(
         { route: readRoute('/').route, matched: readRoute('/').matched },
@@ -68,6 +83,7 @@ test('the console restores routes and exposes real navigation links', () => {
     assert.match(html, /<script defer src="\/route-view-model\.js"><\/script>/);
     assert.match(html, /<script defer src="\/console-app\.js"><\/script>/);
     assert.match(html, /<a :href="routeHref\('plan'\)" @click\.prevent="loadWorkPlan\(\)"/);
+    assert.match(html, /<a :href="routeHref\('monitor'\)" @click\.prevent="loadProjectMonitor\(\)"/);
     assert.match(html, /<a :href="routeHref\('graph'\)" @click\.prevent="loadWorkGraph\(\)"/);
     assert.match(viewModel, /window\.history\[replace \? 'replaceState' : 'pushState'\]/);
     assert.match(viewModel, /async restoreRoute\(\)/);

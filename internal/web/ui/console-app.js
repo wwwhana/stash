@@ -10,6 +10,7 @@
             require('./map-scope-view-model.js'),
             require('./work-graph-view-model.js'),
             require('./work-monitor-view-model.js'),
+            require('./project-monitor-view-model.js'),
             require('./goal-map-view-model.js')
         )
         : factory(
@@ -21,6 +22,7 @@
             root.StashMapScopeViewModel,
             root.StashWorkGraphViewModel,
             root.StashWorkMonitorViewModel,
+            root.StashProjectMonitorViewModel,
             root.StashGoalMapViewModel
         );
     if (commonJS) {
@@ -38,6 +40,7 @@
     mapScopeViewModel,
     workGraphViewModel,
     workMonitorViewModel,
+    projectMonitorViewModel,
     goalMapViewModel
 ) {
     'use strict';
@@ -50,6 +53,7 @@
             ...mapScopeViewModel.createMapScopeViewModel(),
             ...workGraphViewModel.createWorkGraphViewModel(),
             ...workMonitorViewModel.createWorkMonitorViewModel(),
+            ...projectMonitorViewModel.createProjectMonitorViewModel(),
             ...goalMapViewModel.createGoalMapViewModel(),
             ...stateStore.createStateStore(),
             ...apiClient.createApiClient(),
@@ -115,6 +119,7 @@
                 if (this.view === 'board') return this.loadWorkBoard(false);
                 if (this.view === 'goal-map') return this.loadGoalMap(false);
                 if (this.view === 'plan') return this.loadWorkPlan();
+                if (this.view === 'monitor') return this.loadProjectMonitor(false);
                 if (this.view === 'graph') return this.loadWorkGraph();
                 if (this.view === 'worktrees') return this.loadWorktrees(false);
                 if (this.view === 'maintenance') return this.loadMaintenance();

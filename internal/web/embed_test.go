@@ -9,7 +9,7 @@ import (
 
 func TestUIPageRoutesServeTheWorkspace(t *testing.T) {
 	handler := GetUIHandler()
-	for _, path := range []string{"/", "/ui/goal-map", "/ui/plan?project=%2Fprojects%2Fdemo", "/ui/work-graph?status=doing"} {
+	for _, path := range []string{"/", "/ui/goal-map", "/ui/plan?project=%2Fprojects%2Fdemo", "/ui/monitor?project=%2Fprojects%2Fdemo&status=doing", "/ui/work-graph?status=doing"} {
 		t.Run(path, func(t *testing.T) {
 			response := httptest.NewRecorder()
 			handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
@@ -34,6 +34,7 @@ func TestUIAssetsAndUnknownPathsKeepFileServerBehavior(t *testing.T) {
 		"/map-scope-view-model.js":       "StashMapScopeViewModel",
 		"/work-graph-view-model.js":      "StashWorkGraphViewModel",
 		"/work-monitor-view-model.js":    "StashWorkMonitorViewModel",
+		"/project-monitor-view-model.js": "StashProjectMonitorViewModel",
 		"/goal-map-view-model.js":        "StashGoalMapViewModel",
 		"/work-plan-view-model.js":       "StashWorkPlanViewModel",
 		"/issue-execution-view-model.js": "StashIssueExecutionViewModel",
