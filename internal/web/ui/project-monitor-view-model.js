@@ -12,6 +12,7 @@
     });
 
     function createProjectMonitorViewModel() {
+        let projectMonitorRequestSequence = 0;
         return {
             projectMonitorProjectSlug: '',
             projectMonitorMap: emptyMap(),
@@ -69,12 +70,12 @@
             projectMonitorRows() {
                 const status = text(this.projectMonitorFilter.status);
                 const agent = text(this.projectMonitorFilter.agent);
-                const rank = value => ({ blocked: 0, doing: 1, review: 2, ready: 3, backlog: 4, done: 5, canceled: 6 })[value] ?? 7;
+                const rank = value => ({ expired: 0, blocked: 1, doing: 2, review: 3, ready: 4, backlog: 5, done: 6, canceled: 7 })[value] ?? 8;
                 return this.projectMonitorItems()
-                    .filter(item => !status || item.status === status)
+                    .filter(item => !status || this.projectMonitorDisplayStatus(item) === status)
                     .filter(item => !agent || text(item.agent_id || item.owner) === agent)
                     .sort((left, right) => (
-                        rank(left.status) - rank(right.status) ||
+                        rank(this.projectMonitorDisplayStatus(left)) - rank(this.projectMonitorDisplayStatus(right)) ||
                         Number(right.priority || 0) - Number(left.priority || 0) ||
                         Number(left.id) - Number(right.id)
                     ));
@@ -87,7 +88,26 @@
 
             projectMonitorCount(status) {
                 const items = this.projectMonitorItems();
-                return items.filter(item => item.status === status).length;
+                if (!status) return items.length;
+                return items.filter(item => this.projectMonitorDisplayStatus(item) === status).length;
+            },
+
+            projectMonitorLeaseExpired(item) {
+                const expiresAt = new Date(item && item.lease_expires_at || '');
+                return text(item && item.attempt_status) === 'active' &&
+                    !Number.isNaN(expiresAt.getTime()) && expiresAt.getTime() <= Date.now();
+            },
+
+            projectMonitorDisplayStatus(item) {
+                return this.projectMonitorLeaseExpired(item) ? 'expired' : text(item && item.status);
+            },
+
+            projectMonitorIsBlocked(item) {
+                return text(item && item.status) === 'blocked';
+            },
+
+            projectMonitorBlockerLabel(item) {
+                return text(item && (item.issue_key || item.title)) || (item && item.id ? '#' + item.id : '알 수 없는 작업');
             },
 
             projectMonitorRootGoal() {
@@ -105,8 +125,7 @@
 
             projectMonitorAttemptLabel(item) {
                 const status = text(item && item.attempt_status);
-                const expiresAt = new Date(item && item.lease_expires_at || '');
-                if (status === 'active' && !Number.isNaN(expiresAt.getTime()) && expiresAt.getTime() <= Date.now()) return '연결 만료';
+                if (this.projectMonitorLeaseExpired(item)) return '연결 만료';
                 return ({
                     active: '작업 중', handed_off: '이어받기 대기', completed: '작업 종료',
                     abandoned: '중단', canceled: '취소', expired: '연결 만료'
@@ -187,10 +206,11 @@
                 this.mapNamespaceSlug = '';
                 this.graphFocusedKey = String(id);
                 await this.loadWorkGraph(false);
-                this.focusGraphNode(id);
+                await this.focusGraphNodeByID(id);
             },
 
             async loadProjectMonitor(refreshNamespaces = true) {
+                const requestSequence = ++projectMonitorRequestSequence;
                 this.activeNav = 'monitor';
                 this.resultTitle = '작업 관제';
                 this.resultDescription = '에이전트별 진행 상황과 다음 할 일을 봅니다.';
@@ -200,6 +220,7 @@
                 this.loading = true;
                 try {
                     await this.loadMapNamespaces(refreshNamespaces);
+                    if (requestSequence !== projectMonitorRequestSequence) return;
                     if (this.mapNamespaceError) throw new Error(this.mapNamespaceError);
                     const projects = this.projectMonitorProjects();
                     if (!projects.some(item => item.slug === this.projectMonitorProjectSlug)) {
@@ -215,6 +236,7 @@
                     const data = await this.invokeTool('get_goal_map', {
                         namespace: this.projectMonitorProjectSlug, include_done: true
                     });
+                    if (requestSequence !== projectMonitorRequestSequence) return;
                     const value = this.toolValue(data) || {};
                     this.setProjectMonitorMap(value);
                     if (this.projectMonitorFilter.agent && !this.projectMonitorAgents().includes(this.projectMonitorFilter.agent)) {
@@ -223,6 +245,7 @@
                     const selected = this.projectMonitorSelectedItem();
                     if (selected) {
                         await this.loadWorkMonitor(selected.id);
+                        if (requestSequence !== projectMonitorRequestSequence) return;
                         this.applyProjectMonitorBrief(selected.id);
                     }
                     else {
@@ -235,13 +258,16 @@
                     this.markLoaded();
                     this.setNotice('', 'success', 0);
                 } catch (error) {
+                    if (requestSequence !== projectMonitorRequestSequence) return;
                     this.clearProjectMonitorMap();
                     this.projectMonitorError = error.message || '작업 현황을 불러오지 못했습니다.';
                     this.result = '오류: ' + this.projectMonitorError;
                 } finally {
-                    this.projectMonitorLoading = false;
-                    this.loading = false;
-                    this.syncRoute();
+                    if (requestSequence === projectMonitorRequestSequence) {
+                        this.projectMonitorLoading = false;
+                        this.loading = false;
+                        this.syncRoute();
+                    }
                 }
             }
         };

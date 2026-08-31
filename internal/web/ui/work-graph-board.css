@@ -1,0 +1,261 @@
+:root {
+    --graph-bg: #030405;
+    --graph-surface: #151719;
+    --graph-raised: #1b1e21;
+    --graph-hover: #24282c;
+    --graph-line: #34383e;
+    --graph-text: #f4f4f5;
+    --graph-soft: #d4d6d9;
+    --graph-muted: #a0a5ad;
+    --graph-faint: #7f858e;
+    --graph-amber: #e9a23b;
+    --graph-violet: #9b8cf2;
+    --graph-danger: #db6b67;
+    --graph-success: #70a784;
+}
+
+.stash-root.is-graph-view .stash-main { height: calc(100vh - 46px); height: calc(100dvh - 46px); min-height: 0; padding: 0 !important; overflow: hidden; grid-template-columns: 184px minmax(0, 1fr); gap: 0 !important; background: var(--graph-bg); }
+.stash-root.is-graph-view .stash-sidebar { z-index: 4; padding: 14px 10px; border-right: 1px solid var(--graph-line); background: #0d0f11; }
+.stash-root.is-graph-view .stash-sidebar-card { border: 0; background: transparent; box-shadow: none; }
+.stash-root.is-graph-view .stash-sidebar-label { color: var(--graph-faint); }
+.stash-root.is-graph-view .stash-nav-item { color: var(--graph-muted); }
+.stash-root.is-graph-view .stash-nav-item:hover { color: var(--graph-text); background: var(--graph-hover); }
+.stash-root.is-graph-view .stash-nav-item.is-active { color: var(--graph-text); background: var(--graph-raised); }
+.stash-root.is-graph-view .stash-nav-icon { color: inherit; }
+.stash-root.is-graph-view .stash-nav-divider { background: var(--graph-line); }
+.stash-root.is-graph-view .stash-panel { height: 100%; min-height: 0; border: 0; border-radius: 0; background: var(--graph-bg); box-shadow: none; }
+.stash-root.is-graph-view .stash-panel-header { display: none; }
+.stash-root.is-graph-view .stash-panel-body { overflow: hidden !important; background: var(--graph-bg) !important; }
+
+.stash-graph {
+    --graph-side-padding: 0;
+    position: relative;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    display: flex;
+    overflow: hidden;
+    flex-direction: column;
+    padding: 0 !important;
+    color: var(--graph-text) !important;
+    background: var(--graph-bg) !important;
+}
+.stash-graph svg { display: block; }
+.stash-graph-header { min-height: 46px; display: flex; align-items: center; gap: 10px; padding: 6px 12px; border-bottom: 1px solid var(--graph-line); background: rgba(11, 13, 15, .96); }
+.stash-graph-summary { display: flex; align-items: center; gap: 7px; flex: 0 0 auto; }
+.stash-graph-summary span { min-height: 24px; display: inline-flex; align-items: center; gap: 4px; padding: 3px 5px; color: var(--graph-muted); font-size: 10px; }
+.stash-graph-summary strong { color: var(--graph-soft); font-size: 11px; }
+.stash-graph-summary .is-warning { color: #e9a3a0; border-color: rgba(219,107,103,.35); background: rgba(219,107,103,.1); }
+.stash-graph-legend { display: flex; flex-wrap: wrap; gap: 10px; color: var(--graph-muted); font-size: 10px; }
+.stash-graph-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.stash-legend-line { width: 17px; border-top: 1.5px solid var(--graph-violet); }
+.stash-legend-line.is-blocks { border-color: var(--graph-amber); }
+.stash-legend-line.is-related { border-color: #7d8798; border-top-style: dashed; }
+
+.stash-graph-toolbar { position: relative; min-width: 0; min-height: 0; display: flex; flex: 1 1 auto; flex-wrap: nowrap; align-items: center; gap: 7px; margin: 0; padding: 0; border: 0; background: transparent; }
+.stash-graph-project { min-width: 0; display: flex; align-items: center; gap: 6px; color: var(--graph-muted); font-size: 10px; font-weight: 700; }
+.stash-graph-project:first-child { max-width: 420px; flex: 1 1 240px; }
+.stash-graph-project:nth-child(2) { max-width: 260px; flex: 0 1 220px; }
+.stash-graph-project select { min-width: 0; min-height: 30px; flex: 1 1 auto; padding: 4px 28px 4px 9px; border: 1px solid var(--graph-line); border-radius: 7px; color: var(--graph-soft); background: var(--graph-surface); font-size: 11px; }
+.stash-graph-project select:focus { border-color: var(--graph-amber); outline: 2px solid rgba(233,162,59,.16); }
+.stash-graph-project-note { color: var(--graph-muted); font-size: 10px; }
+.stash-graph .stash-filter-picker { position: relative; }
+.stash-graph .stash-filter-trigger, .stash-graph .stash-graph-reset { min-height: 30px; display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border: 1px solid var(--graph-line); border-radius: 7px; color: var(--graph-soft); background: var(--graph-surface); font-size: 10px; font-weight: 700; white-space: nowrap; }
+.stash-graph .stash-filter-trigger svg { width: 14px; height: 14px; }
+.stash-graph .stash-filter-trigger:hover, .stash-graph .stash-filter-trigger[aria-expanded="true"], .stash-graph .stash-graph-reset:hover:not(:disabled) { border-color: var(--graph-faint); color: var(--graph-text); background: var(--graph-hover); }
+.stash-graph .stash-filter-trigger:focus-visible, .stash-graph .stash-graph-reset:focus-visible { border-color: var(--graph-amber); outline: 2px solid rgba(233,162,59,.2); outline-offset: 2px; }
+.stash-graph .stash-filter-trigger__count { min-width: 18px; height: 18px; display: inline-grid; place-items: center; border-radius: 999px; color: #16120b; background: var(--graph-amber); font-size: 9px; }
+.stash-graph .stash-graph-reset:disabled { color: var(--graph-faint); opacity: .55; }
+.stash-graph .stash-filter-menu { top: calc(100% + 8px); left: 0; z-index: 50; width: min(390px, calc(100vw - 32px)); border: 1px solid var(--graph-line); border-radius: 12px; color: var(--graph-text); background: #141618; box-shadow: 0 22px 50px rgba(0,0,0,.56); }
+.stash-graph .stash-map-filter { color: var(--graph-muted); }
+.stash-graph .stash-map-filter input, .stash-graph .stash-map-filter select { border-color: var(--graph-line); color: var(--graph-text); background: var(--graph-raised); }
+.stash-graph .stash-map-types button { border-color: var(--graph-line); color: var(--graph-muted); background: var(--graph-surface); }
+.stash-graph .stash-map-types button[aria-pressed="true"] { border-color: rgba(233,162,59,.7); color: #f5c97e; background: rgba(233,162,59,.12); }
+.stash-graph .stash-filter-chips { position: static; z-index: 15; min-width: 0; max-width: 220px; margin: 0; overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; }
+.stash-graph .stash-filter-chip { min-height: 26px; border-color: var(--graph-line); color: var(--graph-soft); background: rgba(17,19,21,.92); font-size: 10px; backdrop-filter: blur(10px); }
+
+.stash-graph-content { position: relative; min-height: 0; display: flex; flex: 1 1 auto; flex-direction: column; }
+.stash-graph-workspace { position: relative; min-height: 0; display: flex; flex: 1 1 auto; overflow: hidden; }
+.stash-graph-scroll { position: relative; min-width: 0; min-height: 0; flex: 1 1 auto; overflow: hidden; border: 0; background: var(--graph-bg); cursor: grab; touch-action: none; }
+.stash-graph-scroll.is-panning { cursor: grabbing; }
+.stash-graph-scroll:focus-visible { outline: 1px solid rgba(233,162,59,.72); outline-offset: -1px; }
+.stash-graph-grid { position: absolute; inset: 0; opacity: .16; pointer-events: none; background-image: radial-gradient(circle, rgba(128,133,140,.46) .75px, transparent .9px); background-position: 3px 3px; background-size: 24px 24px; }
+.stash-graph-space { position: absolute; inset: 0 auto auto 0; min-width: 100%; min-height: 100%; pointer-events: none; }
+.stash-graph-world { position: absolute; top: 0; left: 0; will-change: transform; pointer-events: auto; }
+.stash-graph-canvas { position: relative; min-height: 100%; overflow: visible; }
+.stash-graph-edge-layer { position: absolute; inset: 0; z-index: 1; width: 100% !important; min-width: 0 !important; height: 100% !important; overflow: visible; pointer-events: none; }
+.stash-graph-edge-layer path { fill: none; vector-effect: non-scaling-stroke; }
+.stash-graph-edge { opacity: .7; transition: opacity .2s ease, stroke-width .2s ease; }
+.stash-graph-workspace.has-inspector .stash-graph-edge { opacity: .18; }
+.stash-graph-edge.is-active { opacity: .96; stroke-width: 2.1; }
+.stash-graph-edge.is-cycle { opacity: .82; }
+
+.stash-graph-node { position: absolute; z-index: 2; display: flex; flex-direction: column; padding: 0; overflow: hidden; border: 1px solid var(--graph-line); border-radius: 9px; color: var(--graph-text); background: linear-gradient(180deg, #191c1f 0%, #141618 100%); box-shadow: 0 5px 16px rgba(0,0,0,.26), inset 0 1px rgba(255,255,255,.02); text-align: left; transition: border-color .2s ease, box-shadow .2s ease, opacity .2s ease; }
+.stash-graph-node::before { position: absolute; z-index: 6; top: 0; right: 0; left: 0; height: 2px; background: transparent; content: ''; }
+.stash-graph-node:hover { border-color: var(--graph-faint); box-shadow: 0 8px 22px rgba(0,0,0,.32); }
+.stash-graph-node.is-focused { z-index: 4; border-color: var(--graph-amber); box-shadow: 0 0 0 1px rgba(233,162,59,.18), 0 10px 28px rgba(0,0,0,.4); }
+.stash-graph-node.is-focused::before { background: var(--graph-amber); }
+.stash-graph-node.is-path:not(.is-focused) { border-color: rgba(155,140,242,.52); }
+.stash-graph-node.is-cycle { border-color: rgba(219,107,103,.78); }
+.stash-graph-node.is-moved { border-style: dashed; }
+.stash-graph-node.is-context { opacity: .58; }
+.stash-graph-node__open { width: 100%; min-height: 0; display: block; flex: 1 1 auto; padding: 12px 38px 31px 13px; border: 0; color: inherit; background: transparent; text-align: left; }
+.stash-graph-node__open:hover { background: rgba(255,255,255,.02); }
+.stash-graph-node__open:focus-visible { box-shadow: inset 0 0 0 2px rgba(233,162,59,.5); outline: none; }
+.stash-graph-node__top { display: flex; align-items: center; justify-content: space-between; gap: 7px; }
+.stash-graph-node__key { min-width: 0; overflow: hidden; color: var(--graph-muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; font-weight: 650; letter-spacing: .03em; text-overflow: ellipsis; white-space: nowrap; }
+.stash-graph-node__badges { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 5px; color: var(--graph-muted); font-size: 10px; }
+.stash-graph-status-dot { width: 6px; height: 6px; display: inline-block; flex: 0 0 auto; border-radius: 50%; background: var(--graph-faint); }
+.is-ready .stash-graph-status-dot { background: #65a7bd; }
+.is-doing .stash-graph-status-dot { background: var(--graph-amber); box-shadow: 0 0 0 3px rgba(233,162,59,.12); }
+.is-blocked .stash-graph-status-dot { background: var(--graph-danger); }
+.is-review .stash-graph-status-dot { background: var(--graph-violet); }
+.is-done .stash-graph-status-dot { background: var(--graph-success); }
+.stash-graph-cycle-badge { padding: 2px 5px; border-radius: 999px; color: #e8a5a2; background: rgba(219,107,103,.13); font-size: 9px; font-weight: 700; }
+.stash-graph-node__title { display: -webkit-box; margin-top: 7px; overflow: hidden; color: var(--graph-text); font-size: 13px; font-weight: 650; line-height: 1.35; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.stash-graph-node__meta { display: block; margin-top: 5px; overflow: hidden; color: var(--graph-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.stash-graph-node__warning { min-height: 22px; display: flex; align-items: center; padding: 0 13px; border-top: 1px solid rgba(233,162,59,.17); color: #e5bd79; background: rgba(233,162,59,.07); font-size: 10px; }
+.stash-graph-node__warning span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stash-graph-node__actions { position: absolute; z-index: 6; right: 10px; bottom: 8px; left: 10px; min-height: 22px; display: flex; visibility: hidden; gap: 5px; border: 0; opacity: 0; pointer-events: none; transition: opacity .16s ease; }
+.stash-graph-node:hover .stash-graph-node__actions, .stash-graph-node:focus-within .stash-graph-node__actions, .stash-graph-node.is-focused .stash-graph-node__actions { visibility: visible; opacity: 1; pointer-events: auto; }
+.stash-graph-node__actions button { min-width: 0; min-height: 22px; flex: 0 1 auto; padding: 2px 7px; overflow: hidden; border: 1px solid var(--graph-line); border-radius: 5px; color: var(--graph-muted); background: rgba(20,22,24,.96); font-size: 9px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.stash-graph-node__actions button:hover { border-color: var(--graph-faint); color: var(--graph-text); background: var(--graph-hover); }
+.stash-graph-node__actions button:focus-visible { color: var(--graph-text); outline: 2px solid var(--graph-amber); outline-offset: 1px; }
+.stash-graph-drag-handle { position: absolute; z-index: 7; top: 7px; right: 7px; width: 25px; height: 25px; display: grid; visibility: hidden; padding: 0; place-items: center; border: 0; border-radius: 7px; color: var(--graph-faint); background: transparent; cursor: grab; opacity: 0; touch-action: none; transition: opacity .16s ease; }
+.stash-graph-node:hover .stash-graph-drag-handle, .stash-graph-node:focus-within .stash-graph-drag-handle, .stash-graph-node.is-focused .stash-graph-drag-handle { visibility: visible; opacity: 1; }
+.stash-graph-drag-handle:hover { color: var(--graph-soft); background: var(--graph-hover); }
+.stash-graph-drag-handle:focus-visible { color: var(--graph-text); box-shadow: 0 0 0 2px rgba(233,162,59,.45); outline: none; }
+.stash-graph-drag-handle span { font-size: 15px; line-height: 1; pointer-events: none; }
+body.stash-graph-dragging, body.stash-graph-dragging * { cursor: grabbing !important; user-select: none !important; }
+.stash-graph-edges-text { position: absolute; }
+
+.stash-graph-canvas-tools { position: absolute; z-index: 20; top: 14px; left: 14px; display: flex; align-items: center; gap: 2px; padding: 3px; border: 1px solid rgba(73,78,85,.9); border-radius: 9px; background: rgba(20,22,24,.92); box-shadow: 0 6px 18px rgba(0,0,0,.3), inset 0 1px rgba(255,255,255,.025); backdrop-filter: blur(8px); }
+.stash-graph-canvas-tools button { width: 30px; height: 30px; display: grid; padding: 0; place-items: center; border: 0; border-radius: 8px; color: var(--graph-muted); background: transparent; }
+.stash-graph-canvas-tools button:hover { color: var(--graph-text); background: var(--graph-hover); }
+.stash-graph-canvas-tools button:focus-visible { color: var(--graph-text); box-shadow: inset 0 0 0 1px var(--graph-amber); outline: none; }
+.stash-graph-canvas-tools svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.stash-graph-canvas-tools > i { width: 1px; height: 19px; margin: 0 3px; background: var(--graph-line); }
+.stash-graph-zoom { min-width: 42px; color: var(--graph-muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; text-align: center; }
+.stash-graph-alerts { position: absolute; z-index: 12; top: 18px; right: 18px; width: min(300px, calc(100% - 36px)); display: grid; gap: 7px; pointer-events: none; }
+.stash-graph-page-alert { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid rgba(233,162,59,.34); border-radius: 9px; color: #e9c487; background: rgba(49,36,17,.9); font-size: 10px; pointer-events: auto; backdrop-filter: blur(10px); }
+.stash-graph-page-alert span { flex: 1 1 auto; }
+.stash-graph-page-alert button { min-height: 28px; padding: 4px 8px; border: 1px solid rgba(233,162,59,.45); border-radius: 6px; color: #f3d39e; background: rgba(233,162,59,.1); font-size: 10px; font-weight: 700; white-space: nowrap; }
+.stash-graph-page-alert button:hover:not(:disabled) { color: #171109; background: var(--graph-amber); }
+.stash-graph-page-alert button:focus-visible { outline: 2px solid var(--graph-amber); outline-offset: 2px; }
+.stash-graph-page-alert button:disabled { opacity: .6; }
+.stash-graph-page-alert small { flex-basis: 100%; color: #e7a09d; }
+.stash-graph-cycle-alert, .stash-graph-hierarchy-alert { margin: 0; padding: 9px 11px; border-radius: 10px; font-size: 10px; line-height: 1.4; backdrop-filter: blur(10px); }
+.stash-graph-cycle-alert { border: 1px solid rgba(219,107,103,.35); color: #dca09d; background: rgba(75,29,29,.82); }
+.stash-graph-hierarchy-alert { border: 1px solid rgba(233,162,59,.35); color: #e7bd77; background: rgba(58,42,17,.82); }
+.stash-graph-cycle-alert strong, .stash-graph-hierarchy-alert strong { color: inherit; font-size: 10px; }
+.stash-graph-cycle-list { margin-top: 5px; }
+
+.stash-graph-inspector { position: relative; z-index: 25; width: 340px; min-width: 340px; display: flex; overflow: hidden; flex-direction: column; border-left: 1px solid var(--graph-line); color: var(--graph-soft); background: #111315; box-shadow: -18px 0 42px rgba(0,0,0,.32); animation: stash-inspector-in .25s cubic-bezier(.23,1,.32,1) both; }
+.stash-graph-inspector:focus { outline: none; }
+@keyframes stash-inspector-in { from { opacity: 0; transform: translateX(18px); } to { opacity: 1; transform: none; } }
+.stash-graph-inspector__header { position: relative; padding: 19px 44px 17px 18px; border-bottom: 1px solid var(--graph-line); }
+.stash-graph-inspector__header > div { display: flex; align-items: center; gap: 7px; }
+.stash-graph-inspector__header span { color: var(--graph-muted); font: 650 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.stash-graph-inspector__header i { padding: 2px 7px; border-radius: 999px; color: var(--graph-soft); background: var(--graph-hover); font-size: 10px; font-style: normal; }
+.stash-graph-inspector__header i.is-doing { color: #f1bd67; background: rgba(233,162,59,.12); }
+.stash-graph-inspector__header i.is-blocked { color: #e7a09d; background: rgba(219,107,103,.12); }
+.stash-graph-inspector__header h3 { margin: 9px 0 0; color: var(--graph-text); font-size: 18px; font-weight: 650; line-height: 1.35; letter-spacing: -.02em; }
+.stash-graph-inspector__header > button { position: absolute; top: 13px; right: 13px; width: 30px; height: 30px; border: 0; border-radius: 8px; color: var(--graph-muted); background: transparent; font-size: 20px; line-height: 1; }
+.stash-graph-inspector__header > button:hover { color: var(--graph-text); background: var(--graph-hover); }
+.stash-graph-inspector__header > button:focus-visible, .stash-graph-navigator__links button:focus-visible, .stash-graph-inspector__actions button:focus-visible { outline: 2px solid var(--graph-amber); outline-offset: 2px; }
+.stash-graph-inspector__body { min-height: 0; flex: 1 1 auto; overflow-y: auto; padding: 0 18px; scrollbar-color: var(--graph-faint) transparent; }
+.stash-graph-inspector h4 { margin: 0 0 12px; color: var(--graph-faint); font-size: 11px; font-weight: 750; letter-spacing: .06em; }
+.stash-graph-navigator, .stash-work-monitor { display: block; margin: 0; padding: 18px 0; border: 0; border-bottom: 1px solid var(--graph-line); border-radius: 0; background: transparent; box-shadow: none; }
+.stash-graph-navigator__group + .stash-graph-navigator__group { margin-top: 13px; }
+.stash-graph-navigator__group > span { display: block; margin-bottom: 6px; color: var(--graph-muted); font-size: 10px; font-weight: 700; }
+.stash-graph-navigator__links { display: grid; gap: 5px; }
+.stash-graph-navigator__links button { max-width: none; min-height: 34px; padding: 7px 10px; overflow: hidden; border: 1px solid var(--graph-line); border-radius: 8px; color: var(--graph-soft); background: var(--graph-surface); font-size: 11px; font-weight: 600; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.stash-graph-navigator__links button:hover { border-color: var(--graph-faint); color: var(--graph-text); background: var(--graph-hover); }
+.stash-graph-navigator__empty { color: var(--graph-faint); font-size: 11px; font-style: normal; }
+.stash-work-monitor__contents { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+.stash-work-monitor__item { min-width: 0; padding: 9px; border: 1px solid var(--graph-line); border-radius: 9px; background: var(--graph-surface); }
+.stash-work-monitor__item.is-wide { grid-column: 1 / -1; }
+.stash-work-monitor__item span { display: block; margin-bottom: 4px; color: var(--graph-muted); font-size: 10px; font-weight: 700; }
+.stash-work-monitor__item strong, .stash-work-monitor__item small { display: block; overflow: hidden; color: var(--graph-soft); font-size: 11px; font-weight: 550; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
+.stash-work-monitor__item.is-primary { border-color: rgba(233,162,59,.32); background: rgba(233,162,59,.07); }
+.stash-work-monitor__item.is-primary strong { color: #f2d19b; white-space: normal; }
+.stash-work-monitor__item.is-alert { border-color: rgba(219,107,103,.4); background: rgba(219,107,103,.08); }
+.stash-work-monitor__item.is-alert strong { color: #e7aaa7; }
+.stash-work-monitor__item small { margin-top: 3px; color: var(--graph-muted); }
+.stash-work-monitor__path { display: flex; min-width: 0; flex-wrap: wrap; gap: 3px; }
+.stash-work-monitor__path i { color: #b5a9ef; font-size: 10px; font-style: normal; }
+.stash-work-monitor__path i + i::before { margin-right: 3px; color: var(--graph-faint); content: '›'; }
+.stash-work-monitor__state { color: var(--graph-muted); font-size: 11px; }
+.stash-work-monitor__more { grid-column: 1 / -1; border-top: 1px solid var(--graph-line); }
+.stash-work-monitor__more summary { padding: 10px 2px 3px; color: var(--graph-muted); cursor: pointer; font-size: 11px; font-weight: 700; }
+.stash-work-monitor__more summary:hover { color: var(--graph-text); }
+.stash-work-monitor__more summary:focus-visible { outline: 2px solid var(--graph-amber); outline-offset: 2px; }
+.stash-work-monitor__more-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; padding-top: 8px; }
+.stash-work-monitor__state.is-error { color: #e7a09d; }
+.stash-graph-inspector__actions { display: flex; gap: 7px; padding: 12px 18px; border-top: 1px solid var(--graph-line); background: #0d0f11; }
+.stash-graph-inspector__actions button { min-height: 36px; flex: 1 1 auto; border: 1px solid var(--graph-line); border-radius: 8px; color: var(--graph-soft); background: var(--graph-surface); font-size: 11px; font-weight: 700; }
+.stash-graph-inspector__actions button:hover { color: var(--graph-text); background: var(--graph-hover); }
+.stash-graph-inspector__actions .is-primary { color: #18130b; border-color: var(--graph-amber); background: var(--graph-amber); }
+.stash-graph-inspector__actions .is-primary:hover { color: #0a0907; background: #f0b658; }
+
+.stash-graph-empty { min-height: 0; display: grid; flex: 1 1 auto; place-items: center; gap: 9px; padding: 24px; border: 0; border-radius: 0; color: var(--graph-muted); background: var(--graph-bg); font-size: 11px; text-align: center; }
+.stash-graph-empty.is-error { color: #e7a09d; }
+.stash-graph-loading { width: 17px; height: 17px; border: 2px solid var(--graph-line); border-top-color: var(--graph-amber); border-radius: 50%; animation: stash-spin .75s linear infinite; }
+
+@media (max-width: 1280px) {
+    .stash-graph-legend { display: none; }
+}
+
+@media (max-width: 1120px) {
+    .stash-graph-summary { display: none; }
+    .stash-graph-workspace.has-inspector::before { position: absolute; z-index: 24; inset: 0; background: rgba(3,4,5,.62); content: ''; }
+    .stash-graph-inspector { position: absolute; top: 0; right: 0; bottom: 0; width: min(340px, 90vw); min-width: 0; }
+}
+
+@media (max-width: 980px) {
+    .stash-root.is-graph-view .stash-main { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+    .stash-root.is-graph-view .stash-sidebar { display: block; padding: 6px 8px; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--graph-line); scrollbar-width: thin; }
+    .stash-root.is-graph-view .stash-panel { min-height: 0; }
+    .stash-root.is-graph-view .stash-sidebar-label, .stash-root.is-graph-view .stash-nav-divider { display: none; }
+    .stash-root.is-graph-view .stash-sidebar-card { width: max-content; min-width: 100%; }
+    .stash-root.is-graph-view .stash-nav { display: flex !important; flex-direction: row; gap: 3px; }
+    .stash-root.is-graph-view .stash-nav-item { width: auto; min-width: max-content; flex: 0 0 auto; justify-content: center; font-size: 11px; }
+    .stash-root.is-graph-view .stash-nav-icon { display: none; }
+    .stash-graph { height: 100%; }
+    .stash-graph-header { gap: 8px; }
+}
+
+@media (max-width: 680px) {
+    .stash-root.is-graph-view .stash-main { min-height: 0; }
+    .stash-graph { min-height: 0; }
+    .stash-graph-header { min-height: 0; display: block; padding: 7px 10px; }
+    .stash-graph-legend { display: none; }
+    .stash-graph-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto; padding: 0; overflow: visible; }
+    .stash-graph-project span { display: none; }
+    .stash-graph-project, .stash-graph-project:first-child, .stash-graph-project:nth-child(2), .stash-graph-project select { width: 100%; min-width: 0; max-width: none; }
+    .stash-graph .stash-filter-picker { position: static; }
+    .stash-graph .stash-filter-menu { top: calc(100% + 6px); right: 12px; left: 12px; width: auto; }
+    .stash-graph .stash-filter-chips { grid-column: 1 / -1; max-width: 100%; overflow-x: auto; flex-wrap: nowrap; }
+    .stash-graph-scroll { touch-action: none; }
+    .stash-graph-canvas-tools { top: 12px; left: 12px; }
+    .stash-graph-alerts { top: 60px; right: 12px; width: calc(100% - 24px); }
+    .stash-graph-hint { display: none; }
+    .stash-graph-project select, .stash-graph .stash-filter-trigger, .stash-graph .stash-graph-reset,
+    .stash-graph .stash-filter-menu input, .stash-graph .stash-filter-menu select,
+    .stash-graph .stash-filter-menu button, .stash-graph .stash-filter-chip { min-height: 44px; }
+    .stash-graph-canvas-tools button { width: 44px; height: 44px; }
+    .stash-graph-drag-handle { width: 44px; height: 44px; top: 2px; right: 2px; opacity: 1; }
+    .stash-graph-node__actions { display: none; }
+    .stash-graph-inspector { width: 100%; max-width: none; box-shadow: none; }
+    .stash-graph-inspector__header { padding-top: 16px; }
+    .stash-graph-inspector__header > button { width: 44px; height: 44px; top: 7px; right: 7px; }
+    .stash-graph-navigator__links button, .stash-graph-inspector__actions button { min-height: 44px; }
+}
+
+@media (hover: none) {
+    .stash-graph-drag-handle, .stash-graph-node__actions { visibility: visible; opacity: 1; pointer-events: auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .stash-graph *, .stash-graph *::before, .stash-graph *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}

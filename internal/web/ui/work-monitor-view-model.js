@@ -109,24 +109,47 @@
                 const sharedGoal = firstObject([brief.shared_goal, path[0]]) || null;
                 const blockers = list(brief.blockers, checkpoint.blockers, attempt.blockers);
                 const evidence = list(brief.evidence_references, brief.recent_evidence, brief.evidence);
-                const evidenceItem = firstObject(evidence) || {};
                 const windowState = brief.context_window && typeof brief.context_window === 'object' ? brief.context_window : {};
                 const exactBytes = Number(windowState.input_bytes) || 0;
+                const blockerItems = blockers.map(blocker => ({
+                    text: this.monitorBlockerText(blocker),
+                    reference: typeof blocker === 'object' ? text(blocker.reference || blocker.uri) : ''
+                })).filter(blocker => blocker.text || blocker.reference);
+                const evidenceItems = evidence.map(entry => {
+                    if (typeof entry === 'string') return { text: text(entry), reference: '' };
+                    return {
+                        text: text(entry && (entry.summary || entry.title || entry.description)),
+                        reference: text(entry && (entry.reference || entry.uri || entry.content_digest))
+                    };
+                }).filter(entry => entry.text || entry.reference);
                 return {
                     item,
                     sharedGoal,
                     goalPath: path,
                     agent: text(attempt.agent_id || attempt.agent || item.agent_id || item.owner) || '지정 안 됨',
                     status: text(item.status || attempt.status),
-                    blocker: blockers.length ? this.monitorBlockerText(blockers[0]) : '',
+                    blockedByStatus: text(item.status || attempt.status) === 'blocked',
+                    blockers: blockerItems,
+                    blocker: blockerItems[0] ? blockerItems[0].text : '',
                     result: text(checkpoint.result || checkpoint.observed_result || checkpoint.summary),
-                    evidence: text(evidenceItem.summary || evidenceItem.title),
-                    evidenceReference: text(evidenceItem.reference || evidenceItem.uri || evidenceItem.content_digest),
+                    nextAction: text(checkpoint.next_action || attempt.next_action || item.next_action),
+                    evidenceItems,
+                    evidence: evidenceItems[0] ? evidenceItems[0].text : '',
+                    evidenceReference: evidenceItems[0] ? evidenceItems[0].reference : '',
                     inputBytes: exactBytes || inputBytes(brief),
                     inputLimitBytes: Number(windowState.input_limit_bytes) || 0,
                     inputEstimated: !exactBytes,
                     truncated: windowState.truncated === true
                 };
+            },
+
+            selectedWorkMonitorStatus() {
+                const monitor = this.selectedWorkMonitor();
+                const brief = this.workMonitorBrief && typeof this.workMonitorBrief === 'object' ? this.workMonitorBrief : {};
+                const attempt = firstObject([brief.latest_attempt, brief.active_attempt, brief.current_attempt]) || {};
+                const expiresAt = new Date(attempt.lease_expires_at || '');
+                if (text(attempt.status) === 'active' && !Number.isNaN(expiresAt.getTime()) && expiresAt.getTime() <= Date.now()) return 'expired';
+                return monitor.status;
             },
 
             monitorBlockerText(blocker) {

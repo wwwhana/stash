@@ -847,6 +847,187 @@ func (b *Brain) GetWorkGraph(ctx context.Context, namespaceSlugs []string, inclu
 	return &models.WorkGraph{Nodes: nodes, Edges: edges, Worktrees: worktrees}, nil
 }
 
+// WorkGraphCursor fixes the graph membership at the first page and records the
+// last independently returned node and edge. Callers must treat it as opaque.
+type WorkGraphCursor struct {
+	SnapshotAt   time.Time `json:"snapshot_at"`
+	MaxNodeID    int64     `json:"max_node_id"`
+	MaxEdgeID    int64     `json:"max_edge_id"`
+	NodeSet      bool      `json:"node_set,omitempty"`
+	NodePriority int       `json:"node_priority,omitempty"`
+	NodePosition float64   `json:"node_position,omitempty"`
+	NodeID       int64     `json:"node_id,omitempty"`
+	EdgeID       int64     `json:"edge_id,omitempty"`
+}
+
+var ErrWorkGraphCursorStale = fmt.Errorf("brain: work graph continuation is stale; restart get_work_graph")
+
+// GetWorkGraphPage reads bounded node and edge pages directly from PostgreSQL.
+// Inserts after the first call are excluded by ID watermarks. Updates or
+// deletes inside that fixed range explicitly expire the continuation.
+func (b *Brain) GetWorkGraphPage(ctx context.Context, namespaceSlugs []string, includeDone bool, cursor *WorkGraphCursor, nodeLimit, edgeLimit int) (*models.WorkGraph, WorkGraphCursor, bool, bool, error) {
+	nsIDs, err := b.resolveNamespaceIDs(ctx, namespaceSlugs)
+	if err != nil {
+		return nil, WorkGraphCursor{}, false, false, err
+	}
+	nodeLimit = Pagination{Limit: nodeLimit}.Sanitize().Limit
+	edgeLimit = Pagination{Limit: edgeLimit}.Sanitize().Limit
+	tx, err := b.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return nil, WorkGraphCursor{}, false, false, fmt.Errorf("begin work graph page: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	state := WorkGraphCursor{}
+	if cursor == nil {
+		if err := tx.QueryRow(ctx, `SELECT clock_timestamp(), coalesce(max(id), 0) FROM work_items WHERE namespace_id = ANY($1)`, nsIDs).Scan(&state.SnapshotAt, &state.MaxNodeID); err != nil {
+			return nil, state, false, false, fmt.Errorf("snapshot work graph nodes: %w", err)
+		}
+		if err := tx.QueryRow(ctx, `SELECT coalesce(max(id), 0) FROM work_item_edges WHERE namespace_id = ANY($1)`, nsIDs).Scan(&state.MaxEdgeID); err != nil {
+			return nil, state, false, false, fmt.Errorf("snapshot work graph edges: %w", err)
+		}
+	} else {
+		state = *cursor
+		var changed bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (
+			SELECT 1 FROM work_items WHERE namespace_id = ANY($1) AND id <= $2 AND updated_at > $3
+			UNION ALL SELECT 1 FROM work_item_edges WHERE namespace_id = ANY($1) AND id <= $4 AND deleted_at > $3
+		)`, nsIDs, state.MaxNodeID, state.SnapshotAt, state.MaxEdgeID).Scan(&changed); err != nil {
+			return nil, state, false, false, fmt.Errorf("validate work graph continuation: %w", err)
+		}
+		if changed {
+			return nil, state, false, false, ErrWorkGraphCursorStale
+		}
+	}
+	statusClause := ""
+	if !includeDone {
+		statusClause = " AND status NOT IN ('done', 'canceled')"
+	}
+	nodeRows, err := tx.Query(ctx, `SELECT `+workItemColumns+` FROM work_items
+		WHERE namespace_id = ANY($1) AND id <= $2 AND deleted_at IS NULL`+statusClause+`
+		AND (NOT $3 OR priority < $4 OR (priority = $4 AND (position > $5 OR (position = $5 AND id > $6))))
+		ORDER BY priority DESC, position, id LIMIT $7`, nsIDs, state.MaxNodeID, state.NodeSet, state.NodePriority, state.NodePosition, state.NodeID, nodeLimit+1)
+	if err != nil {
+		return nil, state, false, false, fmt.Errorf("list work graph node page: %w", err)
+	}
+	nodes, err := scanWorkItemRows(nodeRows)
+	if err != nil {
+		return nil, state, false, false, err
+	}
+	nodeMore := len(nodes) > nodeLimit
+	if nodeMore {
+		nodes = nodes[:nodeLimit]
+	}
+	if len(nodes) > 0 {
+		last := nodes[len(nodes)-1]
+		state.NodeSet, state.NodePriority, state.NodePosition, state.NodeID = true, last.Priority, last.Position, last.ID
+	}
+	// Worktree IDs and capabilities use the same repeatable-read snapshot as
+	// the page rows, so a response cannot mix states from concurrent writes.
+	nodes, err = attachWorkGraphPageDetails(ctx, tx, nodes)
+	if err != nil {
+		return nil, state, false, false, err
+	}
+	edgeRows, err := tx.Query(ctx, `SELECT edge.id, edge.namespace_id, edge.from_item_id, edge.to_item_id, edge.edge_type, edge.created_at, edge.deleted_at
+		FROM work_item_edges edge
+		JOIN work_items source_item ON source_item.id=edge.from_item_id AND source_item.namespace_id=edge.namespace_id AND source_item.deleted_at IS NULL
+		JOIN work_items target_item ON target_item.id=edge.to_item_id AND target_item.namespace_id=edge.namespace_id AND target_item.deleted_at IS NULL
+		WHERE edge.namespace_id = ANY($1) AND edge.id <= $2 AND edge.id > $3 AND edge.deleted_at IS NULL
+		AND ($4 OR (source_item.status NOT IN ('done','canceled') AND target_item.status NOT IN ('done','canceled')))
+		ORDER BY edge.id LIMIT $5`, nsIDs, state.MaxEdgeID, state.EdgeID, includeDone, edgeLimit+1)
+	if err != nil {
+		return nil, state, false, false, fmt.Errorf("list work graph edge page: %w", err)
+	}
+	edges, err := scanWorkItemEdges(edgeRows)
+	if err != nil {
+		return nil, state, false, false, err
+	}
+	edgeMore := len(edges) > edgeLimit
+	if edgeMore {
+		edges = edges[:edgeLimit]
+	}
+	if len(edges) > 0 {
+		state.EdgeID = edges[len(edges)-1].ID
+	}
+	var worktreeRows pgx.Rows
+	if nodeMore || edgeMore {
+		worktreeIDs := make([]int64, 0)
+		seen := make(map[int64]struct{})
+		for _, node := range nodes {
+			for _, id := range node.WorktreeIDs {
+				if _, ok := seen[id]; !ok {
+					seen[id] = struct{}{}
+					worktreeIDs = append(worktreeIDs, id)
+				}
+			}
+		}
+		worktreeRows, err = tx.Query(ctx, `SELECT `+worktreeColumns+` FROM worktrees WHERE id = ANY($1) AND deleted_at IS NULL ORDER BY updated_at DESC, id`, worktreeIDs)
+	} else {
+		worktreeRows, err = tx.Query(ctx, `SELECT `+worktreeColumns+` FROM worktrees WHERE namespace_id = ANY($1) AND deleted_at IS NULL ORDER BY updated_at DESC, id`, nsIDs)
+	}
+	if err != nil {
+		return nil, state, false, false, fmt.Errorf("list work graph page worktrees: %w", err)
+	}
+	worktrees, err := scanWorktreeRows(worktreeRows)
+	if err != nil {
+		return nil, state, false, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, state, false, false, fmt.Errorf("commit work graph page: %w", err)
+	}
+	return &models.WorkGraph{Nodes: nodes, Edges: edges, Worktrees: worktrees}, state, nodeMore, edgeMore, nil
+}
+
+func attachWorkGraphPageDetails(ctx context.Context, tx pgx.Tx, items []models.WorkItem) ([]models.WorkItem, error) {
+	if len(items) == 0 {
+		return items, nil
+	}
+	ids := make([]int64, len(items))
+	byID := make(map[int64]int, len(items))
+	for i := range items {
+		ids[i], byID[items[i].ID] = items[i].ID, i
+		items[i].RequiredCapabilities = []string{}
+	}
+	rows, err := tx.Query(ctx, `SELECT wiwt.work_item_id, array_agg(wiwt.worktree_id ORDER BY wiwt.worktree_id)
+		FROM work_item_worktrees wiwt JOIN worktrees wt ON wt.id=wiwt.worktree_id AND wt.deleted_at IS NULL
+		WHERE wiwt.work_item_id=ANY($1) GROUP BY wiwt.work_item_id`, ids)
+	if err != nil {
+		return nil, fmt.Errorf("list work graph page worktree links: %w", err)
+	}
+	for rows.Next() {
+		var id int64
+		var linked []int64
+		if err := rows.Scan(&id, &linked); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("scan work graph page worktree links: %w", err)
+		}
+		items[byID[id]].WorktreeIDs = linked
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, fmt.Errorf("read work graph page worktree links: %w", err)
+	}
+	rows.Close()
+	rows, err = tx.Query(ctx, `SELECT work_item_id, array_agg(capability ORDER BY capability) FROM work_item_capabilities WHERE work_item_id=ANY($1) GROUP BY work_item_id`, ids)
+	if err != nil {
+		return nil, fmt.Errorf("list work graph page capabilities: %w", err)
+	}
+	for rows.Next() {
+		var id int64
+		var capabilities []string
+		if err := rows.Scan(&id, &capabilities); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("scan work graph page capabilities: %w", err)
+		}
+		items[byID[id]].RequiredCapabilities = capabilities
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, fmt.Errorf("read work graph page capabilities: %w", err)
+	}
+	rows.Close()
+	return items, nil
+}
+
 func (b *Brain) attachWorktreeIDs(ctx context.Context, items []models.WorkItem) ([]models.WorkItem, error) {
 	if len(items) == 0 {
 		return items, nil

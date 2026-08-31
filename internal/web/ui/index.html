@@ -12,7 +12,9 @@
     <script defer src="/api-client.js"></script>
     <script defer src="/route-view-model.js"></script>
     <script defer src="/map-scope-view-model.js"></script>
+    <script defer src="/work-board-scope-view-model.js"></script>
     <script defer src="/work-graph-view-model.js"></script>
+    <script defer src="/graph-viewport-view-model.js"></script>
     <script defer src="/work-monitor-view-model.js"></script>
     <script defer src="/project-monitor-view-model.js"></script>
     <script defer src="/goal-map-view-model.js"></script>
@@ -130,6 +132,12 @@
         .stash-kanban .stash-issue-card { width: 100%; display: block; padding: 12px !important; border: 1px solid #e3e7ee !important; border-radius: 10px !important; color: inherit; background: #fff !important; box-shadow: var(--stash-shadow-sm); text-align: left; transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease; }
         .stash-kanban .stash-issue-card:hover { border-color: #b8c0f7 !important; box-shadow: 0 7px 18px rgba(16,24,40,.08); transform: translateY(-1px); }
         .stash-kanban .stash-issue-card.is-move-locked { cursor: pointer; }
+        .stash-issue-card__open { display: block; width: 100%; padding: 0; border: 0; color: inherit; background: transparent; text-align: left; }
+        .stash-issue-card__open > span { display: flex; }
+        .stash-issue-card__open > .stash-issue-card-title { display: block; }
+        .stash-issue-card__status { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 7px; margin-top: 10px; padding-top: 9px; border-top: 1px solid #edf0f5; color: var(--stash-subtle); font-size: 9px; font-weight: 800; cursor: default; }
+        .stash-issue-card__status select { width: 100%; min-height: 30px; padding: 4px 26px 4px 7px; border: 1px solid var(--stash-line); border-radius: 7px; color: #475467; background: #fff; font-size: 10px; }
+        .stash-issue-card__open:focus-visible, .stash-issue-card__status select:focus-visible { border-radius: 7px; outline: 3px solid rgba(129,140,248,.3); outline-offset: 2px; }
         .stash-kanban .stash-issue-card h3 { min-height: 38px; overflow-wrap: anywhere; }
         .stash-issue-detail { position: fixed !important; top: 0; right: 0; z-index: 60; width: min(640px, 100%); height: 100vh; height: 100dvh; max-height: 100vh; max-height: 100dvh; margin: 0 !important; overflow-y: auto; border: 0 !important; border-left: 1px solid var(--stash-line) !important; border-radius: 0 !important; background: #fff !important; box-shadow: -18px 0 40px rgba(15,23,42,.18), 0 0 0 100vmax rgba(15,23,42,.45); }
         .stash-issue-detail h3 { color: var(--stash-ink); font-size: 18px; }
@@ -181,7 +189,11 @@
             .stash-board-toolbar input, .stash-board-toolbar select { flex: 1; min-width: 0; }
             .stash-issue-form { grid-template-columns: 1fr; }
             .stash-issue-form .col-span-5, .stash-issue-form .col-span-2, .stash-issue-form .col-span-3, .stash-issue-form .col-span-10 { grid-column: auto; }
-            .stash-kanban { grid-template-columns: repeat(7, minmax(232px, 1fr)) !important; }
+            .stash-kanban-scroll { overflow: visible; padding: 0; }
+            .stash-kanban { width: 100%; grid-template-columns: 1fr !important; }
+            .stash-kanban > div { min-height: 0; }
+            .stash-kanban > div.is-empty { display: none; }
+            .stash-kanban__empty { display: none; }
             .stash-agent textarea { min-height: 470px; }
             .stash-text-output, .stash-result-content { min-height: 470px; padding: 15px !important; font-size: 11px; }
             .stash-issue-detail { width: 100%; }
@@ -584,6 +596,7 @@
         .stash-monitor-status.is-blocked { color: #b42318; background: #fff0f0; }
         .stash-monitor-status.is-review { color: #7e22ce; background: #f6edff; }
         .stash-monitor-status.is-done { color: #047857; background: #e8f7ef; }
+        .stash-monitor-status.is-expired { color: #b42318; background: #fff0f0; }
         .stash-monitor-blocker { display: block; overflow: hidden; color: #b42318; text-overflow: ellipsis; white-space: nowrap; }
         .stash-monitor-cell-text { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .stash-monitor-empty-row { padding: 30px !important; color: var(--stash-muted) !important; text-align: center; }
@@ -732,6 +745,20 @@
             .stash-monitor-selected__actions { margin-top: 9px; }
             .stash-monitor-detail { grid-template-columns: repeat(2, minmax(0, 1fr)); }
             .stash-monitor-detail > div.is-wide { grid-column: span 2; }
+            .stash-monitor-table-wrap { overflow: visible; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+            .stash-monitor-table { min-width: 0; display: block; }
+            .stash-monitor-table thead { display: none; }
+            .stash-monitor-table tbody { display: grid; gap: 9px; }
+            .stash-monitor-table tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 10px; padding: 11px; border: 1px solid var(--stash-line); border-radius: 10px; background: #fff; box-shadow: var(--stash-shadow-sm); }
+            .stash-monitor-table tr.is-selected { border-color: #b8c0f7; background: #f5f6ff; }
+            .stash-monitor-table td { min-width: 0; display: block; padding: 0; border: 0; background: transparent !important; }
+            .stash-monitor-table td:first-child, .stash-monitor-table td:nth-child(4), .stash-monitor-table td:nth-child(5), .stash-monitor-table td:nth-child(6) { grid-column: 1 / -1; }
+            .stash-monitor-table td:nth-child(4), .stash-monitor-table td:nth-child(5), .stash-monitor-table td:nth-child(6) { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 7px; color: #667085; }
+            .stash-monitor-table td:nth-child(4)::before { content: '막힘'; }
+            .stash-monitor-table td:nth-child(5)::before { content: '최근 결과'; }
+            .stash-monitor-table td:nth-child(6)::before { content: '다음 할 일'; }
+            .stash-monitor-table td:nth-child(4)::before, .stash-monitor-table td:nth-child(5)::before, .stash-monitor-table td:nth-child(6)::before { color: #98a2b3; font-size: 9px; font-weight: 800; }
+            .stash-monitor-empty-row { grid-column: 1 / -1 !important; padding: 22px !important; }
             .stash-goal-map { padding: 10px; }
             .stash-goal-map__header, .stash-goal-map__toolbar { display: block; }
             .stash-goal-map__legend, .stash-goal-map__summary { margin-top: 8px; }
@@ -778,9 +805,10 @@
             .stash-maintenance-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         }
     </style>
+    <link rel="stylesheet" href="/work-graph-board.css">
 </head>
 <body class="stash-body bg-gray-50 text-gray-800 font-sans antialiased">
-    <div x-data="stashConsole()" class="stash-root">
+    <div x-data="stashConsole()" class="stash-root" :class="{'is-graph-view': view === 'graph'}">
         <section x-show="!authChecked || authLoading" class="stash-auth-screen" aria-live="polite">
             <div class="stash-auth-card">
                 <div class="stash-auth-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M6 4.75h12A1.25 1.25 0 0 1 19.25 6v12A1.25 1.25 0 0 1 18 19.25H6A1.25 1.25 0 0 1 4.75 18V6A1.25 1.25 0 0 1 6 4.75Z"/><path stroke-linecap="round" d="M8 9h8M8 12h5M8 15h3"/></svg></div>
@@ -800,7 +828,7 @@
         </section>
         <div x-show="authChecked && !authLoading && (!authRequired() || auth.authenticated)" x-cloak class="stash-app min-h-screen flex flex-col">
         <!-- Header -->
-        <header class="stash-topbar bg-indigo-600 text-white shadow-md">
+        <header class="stash-topbar bg-indigo-600 text-white shadow-md" :inert="view === 'graph' && graphFocusedItem() && graphInspectorIsOverlay()">
             <div class="stash-topbar__inner">
                 <h1 class="stash-brand text-xl font-bold flex items-center gap-2">
                     <span class="stash-brand-copy"><strong>Stash</strong></span>
@@ -832,7 +860,7 @@
         <!-- Main Content -->
         <main class="stash-main">
             <!-- Sidebar / Controls -->
-            <aside class="stash-sidebar">
+            <aside class="stash-sidebar" :inert="view === 'graph' && graphFocusedItem() && graphInspectorIsOverlay()">
                 <div class="stash-sidebar-card bg-white p-4 rounded-lg shadow-sm border border-gray-100">
                     <h2 class="stash-sidebar-label text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">작업 공간</h2>
                     <nav class="stash-nav flex flex-col gap-2">
@@ -885,7 +913,8 @@
                                 </article>
                             </template>
                         </div>
-                        <div x-show="!resultItems().length && !loading" class="stash-result-empty">표시할 항목이 없습니다.</div>
+                        <div x-show="listError && !loading" class="stash-result-empty" role="alert"><span x-text="listError"></span><br><button type="button" class="stash-btn" @click="loadListPage()">다시 시도</button></div>
+                        <div x-show="!listError && !resultItems().length && !loading" class="stash-result-empty">표시할 항목이 없습니다.</div>
                         <details class="stash-result-raw"><summary>원문 데이터 보기</summary><pre x-text="result"></pre></details>
                         <div x-show="listPage.tool && (listPage.offset > 0 || listPage.hasNext)" class="stash-pagination">
                             <button type="button" @click="previousListPage()" :disabled="loading || listPage.offset === 0">이전</button>
@@ -894,10 +923,10 @@
                         </div>
                     </div>
 
-                    <div x-show="view === 'board' || selectedIssue" x-cloak class="stash-board min-w-[1100px] min-h-[560px] p-4 bg-gray-100 text-gray-800">
+                    <div x-show="view === 'board' || selectedIssue" x-cloak class="stash-board min-h-[560px] p-4 bg-gray-100 text-gray-800">
                         <div x-show="view === 'board'">
                         <div class="stash-board-intro">
-                            <div><h3>작업 현황</h3><p>상태를 바꾸거나 카드를 눌러 이슈의 논의와 근거를 확인하세요.</p></div>
+                            <div><h3>이슈 보드</h3><p x-text="workBoardScopeLabel()"></p></div>
                             <div class="stash-board-stats" aria-label="이슈 요약">
                                 <div class="stash-board-stat is-indigo"><strong x-text="graph.nodes.length"></strong><span>표시 중</span></div>
                                 <div class="stash-board-stat"><strong x-text="boardItems('doing').length"></strong><span>진행 중</span></div>
@@ -906,6 +935,8 @@
                             </div>
                         </div>
                         <div class="stash-board-toolbar flex flex-wrap items-center gap-2 mb-3" role="search" aria-label="이슈 필터">
+                            <label class="stash-field"><span>프로젝트</span><select x-model="boardProjectSlug" @change="changeWorkBoardProject()" :disabled="mapNamespacesLoading || loading" aria-label="이슈 보드 프로젝트 선택" class="px-3 py-2 text-sm rounded border border-gray-300 bg-white"><option value="">전체</option><template x-for="project in boardProjects()" :key="'board-project-' + project.slug"><option :value="project.slug" x-text="project.label"></option></template></select></label>
+                            <label class="stash-field"><span>범위</span><select x-model="boardNamespaceSlug" @change="changeWorkBoardNamespace()" :disabled="mapNamespacesLoading || loading" aria-label="이슈 보드 범위 선택" class="px-3 py-2 text-sm rounded border border-gray-300 bg-white"><option value="" x-text="boardProjectSlug ? '프로젝트 전체' : '전체'"></option><template x-for="namespace in boardNamespaces()" :key="'board-namespace-' + namespace.slug"><option :value="namespace.slug" x-text="namespace.label"></option></template></select></label>
                             <label class="stash-search-wrap"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path stroke-linecap="round" d="m16 16 4 4"></path></svg><input x-model="boardFilter.q" @keydown.enter="loadWorkBoard()" :disabled="loading" placeholder="이슈 검색" aria-label="이슈 검색" class="px-3 py-2 text-sm rounded border border-gray-300 bg-white w-56"></label>
                             <select x-model="boardFilter.issueType" @change="loadWorkBoard()" :disabled="loading" aria-label="이슈 종류" class="px-3 py-2 text-sm rounded border border-gray-300 bg-white">
                                 <option value="">모든 종류</option>
@@ -920,7 +951,7 @@
                             <button type="button" @click="issueFormOpen = !issueFormOpen" :disabled="loading" class="stash-btn stash-btn-primary"><span x-text="issueFormOpen ? '작성 닫기' : '이슈 만들기'"></span></button>
                         </div>
                         <form x-show="issueFormOpen" x-cloak @submit.prevent="createIssue" class="stash-issue-form mb-3 grid grid-cols-12 gap-2 rounded-lg bg-white p-3 border border-gray-200">
-                            <div class="stash-issue-form__heading"><span>새 이슈</span><span class="stash-issue-form__hint">제목과 유형을 입력하세요.</span></div>
+                            <div class="stash-issue-form__heading"><span>새 이슈</span></div>
                             <div class="stash-field stash-field--title"><label for="issue-title">제목</label><input id="issue-title" x-model="issueForm.title" required placeholder="예: 로그인 실패 원인 조사" class="px-3 py-2 text-sm rounded border border-gray-300"></div>
                             <div class="stash-field stash-field--type"><label for="issue-type">유형</label><select id="issue-type" x-model="issueForm.issueType" class="px-3 py-2 text-sm rounded border border-gray-300">
                                 <option value="task">작업</option><option value="bug">버그</option><option value="feature">기능</option><option value="chore">정리</option><option value="question">질문</option>
@@ -936,11 +967,11 @@
                             <div class="stash-board-state__content"><strong>이슈를 불러오지 못했습니다.</strong><span x-text="boardError"></span><button type="button" class="stash-btn" @click="loadWorkBoard(false)">다시 시도</button></div>
                         </div>
                         <div x-show="!loading && !boardError && !graph.nodes.length" x-cloak class="stash-board-state">
-                            <div class="stash-board-state__content"><strong x-text="boardHasFilters() ? '조건에 맞는 이슈가 없습니다.' : '등록된 이슈가 없습니다.'"></strong><button x-show="boardHasFilters()" type="button" class="stash-btn" @click="clearBoardFilters()">필터 지우기</button></div>
+                            <div class="stash-board-state__content"><strong x-text="boardPage.offset > 0 ? '이 쪽에는 이슈가 없습니다.' : (boardHasFilters() ? '조건에 맞는 이슈가 없습니다.' : '등록된 이슈가 없습니다.')"></strong><button x-show="boardHasFilters() && boardPage.offset === 0" type="button" class="stash-btn" @click="clearBoardFilters()">필터 지우기</button></div>
                         </div>
                         <div x-show="!loading && !boardError && graph.nodes.length" x-cloak class="stash-kanban-scroll"><div class="stash-kanban grid grid-cols-7 gap-3">
                             <template x-for="column in boardColumns" :key="column.status">
-                                <div class="rounded-lg bg-gray-200 p-2 min-h-[520px]" :class="'status-' + column.status" @dragover.prevent @drop="dropWorkItem(column.status)">
+                                <div class="rounded-lg bg-gray-200 p-2 min-h-[520px]" :class="['status-' + column.status, {'is-empty': !boardItems(column.status).length}]" @dragover.prevent @drop="dropWorkItem(column.status)">
                                     <div class="stash-kanban__header flex items-center justify-between px-2 pb-2">
                                         <h3 class="text-sm font-semibold" x-text="column.label"></h3>
                                         <span class="stash-kanban__count" x-text="boardItems(column.status).length"></span>
@@ -948,25 +979,28 @@
                                     <div class="space-y-2">
                                         <div x-show="!boardItems(column.status).length" class="stash-kanban__empty">이 상태의 이슈가 없습니다.</div>
                                         <template x-for="item in boardItems(column.status)" :key="item.id">
-                                            <button type="button" :draggable="!hasActiveIssueAttempt(item)" @dragstart="startWorkItemDrag(item, $event)" @click="openIssue(item.id, $event.currentTarget)" :aria-label="'이슈 열기: ' + item.title" :title="hasActiveIssueAttempt(item) ? '실행 중에는 카드를 옮길 수 없습니다.' : ''" :class="{'is-move-locked': hasActiveIssueAttempt(item)}" class="stash-issue-card cursor-grab rounded-md bg-white p-3 shadow-sm border border-gray-200 active:cursor-grabbing hover:border-indigo-300">
-                                                <div class="flex items-center justify-between gap-2"><span class="stash-issue-card-key" x-text="item.issue_key || '#' + item.id"></span><span class="stash-issue-card-badges"><span x-show="hasActiveIssueAttempt(item)" class="stash-issue-card-state">실행 중</span><span class="stash-issue-card-type" x-text="issueTypeLabel(item.issue_type)"></span></span></div>
-                                                <div class="stash-issue-card-title" x-text="item.title"></div>
-                                                <div x-show="itemLabels(item).length" class="mt-2 flex flex-wrap gap-1"><template x-for="label in itemLabels(item)" :key="label"><span class="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 text-[11px]" x-text="label"></span></template></div>
-                                                <div class="stash-issue-card-meta"><span x-show="item.owner" class="stash-issue-card-owner" x-text="item.owner"></span><span x-show="item.worktree_ids && item.worktree_ids.length" x-text="'Git 연결 ' + ((item.worktree_ids && item.worktree_ids.length) || 0)"></span></div>
-                                            </button>
+                                            <article :draggable="!hasActiveIssueAttempt(item)" @dragstart="startWorkItemDrag(item, $event)" :title="hasActiveIssueAttempt(item) ? '실행 중에는 카드를 옮길 수 없습니다.' : ''" :class="{'is-move-locked': hasActiveIssueAttempt(item)}" class="stash-issue-card cursor-grab rounded-md bg-white p-3 shadow-sm border border-gray-200 active:cursor-grabbing hover:border-indigo-300">
+                                                <button type="button" class="stash-issue-card__open" @click="openIssue(item.id, $event.currentTarget)" :aria-label="'이슈 열기: ' + item.title">
+                                                    <span class="flex items-center justify-between gap-2"><span class="stash-issue-card-key" x-text="item.issue_key || '#' + item.id"></span><span class="stash-issue-card-badges"><span x-show="hasActiveIssueAttempt(item)" class="stash-issue-card-state">실행 중</span><span class="stash-issue-card-type" x-text="issueTypeLabel(item.issue_type)"></span></span></span>
+                                                    <span class="stash-issue-card-title" x-text="item.title"></span>
+                                                    <span x-show="itemLabels(item).length" class="mt-2 flex flex-wrap gap-1"><template x-for="label in itemLabels(item)" :key="label"><span class="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 text-[11px]" x-text="label"></span></template></span>
+                                                    <span class="stash-issue-card-meta"><span x-show="item.owner" class="stash-issue-card-owner" x-text="item.owner"></span><span x-show="item.worktree_ids && item.worktree_ids.length" x-text="'Git 연결 ' + ((item.worktree_ids && item.worktree_ids.length) || 0)"></span></span>
+                                                </button>
+                                                <label class="stash-issue-card__status" @pointerdown.stop><span>상태</span><select :value="item.status" @change.stop="changeBoardItemStatus(item, $event.target.value, $event.target)" :disabled="loading || hasActiveIssueAttempt(item)" :aria-label="(item.issue_key || '#' + item.id) + ' 상태'"><template x-for="option in boardColumns" :key="'card-status-' + item.id + '-' + option.status"><option :value="option.status" :disabled="issueCompletionRequiresFinishWork(option.status, item)" x-text="option.label"></option></template></select></label>
+                                            </article>
                                         </template>
                                     </div>
                                 </div>
                             </template>
                         </div></div>
-                        <div x-show="!loading && !boardError && graph.nodes.length && (boardPage.offset > 0 || boardPage.hasNext)" class="stash-pagination">
+                        <div x-show="!loading && !boardError && (boardPage.offset > 0 || boardPage.hasNext)" class="stash-pagination">
                             <button type="button" @click="previousBoardPage()" :disabled="loading || boardPage.offset === 0">이전</button>
                             <span class="stash-pagination__page" x-text="pageLabel(boardPage)"></span>
                             <button type="button" @click="nextBoardPage()" :disabled="loading || !boardPage.hasNext">다음</button>
                         </div>
                         </div>
                         <div x-show="selectedIssue" x-cloak @click="closeIssue()" class="stash-drawer-backdrop" aria-hidden="true"></div>
-                        <section x-show="selectedIssue" x-cloak x-ref="issueDrawer" @keydown.escape.window="closeIssue()" @keydown.tab="trapIssueDrawerFocus($event)" class="stash-issue-detail mt-4 rounded-lg bg-white border border-gray-200 p-4 max-w-3xl" role="dialog" aria-modal="true" aria-labelledby="issue-drawer-title">
+                        <section x-show="selectedIssue" x-cloak x-ref="issueDrawer" @keydown.escape.window="if (selectedIssue) { $event.preventDefault(); $event.stopImmediatePropagation(); closeIssue(); }" @keydown.tab="trapIssueDrawerFocus($event)" class="stash-issue-detail mt-4 rounded-lg bg-white border border-gray-200 p-4 max-w-3xl" role="dialog" aria-modal="true" aria-labelledby="issue-drawer-title">
                             <div class="stash-issue-detail__header flex items-start justify-between gap-3">
                                 <div>
                                     <div class="stash-issue-card-key" x-text="selectedIssue && (selectedIssue.issue_key || '#' + selectedIssue.id)"></div>
@@ -1186,7 +1220,7 @@
                     <div x-show="view === 'monitor'" x-cloak class="stash-monitor" aria-label="작업 관제">
                         <div class="stash-monitor-toolbar" aria-label="작업 관제 필터">
                             <label class="stash-field"><span>프로젝트</span><select x-model="projectMonitorProjectSlug" @change="changeProjectMonitorProject()" :disabled="mapNamespacesLoading || projectMonitorLoading" aria-label="작업 관제 프로젝트 선택"><option value="">프로젝트 선택</option><template x-for="project in projectMonitorProjects()" :key="'monitor-project-' + project.slug"><option :value="project.slug" x-text="project.label"></option></template></select></label>
-                            <label class="stash-field"><span>상태</span><select x-model="projectMonitorFilter.status" @change="projectMonitorFilterChanged()"><option value="">전체</option><option value="backlog">대기</option><option value="ready">준비</option><option value="doing">진행 중</option><option value="blocked">막힘</option><option value="review">검토</option><option value="done">완료</option></select></label>
+                            <label class="stash-field"><span>상태</span><select x-model="projectMonitorFilter.status" @change="projectMonitorFilterChanged()"><option value="">전체</option><option value="backlog">대기</option><option value="ready">준비</option><option value="doing">진행 중</option><option value="blocked">막힘</option><option value="review">검토</option><option value="done">완료</option><option value="canceled">취소</option><option value="expired">연결 만료</option></select></label>
                             <label class="stash-field"><span>담당</span><select x-model="projectMonitorFilter.agent" @change="projectMonitorFilterChanged()"><option value="">전체</option><template x-for="agent in projectMonitorAgents()" :key="'monitor-agent-' + agent"><option :value="agent" x-text="agent"></option></template></select></label>
                             <button type="button" class="stash-btn" @click="resetProjectMonitorFilters()" :disabled="!projectMonitorHasFilters()">초기화</button>
                         </div>
@@ -1200,10 +1234,15 @@
                             <div class="stash-monitor-summary">
                                 <div class="stash-monitor-goal"><span>공통 목표</span><strong x-text="projectMonitorRootGoal() ? projectMonitorRootGoal().content : '연결 안 됨'"></strong><small x-text="projectMonitorRootGoal() ? projectMonitorProgress(projectMonitorRootGoal().progress) : ''"></small></div>
                                 <div class="stash-monitor-stats" aria-label="작업 요약">
+                                    <div class="stash-monitor-stat"><strong x-text="projectMonitorCount('')"></strong><span>전체</span></div>
+                                    <div class="stash-monitor-stat"><strong x-text="projectMonitorCount('backlog')"></strong><span>대기</span></div>
+                                    <div class="stash-monitor-stat"><strong x-text="projectMonitorCount('ready')"></strong><span>준비</span></div>
                                     <div class="stash-monitor-stat"><strong x-text="projectMonitorCount('doing')"></strong><span>진행</span></div>
                                     <div class="stash-monitor-stat is-red"><strong x-text="projectMonitorCount('blocked')"></strong><span>막힘</span></div>
                                     <div class="stash-monitor-stat"><strong x-text="projectMonitorCount('review')"></strong><span>검토</span></div>
                                     <div class="stash-monitor-stat is-green"><strong x-text="projectMonitorCount('done')"></strong><span>완료</span></div>
+                                    <div class="stash-monitor-stat"><strong x-text="projectMonitorCount('canceled')"></strong><span>취소</span></div>
+                                    <div class="stash-monitor-stat is-red"><strong x-text="projectMonitorCount('expired')"></strong><span>연결 만료</span></div>
                                 </div>
                             </div>
 
@@ -1217,16 +1256,18 @@
                                     </div>
                                 </div>
                                 <template x-if="workMonitorLoading"><div class="stash-monitor-detail" role="status"><div class="is-wide"><span>작업 현황</span><strong>불러오는 중</strong></div></div></template>
-                                <template x-if="!workMonitorLoading && workMonitorError"><div class="stash-monitor-detail"><div class="is-wide"><span>오류</span><strong x-text="workMonitorError"></strong></div></div></template>
+                                <template x-if="!workMonitorLoading && workMonitorError"><div class="stash-monitor-detail"><div class="is-wide"><span>오류</span><strong x-text="workMonitorError"></strong><small><button type="button" class="stash-btn" @click="loadWorkMonitor(projectMonitorSelectedID, true)">다시 시도</button></small></div></div></template>
                                 <template x-if="!workMonitorLoading && !workMonitorError && workMonitorBrief"><div class="stash-monitor-detail">
                                     <div class="is-wide"><span>공통 목표</span><strong x-text="monitorGoalText(selectedWorkMonitor().sharedGoal) || '연결 안 됨'"></strong></div>
                                     <div class="is-wide"><span>목표 경로</span><div class="stash-monitor-detail__path"><template x-for="goal in selectedWorkMonitor().goalPath" :key="'project-monitor-goal-' + goal.id"><i x-text="monitorGoalText(goal)"></i></template><i x-show="!selectedWorkMonitor().goalPath.length">연결 안 됨</i></div></div>
                                     <div><span>담당</span><strong x-text="selectedWorkMonitor().agent"></strong></div>
-                                    <div><span>상태</span><strong x-text="statusLabel(selectedWorkMonitor().status || (projectMonitorSelectedItem() && projectMonitorSelectedItem().status))"></strong></div>
-                                    <div><span>공유 입력</span><strong x-text="monitorInputLabel()"></strong></div>
-                                    <div><span>막힘</span><strong x-text="selectedWorkMonitor().blocker || '없음'"></strong></div>
+                                    <div><span>상태</span><strong x-text="statusLabel(projectMonitorSelectedItem() ? projectMonitorDisplayStatus(projectMonitorSelectedItem()) : selectedWorkMonitorStatus())"></strong></div>
+                                    <div><span>작업에 전달된 내용</span><strong x-text="monitorInputLabel()"></strong></div>
+                                    <div><span>막힘 상태</span><strong x-text="selectedWorkMonitor().blockedByStatus ? '막힘' : '아님'"></strong></div>
+                                    <div class="is-wide"><span>막는 작업·사유</span><div class="stash-monitor-detail__path"><template x-for="(blocker, index) in selectedWorkMonitor().blockers" :key="'project-monitor-blocker-' + index"><i><span x-text="blocker.text || '내용 없음'"></span><small x-show="blocker.reference" x-text="blocker.reference"></small></i></template><i x-show="!selectedWorkMonitor().blockers.length">없음</i></div></div>
+                                    <div class="is-wide"><span>다음 할 일</span><strong x-text="selectedWorkMonitor().nextAction || '정하지 않음'"></strong></div>
                                     <div class="is-wide"><span>최근 결과</span><strong x-text="selectedWorkMonitor().result || '없음'"></strong></div>
-                                    <div class="is-wide"><span>근거</span><strong x-text="selectedWorkMonitor().evidence || '없음'"></strong><small x-show="selectedWorkMonitor().evidenceReference" x-text="selectedWorkMonitor().evidenceReference"></small></div>
+                                    <div class="is-wide"><span>근거</span><div class="stash-monitor-detail__path"><template x-for="(evidence, index) in selectedWorkMonitor().evidenceItems" :key="'project-monitor-evidence-' + index"><i><span x-text="evidence.text || '설명 없음'"></span><small x-show="evidence.reference" x-text="evidence.reference"></small></i></template><i x-show="!selectedWorkMonitor().evidenceItems.length">없음</i></div></div>
                                 </div></template>
                             </section>
 
@@ -1237,8 +1278,8 @@
                                         <template x-for="item in projectMonitorRows()" :key="'project-monitor-work-' + item.id"><tr :class="{'is-selected': Number(projectMonitorSelectedID) === Number(item.id)}">
                                             <td><button type="button" class="stash-monitor-work-button" @click="selectProjectMonitorWork(item)"><b x-text="item.issue_key || '#' + item.id"></b><span x-text="item.title"></span></button></td>
                                             <td class="stash-monitor-agent"><strong x-text="projectMonitorAgent(item)"></strong><small x-text="projectMonitorAttemptLabel(item)"></small></td>
-                                            <td><span class="stash-monitor-status" :class="'is-' + item.status" x-text="statusLabel(item.status)"></span></td>
-                                            <td><span x-show="projectMonitorBlockers(item).length" class="stash-monitor-blocker" x-text="projectMonitorBlockers(item)[0] ? (projectMonitorBlockers(item)[0].issue_key || projectMonitorBlockers(item)[0].title) : ''"></span><span x-show="!projectMonitorBlockers(item).length">없음</span></td>
+                                            <td><span class="stash-monitor-status" :class="'is-' + projectMonitorDisplayStatus(item)" x-text="statusLabel(projectMonitorDisplayStatus(item))"></span></td>
+                                            <td><span x-show="projectMonitorIsBlocked(item)" class="stash-monitor-blocker">상태: 막힘</span><template x-for="blocker in projectMonitorBlockers(item)" :key="'project-monitor-blocker-row-' + item.id + '-' + blocker.id"><span class="stash-monitor-blocker" x-text="projectMonitorBlockerLabel(blocker)"></span></template><span x-show="!projectMonitorIsBlocked(item) && !projectMonitorBlockers(item).length">없음</span></td>
                                             <td><span class="stash-monitor-cell-text" :title="item.latest_result || ''" x-text="item.latest_result || '없음'"></span></td>
                                             <td><span class="stash-monitor-cell-text" :title="item.next_action || ''" x-text="item.next_action || '없음'"></span></td>
                                         </tr></template>
@@ -1249,87 +1290,108 @@
                         </div>
                     </div>
 
-                    <div x-show="view === 'graph'" x-cloak class="stash-graph p-4 bg-slate-950 text-white" @pointermove.window="moveGraphNodeDrag($event)" @pointerup.window="finishGraphNodeDrag($event)" @pointercancel.window="finishGraphNodeDrag($event)" @keydown.escape.window="cancelGraphNodeDrag($event)">
-                        <div class="stash-graph-header"><div><div class="stash-graph-title">작업 흐름</div><div class="stash-graph-scope" x-text="graphScopeLabel()"></div></div><div class="stash-graph-legend" aria-label="작업 연결 종류"><span><i class="stash-legend-line"></i>하위 → 상위</span><span><i class="stash-legend-line" style="border-color:#f97316"></i>먼저 → 다음</span><span><i class="stash-legend-line is-dashed"></i>관련</span></div></div>
-                        <div class="stash-graph-toolbar" role="group" aria-label="작업 흐름 보기 설정">
-                            <label class="stash-graph-project"><span>프로젝트</span><select x-model="graphProjectSlug" @change="changeWorkGraphProject()" :disabled="mapNamespacesLoading || loading" aria-label="작업 흐름 프로젝트 선택"><option value="">전체</option><template x-for="project in graphProjects()" :key="'graph-project-' + project.slug"><option :value="project.slug" x-text="project.label"></option></template></select></label>
-                            <label class="stash-graph-project"><span>네임스페이스</span><select x-model="mapNamespaceSlug" @change="changeWorkGraphNamespace()" :disabled="mapNamespacesLoading || loading" aria-label="작업 흐름 네임스페이스 선택"><option value="" x-text="graphProjectSlug ? '프로젝트 전체' : '전체'"></option><template x-for="namespace in graphNamespaces()" :key="namespace.slug"><option :value="namespace.slug" x-text="namespace.label"></option></template></select></label>
-                            <div class="stash-filter-picker" @keydown.escape.stop="graphFilterOpen = false">
-                                <button type="button" class="stash-filter-trigger" @click="graphFilterOpen = !graphFilterOpen" :aria-expanded="String(graphFilterOpen)" aria-controls="work-graph-filter-menu">필터<span x-show="graphFilterCount()" class="stash-filter-trigger__count" x-text="graphFilterCount()"></span></button>
-                                <div id="work-graph-filter-menu" x-show="graphFilterOpen" x-cloak @click.outside="graphFilterOpen = false" class="stash-filter-menu" role="group" aria-label="작업 흐름 필터 선택">
-                                    <label class="stash-map-filter is-search"><span>검색</span><input type="search" x-model.debounce.180ms="graphFilter.query" @input.debounce.180ms="refreshWorkGraphLayout()" placeholder="작업, 담당, 지원 기능"></label>
-                                    <label class="stash-map-filter"><span>상태</span><select x-model="graphFilter.status" @change="refreshWorkGraphLayout()"><option value="">전체</option><option value="backlog">대기</option><option value="ready">준비</option><option value="doing">진행 중</option><option value="blocked">막힘</option><option value="review">검토</option><option value="done">완료</option></select></label>
-                                    <label class="stash-map-filter"><span>담당</span><select x-model="graphFilter.agent" @change="refreshWorkGraphLayout()"><option value="">전체</option><template x-for="agent in graphAgents()" :key="'graph-agent-' + agent"><option :value="agent" x-text="agent"></option></template></select></label>
-                                    <div class="stash-filter-menu__section"><span class="stash-filter-menu__label">관계</span><div class="stash-map-types" role="group" aria-label="표시할 관계"><button type="button" @click="toggleGraphRelation('part_of')" :aria-pressed="String(graphFilter.relations.part_of)">상하</button><button type="button" @click="toggleGraphRelation('blocks')" :aria-pressed="String(graphFilter.relations.blocks)">선후</button><button type="button" @click="toggleGraphRelation('relates_to')" :aria-pressed="String(graphFilter.relations.relates_to)">관련</button></div></div>
-                                    <div class="stash-filter-menu__footer"><button type="button" class="stash-graph-reset" @click="resetGraphFilters()" :disabled="!graphHasFilters()">초기화</button></div>
+                    <div x-show="view === 'graph'" x-cloak class="stash-graph" @resize.window="refreshGraphInspectorMode()" @pointermove.window="moveGraphNodeDrag($event); moveGraphViewportPan($event)" @pointerup.window="finishGraphNodeDrag($event); finishGraphViewportPan($event)" @pointercancel.window="cancelGraphNodeDrag($event); cancelGraphViewportPan($event)" @keydown.escape.window="if (!selectedIssue && !$event.defaultPrevented) handleGraphEscape($event)">
+                        <header class="stash-graph-header" :inert="graphFocusedItem() && graphInspectorIsOverlay()">
+                            <h2 class="sr-only">작업 흐름</h2>
+                            <div class="stash-graph-toolbar" role="group" aria-label="작업 흐름 보기 설정">
+                                <label class="stash-graph-project"><span>프로젝트</span><select x-model="graphProjectSlug" @change="changeWorkGraphProject()" :disabled="mapNamespacesLoading || loading" aria-label="작업 흐름 프로젝트 선택"><option value="">전체</option><template x-for="project in graphProjects()" :key="'graph-project-' + project.slug"><option :value="project.slug" x-text="project.label"></option></template></select></label>
+                                <label class="stash-graph-project"><span>범위</span><select x-model="mapNamespaceSlug" @change="changeWorkGraphNamespace()" :disabled="mapNamespacesLoading || loading" aria-label="작업 흐름 범위 선택"><option value="" x-text="graphProjectSlug ? '프로젝트 전체' : '전체'"></option><template x-for="namespace in graphNamespaces()" :key="namespace.slug"><option :value="namespace.slug" x-text="namespace.label"></option></template></select></label>
+                                <div class="stash-filter-picker" @keydown.escape.stop.prevent="closeGraphFilterMenu(true)" @focusout="if (graphFilterOpen && !$event.currentTarget.contains($event.relatedTarget)) closeGraphFilterMenu(!$event.relatedTarget)" @click.outside="closeGraphFilterMenu(false, true)">
+                                    <button type="button" class="stash-filter-trigger" @click.stop="toggleGraphFilterMenu($event.currentTarget)" :aria-expanded="String(graphFilterOpen)" aria-haspopup="dialog" aria-controls="work-graph-filter-menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M7 12h10m-7 6h4"/></svg>필터<span x-show="graphFilterCount()" class="stash-filter-trigger__count" x-text="graphFilterCount()"></span></button>
+                                    <div id="work-graph-filter-menu" x-show="graphFilterOpen" x-cloak class="stash-filter-menu" role="dialog" aria-label="작업 흐름 필터 선택">
+                                        <label class="stash-map-filter is-search"><span>검색</span><input id="work-graph-filter-query" type="search" x-model.debounce.180ms="graphFilter.query" @input.debounce.180ms="refreshWorkGraphLayout()" placeholder="작업, 담당, 지원 기능"></label>
+                                        <label class="stash-map-filter"><span>상태</span><select x-model="graphFilter.status" @change="refreshWorkGraphLayout()"><option value="">전체</option><option value="backlog">대기</option><option value="ready">준비</option><option value="doing">진행 중</option><option value="blocked">막힘</option><option value="review">검토</option><option value="done">완료</option></select></label>
+                                        <label class="stash-map-filter"><span>담당</span><select x-model="graphFilter.agent" @change="refreshWorkGraphLayout()"><option value="">전체</option><template x-for="agent in graphAgents()" :key="'graph-agent-' + agent"><option :value="agent" x-text="agent"></option></template></select></label>
+                                        <div class="stash-filter-menu__section"><span class="stash-filter-menu__label">관계</span><div class="stash-map-types" role="group" aria-label="표시할 관계"><button type="button" @click="toggleGraphRelation('part_of')" :aria-pressed="String(graphFilter.relations.part_of)">상위·하위</button><button type="button" @click="toggleGraphRelation('blocks')" :aria-pressed="String(graphFilter.relations.blocks)">먼저·다음</button><button type="button" @click="toggleGraphRelation('relates_to')" :aria-pressed="String(graphFilter.relations.relates_to)">관련</button></div></div>
+                                        <div class="stash-filter-menu__footer"><button type="button" class="stash-graph-reset" @click="resetGraphFilters()" :disabled="!graphHasFilters()">초기화</button></div>
+                                    </div>
                                 </div>
+                                <button type="button" class="stash-graph-reset" @click="resetGraphLayout()" :disabled="!graphHasMovedNodes()">위치 되돌리기</button>
+                                <div x-show="graphHasFilters()" x-cloak class="stash-filter-chips" aria-label="적용한 필터"><template x-for="chip in graphFilterChips()" :key="chip.key"><button type="button" class="stash-filter-chip" @click="clearGraphFilter(chip.key)"><span x-text="chip.label"></span><i aria-hidden="true">×</i></button></template></div>
+                                <span x-show="mapNamespacesLoading" x-cloak class="stash-graph-project-note">범위를 불러오는 중</span>
+                                <span x-show="!mapNamespacesLoading && mapNamespaceError" x-cloak class="stash-graph-project-note" x-text="mapNamespaceError"></span>
                             </div>
-                            <span x-show="mapNamespacesLoading" x-cloak class="stash-graph-project-note">네임스페이스를 불러오는 중...</span>
-                            <span x-show="!mapNamespacesLoading && mapNamespaceError" x-cloak class="stash-graph-project-note" x-text="mapNamespaceError"></span>
-                            <span x-show="!mapNamespacesLoading && !mapNamespaceError && !mapNamespaces.length" class="stash-graph-project-note">등록된 네임스페이스가 없습니다.</span>
-                            <button type="button" class="stash-graph-reset" @click="resetGraphLayout()" :disabled="!graphHasMovedNodes()">배치 초기화</button>
-                        </div>
-                        <div x-show="graphHasFilters()" x-cloak class="stash-filter-chips" aria-label="적용한 필터"><template x-for="chip in graphFilterChips()" :key="chip.key"><button type="button" class="stash-filter-chip" @click="clearGraphFilter(chip.key)"><span x-text="chip.label"></span><i aria-hidden="true">×</i></button></template></div>
-                        <p class="sr-only" aria-live="polite" x-text="graphMoveAnnouncement"></p>
-                        <div x-show="loading" x-cloak class="stash-graph-empty" role="status">작업 흐름을 불러오는 중</div>
+                            <div class="stash-graph-summary" aria-label="작업 흐름 요약"><span><strong x-text="workGraphLayout.visibleNodeCount"></strong> 작업</span><span><strong x-text="workGraphLayout.edges.length"></strong> 연결</span><span x-show="workGraphLayout.cycles.length" class="is-warning"><strong x-text="workGraphLayout.cycles.length"></strong> 순환</span></div>
+                            <div class="stash-graph-legend" aria-label="작업 연결 종류"><span><i class="stash-legend-line is-parent"></i>상위·하위</span><span><i class="stash-legend-line is-blocks"></i>먼저·다음</span><span><i class="stash-legend-line is-related"></i>관련</span></div>
+                        </header>
+                        <p class="sr-only" role="status" aria-live="polite" aria-atomic="true" x-text="graphMoveAnnouncement || graphViewportAnnouncement"></p>
+                        <div x-show="loading" x-cloak class="stash-graph-empty" role="status"><span class="stash-graph-loading" aria-hidden="true"></span>작업 흐름을 불러오는 중</div>
                         <div x-show="!loading && graphError" x-cloak class="stash-graph-empty is-error" role="alert"><div><span x-text="graphError"></span><br><button type="button" class="stash-btn" @click="loadWorkGraph(false)">다시 시도</button></div></div>
                         <div x-show="!loading && !graphError && !graph.nodes.length" x-cloak class="stash-graph-empty">표시할 작업이 없습니다.</div>
                         <div x-show="!loading && !graphError && graph.nodes.length && !workGraphLayout.nodes.length" x-cloak class="stash-graph-empty">조건에 맞는 작업이 없습니다.</div>
-                        <div x-show="!loading && !graphError && graph.nodes.length" x-cloak class="stash-graph-content">
-                            <section x-show="graphFocusedItem()" x-cloak class="stash-graph-navigator" aria-label="선택한 작업의 상하 관계">
-                                <div class="stash-graph-navigator__current"><span>선택한 작업</span><strong x-text="graphWorkLabel(graphFocusedItem())"></strong></div>
-                                <div class="stash-graph-navigator__group"><span>상위</span><div class="stash-graph-navigator__links"><button x-show="graphFocusedParent()" type="button" @click="focusGraphNodeByID(graphFocusedParent().id)" x-text="graphWorkLabel(graphFocusedParent())"></button><i x-show="!graphFocusedParent()" class="stash-graph-navigator__empty">없음</i></div></div>
-                                <div class="stash-graph-navigator__group"><span>하위</span><div class="stash-graph-navigator__links"><template x-for="child in graphFocusedChildren()" :key="'graph-child-link-' + child.id"><button type="button" @click="focusGraphNodeByID(child.id)" x-text="graphWorkLabel(child)"></button></template><i x-show="!graphFocusedChildren().length" class="stash-graph-navigator__empty">없음</i></div></div>
-                                <div class="stash-graph-navigator__actions"><button type="button" class="stash-graph-reset" @click="openIssue(graphFocusedItem().id, $event.currentTarget)">상세</button><button type="button" class="stash-graph-reset" @click="clearGraphFocus()">닫기</button></div>
-                            </section>
-                            <section x-show="graphFocusedItem()" x-cloak class="stash-work-monitor" aria-label="선택한 작업 현황">
-                                <div x-show="workMonitorLoading" class="stash-work-monitor__state">작업 현황을 불러오는 중</div>
-                                <div x-show="!workMonitorLoading && workMonitorError" class="stash-work-monitor__state is-error" x-text="workMonitorError"></div>
-                                <template x-if="!workMonitorLoading && !workMonitorError && workMonitorBrief"><div class="stash-work-monitor__contents">
-                                    <div class="stash-work-monitor__item is-wide"><span>공통 목표</span><strong x-text="monitorGoalText(selectedWorkMonitor().sharedGoal) || '연결 안 됨'"></strong></div>
-                                    <div class="stash-work-monitor__item is-wide"><span>목표 경로</span><div class="stash-work-monitor__path"><template x-for="goal in selectedWorkMonitor().goalPath" :key="'monitor-goal-' + goal.id"><i x-text="monitorGoalText(goal)"></i></template><i x-show="!selectedWorkMonitor().goalPath.length">연결 안 됨</i></div></div>
-                                    <div class="stash-work-monitor__item"><span>담당</span><strong x-text="selectedWorkMonitor().agent"></strong></div>
-                                    <div class="stash-work-monitor__item"><span>상태</span><strong x-text="statusLabel(selectedWorkMonitor().status || graphFocusedItem().status)"></strong></div>
-                                    <div class="stash-work-monitor__item"><span>공유 입력</span><strong x-text="monitorInputLabel()"></strong></div>
-                                    <div class="stash-work-monitor__item"><span>막힘</span><strong x-text="selectedWorkMonitor().blocker || '없음'"></strong></div>
-                                    <div class="stash-work-monitor__item is-wide"><span>최근 결과</span><strong x-text="selectedWorkMonitor().result || '없음'"></strong></div>
-                                    <div class="stash-work-monitor__item is-wide"><span>근거</span><strong x-text="selectedWorkMonitor().evidence || '없음'"></strong><small x-show="selectedWorkMonitor().evidenceReference" x-text="selectedWorkMonitor().evidenceReference"></small></div>
-                                </div></template>
-                                <button type="button" class="stash-graph-reset stash-work-monitor__action" @click="loadWorkMonitor(graphFocusedItem().id, true)" :disabled="workMonitorLoading">새로고침</button>
-                            </section>
-                            <div x-show="workGraphLayout.cycles.length" class="stash-graph-cycle-alert" role="status">
-                                <strong>서로 막는 작업이 있습니다.</strong>
-                                연결선을 확인하세요.
-                                <div class="stash-graph-cycle-list"><template x-for="cycle in workGraphLayout.cycles" :key="cycle.id"><span x-text="cycle.label"></span></template></div>
-                            </div>
-                            <div x-show="workGraphLayout.hierarchyWarnings.length" class="stash-graph-hierarchy-alert" role="status">
-                                <strong>상위 작업 연결을 확인하세요.</strong>
-                                <div><template x-for="warning in workGraphLayout.hierarchyWarnings" :key="warning.key"><span x-text="warning.label"></span></template></div>
-                            </div>
-                            <div x-show="workGraphLayout.nodes.length" class="stash-graph-scroll" tabindex="0" aria-label="작업 흐름. 가로와 세로로 이동해 모든 작업을 볼 수 있습니다.">
-                                <div class="stash-graph-canvas" :style="workGraphLayout.canvasStyle" role="region" :aria-label="graphAriaLabel()">
-                                    <template x-for="edge in workGraphLayout.edges" :key="edge.key">
-                                        <svg :viewBox="graphCanvasViewBox()" :style="workGraphLayout.canvasStyle" class="stash-graph-edge-layer" aria-hidden="true">
-                                            <defs>
-                                                <marker :id="edgeMarkerId(edge)" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" :fill="edge.stroke"></path></marker>
-                                            </defs>
-                                            <path :d="edge.path" :stroke="edge.stroke" stroke-width="2" :stroke-dasharray="edge.dashArray" :marker-end="edge.marker ? edgeMarkerUrl(edge) : null" opacity="0.9"></path>
-                                        </svg>
-                                    </template>
-                                    <template x-for="node in workGraphLayout.nodes" :key="node.key">
-                                        <article class="stash-graph-node" :class="graphNodeClasses(node)" :style="node.style" :data-graph-node-key="node.key" :aria-labelledby="'graph-node-title-' + node.key">
-                                            <button type="button" class="stash-graph-node__open" @click="focusGraphNode(node.key)" :aria-pressed="String(graphFocusedKey === node.key)" :aria-label="graphNodeAriaLabel(node)">
-                                                <span class="stash-graph-node__top"><strong class="stash-graph-node__key" x-text="node.item.issue_key || '#' + node.item.id"></strong><span class="stash-graph-node__badges"><i class="stash-graph-status-dot" aria-hidden="true"></i><span x-text="statusLabel(node.item.status)"></span><span x-show="graphNodeRoleLabel(node)" class="stash-graph-role-badge" x-text="graphNodeRoleLabel(node)"></span><span x-show="node.cycle" class="stash-graph-cycle-badge">순환</span></span></span>
-                                                <span class="stash-graph-node__title" :id="'graph-node-title-' + node.key" x-text="node.item.title"></span>
-                                                <span class="stash-graph-node__meta" x-text="graphNodeMeta(node)"></span>
-                                            </button>
-                                            <button type="button" class="stash-graph-drag-handle" :data-graph-drag-key="node.dragKey" @pointerdown="startGraphNodeDrag($event, node)" @keydown="moveGraphNodeWithKeyboard($event, node)" @click.stop.prevent="void 0" :aria-label="graphDragHandleLabel(node)"><span aria-hidden="true">✥</span></button>
-                                            <div x-show="node.orphanParentId !== undefined || node.hierarchyCycle" class="stash-graph-node__warning"><span x-show="node.orphanParentId !== undefined" x-text="'상위 작업 #' + node.orphanParentId + '을 찾을 수 없음'"></span><span x-show="node.hierarchyCycle">상위 작업 연결이 순환함</span></div>
-                                            <div class="stash-graph-node__actions"><button x-show="graphParentFor(node.item)" type="button" @click.stop="focusGraphNodeByID(graphParentFor(node.item).id)" :aria-label="graphWorkLabel(graphParentFor(node.item)) + '으로 이동'">상위</button><button x-show="graphChildrenFor(node.item).length" type="button" @click.stop="showGraphChildren(node)" x-text="'하위 ' + graphChildrenFor(node.item).length"></button><button type="button" @click.stop="openIssue(node.item.id, $event.currentTarget)">상세</button></div>
-                                        </article>
-                                    </template>
-                                    <div class="sr-only stash-graph-edges-text"><h3>작업 연결</h3><ul><template x-for="edge in workGraphLayout.edges" :key="'text-' + edge.key"><li x-text="edge.ariaLabel"></li></template></ul></div>
+                        <div x-show="!loading && !graphError && workGraphLayout.nodes.length" x-cloak class="stash-graph-content">
+                            <div class="stash-graph-workspace" :class="{'has-inspector': graphFocusedItem()}">
+                                <div id="work-graph-viewport" x-ref="graphViewport" class="stash-graph-scroll" :class="{'is-panning': graphViewportDragging}" :inert="graphFocusedItem() && graphInspectorIsOverlay()" tabindex="0" aria-label="작업 흐름. 빈 공간을 끌거나 방향키로 이동하고, 확대 버튼이나 더하기·빼기 키로 크기를 바꿀 수 있습니다. Alt와 휠을 함께 써도 확대하거나 축소할 수 있습니다." @wheel="graphViewportWheel($event, $refs.graphViewport)" @keydown="graphViewportKeydown($event, $refs.graphViewport, workGraphLayout)" @pointerdown="startGraphViewportPan($event, $refs.graphViewport)" @resize.window="resizeGraphViewport($refs.graphViewport)">
+                                    <div class="stash-graph-grid" aria-hidden="true"></div>
+                                    <div class="stash-graph-space" :style="graphViewportSpaceStyle($refs.graphViewport)">
+                                        <div class="stash-graph-world" :style="graphViewportWorldStyle()">
+                                            <div class="stash-graph-canvas" :style="workGraphLayout.canvasStyle" role="region" :aria-label="graphAriaLabel()">
+                                                <svg :viewBox="graphCanvasViewBox()" :style="workGraphLayout.canvasStyle" class="stash-graph-edge-layer" aria-hidden="true">
+                                                    <defs>
+                                                        <marker id="stash-work-graph-arrow-blocks" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" style="fill:#e9a23b"></path></marker>
+                                                        <marker id="stash-work-graph-arrow-part-of" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" style="fill:#9b8cf2"></path></marker>
+                                                        <marker id="stash-work-graph-arrow-cycle" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" style="fill:#db6b67"></path></marker>
+                                                    </defs>
+                                                    <g x-html="graphEdgesMarkup()"></g>
+                                                </svg>
+                                                <template x-for="node in workGraphLayout.nodes" :key="node.key">
+                                                    <article class="stash-graph-node" :class="graphNodeClasses(node)" :style="node.style" :data-graph-node-key="node.key" :aria-labelledby="'graph-node-title-' + node.key">
+                                                        <button type="button" class="stash-graph-node__open" :data-graph-node-open="node.key" @click="focusGraphNode(node.key, true, $event.currentTarget, graphInspectorIsOverlay() || $event.detail === 0)" :aria-pressed="String(graphFocusedKey === node.key)" :aria-label="graphNodeAriaLabel(node)">
+                                                            <span class="stash-graph-node__top"><strong class="stash-graph-node__key" x-text="node.item.issue_key || '#' + node.item.id"></strong><span class="stash-graph-node__badges"><i class="stash-graph-status-dot" aria-hidden="true"></i><span x-text="statusLabel(node.item.status)"></span><span x-show="node.cycle" class="stash-graph-cycle-badge">순환</span></span></span>
+                                                            <span class="stash-graph-node__title" :id="'graph-node-title-' + node.key" x-text="node.item.title"></span>
+                                                            <span class="stash-graph-node__meta" x-text="graphNodeMeta(node)"></span>
+                                                        </button>
+                                                        <button type="button" class="stash-graph-drag-handle" :data-graph-drag-key="node.dragKey" :tabindex="graphFocusedKey === node.key ? 0 : -1" @pointerdown.stop="startGraphNodeDrag($event, node)" @keydown="moveGraphNodeWithKeyboard($event, node)" @click.stop.prevent="void 0" :aria-label="graphDragHandleLabel(node)"><span aria-hidden="true">⠿</span></button>
+                                                        <div x-show="node.orphanParentId !== undefined || node.hierarchyCycle" class="stash-graph-node__warning"><span x-show="node.orphanParentId !== undefined" x-text="'상위 작업 #' + node.orphanParentId + '을 찾을 수 없음'"></span><span x-show="node.hierarchyCycle">상위 작업 연결이 순환함</span></div>
+                                                        <div class="stash-graph-node__actions"><button x-show="graphParentFor(node.item)" type="button" :tabindex="graphFocusedKey === node.key ? 0 : -1" @click.stop="focusGraphNodeByID(graphParentFor(node.item).id, true)" :aria-label="graphWorkLabel(graphParentFor(node.item)) + '으로 이동'" x-text="graphParentLabel(node.item)"></button><button x-show="graphChildrenFor(node.item).length" type="button" :tabindex="graphFocusedKey === node.key ? 0 : -1" @click.stop="focusGraphNode(node.key, true, $event.currentTarget, true)" :aria-label="'하위 작업 ' + graphChildrenFor(node.item).length + '개 보기'" x-text="'하위 작업 ' + graphChildrenFor(node.item).length + '개'"></button></div>
+                                                    </article>
+                                                </template>
+                                                <div class="sr-only stash-graph-edges-text"><h3>작업 연결</h3><ul><template x-for="edge in workGraphLayout.edges" :key="'text-' + edge.key"><li x-text="edge.ariaLabel"></li></template></ul></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="stash-graph-canvas-tools" role="group" aria-label="그래프 확대와 이동">
+                                        <button type="button" @click="zoomGraphViewportAtCenter(-1, $refs.graphViewport)" aria-label="축소" aria-controls="work-graph-viewport" aria-describedby="work-graph-zoom-value"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12"/></svg></button>
+                                        <output id="work-graph-zoom-value" class="stash-graph-zoom" x-text="graphViewportZoomPercent()"></output>
+                                        <button type="button" @click="zoomGraphViewportAtCenter(1, $refs.graphViewport)" aria-label="확대" aria-controls="work-graph-viewport" aria-describedby="work-graph-zoom-value"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6v12M6 12h12"/></svg></button>
+                                        <i aria-hidden="true"></i>
+                                        <button type="button" @click="graphViewportFit($refs.graphViewport, workGraphLayout)" aria-label="화면에 맞춤" aria-controls="work-graph-viewport"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4H4v4M16 4h4v4M20 16v4h-4M4 16v4h4"/></svg></button>
+                                    </div>
+                                    <div class="stash-graph-alerts">
+                                        <div x-show="graphFocusLoading || graphFocusError" class="stash-graph-page-alert" :role="graphFocusError ? 'alert' : 'status'"><span x-text="graphFocusLoading ? '선택한 작업과 상하 관계를 불러오는 중' : graphFocusError"></span><button x-show="!graphFocusLoading && graphFocusError && graphPage.hasMore && graphFocusedKey" type="button" @click="focusGraphNodeWhenLoaded(graphFocusedKey, true, 256)">계속 불러오기</button></div>
+                                        <div x-show="graphPage.hasMore || graphPageError" class="stash-graph-page-alert" :role="graphPageError ? 'alert' : 'status'"><span x-text="'작업 ' + graph.nodes.length + '/' + graphPage.totalNodes + ' · 연결 ' + graph.edges.length + '/' + graphPage.totalEdges"></span><button x-show="graphPage.hasMore" type="button" @click="loadMoreWorkGraph()" :disabled="graphPageLoading" x-text="graphPageLoading ? '불러오는 중' : '더 불러오기'"></button><small x-show="graphPageError" x-text="graphPageError"></small></div>
+                                        <div x-show="workGraphLayout.cycles.length" class="stash-graph-cycle-alert" role="status"><strong>서로 막는 작업</strong><div class="stash-graph-cycle-list"><template x-for="cycle in workGraphLayout.cycles" :key="cycle.id"><span x-text="cycle.label"></span></template></div></div>
+                                        <div x-show="workGraphLayout.hierarchyWarnings.length" class="stash-graph-hierarchy-alert" role="status"><strong>상위 작업 연결 확인</strong><div><template x-for="warning in workGraphLayout.hierarchyWarnings" :key="warning.key"><span x-text="warning.label"></span></template></div></div>
+                                    </div>
                                 </div>
+                                <aside x-show="graphFocusedItem()" x-cloak class="stash-graph-inspector" data-graph-inspector tabindex="-1" :role="graphInspectorIsOverlay() ? 'dialog' : 'complementary'" :aria-modal="graphInspectorIsOverlay() ? 'true' : null" aria-labelledby="work-graph-inspector-title" @keydown.tab="trapGraphInspectorFocus($event)" @keydown.escape.stop="handleGraphEscape($event)">
+                                    <header class="stash-graph-inspector__header"><div><span x-text="graphFocusedItem() && (graphFocusedItem().issue_key || '#' + graphFocusedItem().id)"></span><i :class="'is-' + (graphFocusedItem() && graphFocusedItem().status)" x-text="graphFocusedItem() && statusLabel(graphFocusedItem().status)"></i></div><button type="button" data-graph-inspector-close @click="clearGraphFocus(true)" aria-label="선택한 작업 닫기">×</button><h3 id="work-graph-inspector-title" x-text="graphFocusedItem() && graphFocusedItem().title"></h3></header>
+                                    <div class="stash-graph-inspector__body">
+                                        <section class="stash-graph-navigator" aria-label="선택한 작업의 상하 관계">
+                                            <h4>관계</h4>
+                                            <div class="stash-graph-navigator__group"><span>상위 작업</span><div class="stash-graph-navigator__links"><button x-show="graphFocusedParent()" type="button" @click="focusGraphNodeByID(graphFocusedParent().id, true)" x-text="graphWorkLabel(graphFocusedParent())"></button><i x-show="!graphFocusedParent()" class="stash-graph-navigator__empty" x-text="graphFocusLoading || graphPage.hasMore ? '확인 중' : '없음'"></i></div></div>
+                                            <div class="stash-graph-navigator__group"><span>하위 작업</span><div class="stash-graph-navigator__links"><template x-for="child in graphFocusedChildren()" :key="'graph-child-link-' + child.id"><button type="button" @click="focusGraphNodeByID(child.id, true)" x-text="graphWorkLabel(child)"></button></template><i x-show="!graphFocusedChildren().length" class="stash-graph-navigator__empty" x-text="graphFocusLoading || graphPage.hasMore ? '확인 중' : '없음'"></i></div></div>
+                                        </section>
+                                        <section class="stash-work-monitor" aria-label="선택한 작업 현황">
+                                            <h4>현황</h4>
+                                            <div x-show="workMonitorLoading" class="stash-work-monitor__state" role="status">불러오는 중</div>
+                                            <div x-show="!workMonitorLoading && workMonitorError" class="stash-work-monitor__state is-error" role="alert" x-text="workMonitorError"></div>
+                                            <template x-if="!workMonitorLoading && !workMonitorError && workMonitorBrief"><div class="stash-work-monitor__contents">
+                                                <div class="stash-work-monitor__item"><span>담당</span><strong x-text="selectedWorkMonitor().agent"></strong></div>
+                                                <div class="stash-work-monitor__item" :class="{'is-alert': selectedWorkMonitor().blocker}"><span>막힘</span><strong x-text="selectedWorkMonitor().blocker || '없음'"></strong></div>
+                                                <div class="stash-work-monitor__item is-wide is-primary"><span>다음 할 일</span><strong x-text="selectedWorkMonitor().nextAction || '정하지 않음'"></strong></div>
+                                                <div class="stash-work-monitor__item is-wide"><span>최근 결과</span><strong x-text="selectedWorkMonitor().result || '없음'"></strong></div>
+                                                <details class="stash-work-monitor__more"><summary>목표와 전달 정보</summary><div class="stash-work-monitor__more-grid">
+                                                    <div class="stash-work-monitor__item is-wide"><span>공통 목표</span><strong x-text="monitorGoalText(selectedWorkMonitor().sharedGoal) || '연결 안 됨'"></strong></div>
+                                                    <div class="stash-work-monitor__item is-wide"><span>목표 경로</span><div class="stash-work-monitor__path"><template x-for="goal in selectedWorkMonitor().goalPath" :key="'monitor-goal-' + goal.id"><i x-text="monitorGoalText(goal)"></i></template><i x-show="!selectedWorkMonitor().goalPath.length">연결 안 됨</i></div></div>
+                                                    <div class="stash-work-monitor__item"><span>받은 내용</span><strong x-text="monitorInputLabel()"></strong></div>
+                                                    <div class="stash-work-monitor__item is-wide"><span>확인 자료</span><strong x-text="selectedWorkMonitor().evidence || '없음'"></strong><small x-show="selectedWorkMonitor().evidenceReference" x-text="selectedWorkMonitor().evidenceReference"></small></div>
+                                                </div></details>
+                                            </div></template>
+                                        </section>
+                                    </div>
+                                    <footer class="stash-graph-inspector__actions"><button type="button" @click="loadWorkMonitor(graphFocusedItem().id, true)" :disabled="workMonitorLoading">새로고침</button><button type="button" class="is-primary" @click="openIssue(graphFocusedItem().id, $event.currentTarget)">작업 열기</button></footer>
+                                </aside>
                             </div>
                         </div>
                     </div>

@@ -449,6 +449,169 @@ func workResumeToolResult(bc *bootstrap.Context, bundle *models.WorkResumeBundle
 	return jsonToolResult(bc, compactWorkResumeBundle(bundle, maxBytes))
 }
 
+type workResumeCollectionPage struct {
+	WorkItemID int64             `json:"work_item_id"`
+	Collection string            `json:"collection"`
+	Detail     string            `json:"detail"`
+	Offset     int               `json:"offset"`
+	Items      []json.RawMessage `json:"items"`
+	HasMore    bool              `json:"has_more"`
+	NextOffset int               `json:"next_offset,omitempty"`
+	NextQuery  string            `json:"next_query,omitempty"`
+}
+
+func workResumeCollectionItems(bundle *models.WorkResumeBundle, collection string) ([]json.RawMessage, error) {
+	var value any
+	switch collection {
+	case "completion_conditions":
+		value = bundle.CompletionConditions
+	case "evidence":
+		value = bundle.Evidence
+	case "memories":
+		value = bundle.MemoryLinks
+	case "resources":
+		value = bundle.Resources
+	case "worktree_links":
+		value = bundle.WorktreeLinks
+	case "dependency_results":
+		value = bundle.DependencyResults
+	case "blockers":
+		value = bundle.Blockers
+	default:
+		return nil, fmt.Errorf("argument %q has unsupported value %q", "collection", collection)
+	}
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var items []json.RawMessage
+	if err := json.Unmarshal(payload, &items); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func compactWorkResumeCollectionItem(collection string, raw json.RawMessage, maxBytes int) (json.RawMessage, error) {
+	if len(raw) <= maxBytes {
+		return raw, nil
+	}
+	shorten := func(value string) string {
+		compact, _ := truncateWorkResumeString(strings.TrimSpace(value), 128)
+		return compact
+	}
+	var value any
+	switch collection {
+	case "completion_conditions":
+		var item models.WorkCompletionCondition
+		if err := json.Unmarshal(raw, &item); err != nil {
+			return nil, err
+		}
+		item.Description, item.WaiverReason = shorten(item.Description), shorten(item.WaiverReason)
+		item.Verification = json.RawMessage(`{"truncated":true}`)
+		value = item
+	case "evidence":
+		var item models.WorkEvidence
+		if err := json.Unmarshal(raw, &item); err != nil {
+			return nil, err
+		}
+		item.EvidenceType, item.Summary, item.Reference, item.PrincipalID = shorten(item.EvidenceType), shorten(item.Summary), shorten(item.Reference), shorten(item.PrincipalID)
+		item.Payload = json.RawMessage(`{"truncated":true}`)
+		value = item
+	case "memories":
+		var item models.WorkMemorySnapshot
+		if err := json.Unmarshal(raw, &item); err != nil {
+			return nil, err
+		}
+		item.Content, item.Relation, item.Status = shorten(item.Content), shorten(item.Relation), shorten(item.Status)
+		item.ContentTruncated = true
+		value = item
+	case "resources":
+		var item models.WorkResourceRef
+		if err := json.Unmarshal(raw, &item); err != nil {
+			return nil, err
+		}
+		item.ResourceKey, item.Title, item.URI, item.Summary = shorten(item.ResourceKey), shorten(item.Title), shorten(item.URI), shorten(item.Summary)
+		item.ExternalID, item.Revision = shorten(item.ExternalID), shorten(item.Revision)
+		value = item
+	case "worktree_links":
+		var item models.WorktreeLink
+		if err := json.Unmarshal(raw, &item); err != nil {
+			return nil, err
+		}
+		item.Worktree.Repository, item.Worktree.WorktreePath, item.Worktree.Branch, item.Worktree.AgentID = shorten(item.Worktree.Repository), shorten(item.Worktree.WorktreePath), shorten(item.Worktree.Branch), shorten(item.Worktree.AgentID)
+		item.Worktree.Metadata = json.RawMessage(`{"truncated":true}`)
+		value = item
+	case "dependency_results":
+		var item models.WorkDependencyResult
+		if err := json.Unmarshal(raw, &item); err != nil {
+			return nil, err
+		}
+		item.WorkItem.Title, item.WorkItem.Owner, item.Summary, item.Result = shorten(item.WorkItem.Title), shorten(item.WorkItem.Owner), shorten(item.Summary), shorten(item.Result)
+		value = item
+	case "blockers":
+		var item models.WorkItem
+		if err := json.Unmarshal(raw, &item); err != nil {
+			return nil, err
+		}
+		item.Title, item.Description, item.Reporter, item.Owner = shorten(item.Title), shorten(item.Description), shorten(item.Reporter), shorten(item.Owner)
+		item.Labels = nil
+		value = item
+	default:
+		return nil, fmt.Errorf("unsupported collection %q", collection)
+	}
+	return json.Marshal(value)
+}
+
+func workResumeCollectionResult(bc *bootstrap.Context, bundle *models.WorkResumeBundle, collection, detail string, offset, limit int) (*mcp.CallToolResult, error) {
+	if offset < 0 {
+		return nil, fmt.Errorf("argument %q must be zero or greater", "collection_offset")
+	}
+	if limit < 1 || limit > 100 {
+		return nil, fmt.Errorf("argument %q must be between 1 and 100", "collection_limit")
+	}
+	items, err := workResumeCollectionItems(bundle, collection)
+	if err != nil {
+		return nil, err
+	}
+	if offset > len(items) {
+		return nil, fmt.Errorf("argument %q exceeds the %d available items", "collection_offset", len(items))
+	}
+	end := offset + limit
+	if end > len(items) {
+		end = len(items)
+	}
+	maxBytes := defaultMCPMaxResponseBytes
+	if bc != nil && bc.Config != nil && bc.Config.MCPMaxResponseBytes > 0 {
+		maxBytes = bc.Config.MCPMaxResponseBytes
+	}
+	itemBudget := maxBytes - 512
+	if itemBudget < 256 {
+		itemBudget = 256
+	}
+	for index := range items {
+		items[index], err = compactWorkResumeCollectionItem(collection, items[index], itemBudget)
+		if err != nil {
+			return nil, err
+		}
+	}
+	for end > offset {
+		page := workResumeCollectionPage{WorkItemID: bundle.WorkItem.ID, Collection: collection, Detail: detail, Offset: offset, Items: items[offset:end], HasMore: end < len(items)}
+		if page.HasMore {
+			page.NextOffset = end
+			page.NextQuery = fmt.Sprintf("Call resume_work with work_item_id=%d, detail=%s, collection=%s, collection_offset=%d, collection_limit=%d.", bundle.WorkItem.ID, detail, collection, end, limit)
+		}
+		payload, marshalErr := json.Marshal(page)
+		if marshalErr != nil {
+			return nil, marshalErr
+		}
+		if len(payload) <= maxBytes {
+			return jsonToolResult(bc, page)
+		}
+		end--
+	}
+	return nil, fmt.Errorf("STASH_MCP_MAX_RESPONSE_BYTES=%d is too small for one complete %s item", maxBytes, collection)
+}
+
 func parsePositiveIDList(request mcp.CallToolRequest, key string) ([]int64, error) {
 	data, err := structuredArgumentBytes(request, key, true)
 	if err != nil {
@@ -747,6 +910,9 @@ func registerWorkExecutionTools(mcpServer *server.MCPServer, bc *bootstrap.Conte
 		mcp.WithString("known_context_digest", mcp.Description("Digest from the previous brief; matching state returns a small receipt and changed state returns only fact changes since that cursor"), mcp.Pattern(`sha256:[0-9a-f]{64}`)),
 		mcp.WithString("expected_context_digest", mcp.Description("Target digest from next_query when continuing a truncated changed_facts page"), mcp.Pattern(`sha256:[0-9a-f]{64}`)),
 		mcp.WithNumber("fact_offset", mcp.Description("Continuation offset from next_query; use zero for a fresh context read"), mcp.DefaultNumber(0), mcp.Min(0)),
+		mcp.WithString("collection", mcp.Description("Optional collection page to retrieve without repeating an omission notice"), mcp.Enum("completion_conditions", "evidence", "memories", "resources", "worktree_links", "dependency_results", "blockers")),
+		mcp.WithNumber("collection_offset", mcp.Description("Continuation offset from the collection next_query"), mcp.DefaultNumber(0), mcp.Min(0)),
+		mcp.WithNumber("collection_limit", mcp.Description("Maximum collection items to return"), mcp.DefaultNumber(20), mcp.Min(1), mcp.Max(100)),
 		mcp.WithNumber("recent_event_limit", mcp.Description("Maximum recent events when detail is full"), mcp.DefaultNumber(8), mcp.Min(1), mcp.Max(100)),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -761,6 +927,9 @@ func registerWorkExecutionTools(mcpServer *server.MCPServer, bc *bootstrap.Conte
 		bundle, err := bc.Brain.GetWorkResumeBundle(ctx, workItemID, request.GetInt("recent_event_limit", 8))
 		if err != nil {
 			return nil, err
+		}
+		if collection := request.GetString("collection", ""); collection != "" {
+			return workResumeCollectionResult(bc, bundle, collection, request.GetString("detail", "brief"), request.GetInt("collection_offset", 0), request.GetInt("collection_limit", 20))
 		}
 		if request.GetString("detail", "brief") == "full" {
 			return workResumeToolResult(bc, bundle)

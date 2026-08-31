@@ -16,6 +16,7 @@
         return {
             routeInitialized: false,
             routeRestoring: false,
+            routeRestoreGeneration: 0,
 
             currentRouteName() {
                 if (routes.routePaths[this.activeNav]) return this.activeNav;
@@ -54,6 +55,8 @@
                     });
                 } else if (route === 'board') {
                     Object.assign(state, {
+                        project: this.boardProjectSlug,
+                        namespace: this.boardNamespaceSlug,
                         query: this.boardFilter.q,
                         issueType: this.boardFilter.issueType,
                         label: this.boardFilter.label,
@@ -108,6 +111,8 @@
                     this.graphFocusedKey = route.focus;
                 }
                 if (route.route === 'board') {
+                    this.boardProjectSlug = route.project;
+                    this.boardNamespaceSlug = route.namespace;
                     this.boardFilter = { q: route.query, issueType: route.issueType, label: route.label };
                     this.boardPage.offset = route.offset;
                     this.boardPage.history = [];
@@ -120,6 +125,7 @@
             },
 
             async restoreRoute() {
+                const generation = ++this.routeRestoreGeneration;
                 const route = routes.readRoute(window.location.href);
                 this.routeRestoring = true;
                 this.applyRouteState(route);
@@ -136,12 +142,15 @@
                         const args = route.route === 'list_namespaces' ? {} : { namespaces: route.namespace || '/' };
                         await this.callTool(route.route, args, route.offset);
                     }
+                    if (generation !== this.routeRestoreGeneration) return;
                     if (['goal-map', 'monitor', 'board', 'graph'].includes(route.route)) {
                         if (route.issueID) await this.openIssue(route.issueID);
                         else if (this.selectedIssue) this.closeIssue();
                     }
-                    if (route.route === 'graph' && route.focus) this.focusGraphNode(route.focus);
+                    if (generation !== this.routeRestoreGeneration) return;
+                    if (route.route === 'graph' && route.focus) await this.focusGraphNodeByID(route.focus);
                 } finally {
+                    if (generation !== this.routeRestoreGeneration) return;
                     this.routeRestoring = false;
                     this.routeInitialized = true;
                     this.syncRoute(true);

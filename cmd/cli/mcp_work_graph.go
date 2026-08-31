@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -12,6 +13,32 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
+
+type workGraphContinuation struct {
+	NamespaceQuery string                `json:"scope"`
+	IncludeDone    bool                  `json:"include_done"`
+	Cursor         brain.WorkGraphCursor `json:"cursor"`
+}
+
+func encodeWorkGraphContinuation(value workGraphContinuation) string {
+	payload, _ := json.Marshal(value)
+	return base64.RawURLEncoding.EncodeToString(payload)
+}
+
+func decodeWorkGraphContinuation(raw string) (*workGraphContinuation, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return nil, fmt.Errorf("argument %q is not a valid continuation", "continuation")
+	}
+	var value workGraphContinuation
+	if err := json.Unmarshal(payload, &value); err != nil || value.NamespaceQuery == "" || value.Cursor.SnapshotAt.IsZero() {
+		return nil, fmt.Errorf("argument %q is not a valid continuation", "continuation")
+	}
+	return &value, nil
+}
 
 func parseOptionalTime(request mcp.CallToolRequest, key string) (*time.Time, error) {
 	args := request.GetArguments()
@@ -38,6 +65,23 @@ func workGraphNamespaceQuery(request mcp.CallToolRequest) string {
 		return project
 	}
 	return request.GetString("namespaces", "/")
+}
+
+func workGraphNextQuery(request mcp.CallToolRequest, nodeOffset, edgeOffset, nodeLimit, edgeLimit int) string {
+	args := map[string]any{
+		"include_done": request.GetBool("include_done", false),
+		"node_offset":  nodeOffset,
+		"node_limit":   nodeLimit,
+		"edge_offset":  edgeOffset,
+		"edge_limit":   edgeLimit,
+	}
+	if project := strings.TrimSpace(request.GetString("project", "")); project != "" {
+		args["project"] = project
+	} else {
+		args["namespaces"] = request.GetString("namespaces", "/")
+	}
+	payload, _ := json.Marshal(args)
+	return "Call get_work_graph with arguments " + string(payload) + "."
 }
 
 func optionalID(request mcp.CallToolRequest, key string) (*int64, error) {
@@ -455,17 +499,77 @@ func registerWorkGraphTools(mcpServer *server.MCPServer, bc *bootstrap.Context) 
 		mcp.WithString("namespaces", mcp.Description("Comma-separated namespace paths")),
 		mcp.WithString("project", mcp.Description("Optional exact project namespace path; when set, it takes precedence over namespaces")),
 		mcp.WithBoolean("include_done", mcp.Description("Include done and canceled nodes"), mcp.DefaultBool(false)),
+		mcp.WithNumber("node_offset", mcp.Description("Zero-based node offset")),
+		mcp.WithNumber("node_limit", mcp.Description("Maximum nodes per page; 0 uses the safe default")),
+		mcp.WithNumber("edge_offset", mcp.Description("Zero-based edge offset")),
+		mcp.WithNumber("edge_limit", mcp.Description("Maximum edges per page; 0 uses the safe default")),
+		mcp.WithString("continuation", mcp.Description("Opaque continuation returned by next_query")),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		namespaceQuery := workGraphNamespaceQuery(request)
+		includeDone := request.GetBool("include_done", false)
+		continuation, err := decodeWorkGraphContinuation(request.GetString("continuation", ""))
+		if err != nil {
+			return nil, err
+		}
+		if continuation != nil {
+			if continuation.NamespaceQuery != namespaceQuery || continuation.IncludeDone != includeDone {
+				return nil, fmt.Errorf("continuation does not match the requested scope and include_done; restart get_work_graph")
+			}
+		}
 		namespaces, err := resolveNamespaces(ctx, namespaceQuery)
 		if err != nil {
 			return nil, err
 		}
-		graph, err := bc.Brain.GetWorkGraph(ctx, namespaces, request.GetBool("include_done", false))
+		args := request.GetArguments()
+		_, hasNodeOffset := args["node_offset"]
+		_, hasNodeLimit := args["node_limit"]
+		_, hasEdgeOffset := args["edge_offset"]
+		_, hasEdgeLimit := args["edge_limit"]
+		nodeLimit, edgeLimit := request.GetInt("node_limit", brain.DefaultLimit), request.GetInt("edge_limit", brain.DefaultLimit)
+		options := mcpWorkGraphPageOptions{NodeLimit: nodeLimit, EdgeLimit: edgeLimit}
+		if request.GetInt("node_offset", 0) < 0 || request.GetInt("edge_offset", 0) < 0 || options.NodeLimit < 0 || options.EdgeLimit < 0 {
+			return nil, fmt.Errorf("node_offset, node_limit, edge_offset, and edge_limit must be non-negative integers")
+		}
+		// Offset arguments remain accepted only for the original one-shot page API.
+		// Stable multi-page reads use continuation and never combine both modes.
+		if continuation == nil && (hasNodeOffset || hasEdgeOffset) {
+			graph, err := bc.Brain.GetWorkGraph(ctx, namespaces, includeDone)
+			if err != nil {
+				return nil, err
+			}
+			options.NodeOffset, options.EdgeOffset = request.GetInt("node_offset", 0), request.GetInt("edge_offset", 0)
+			options.NextQuery = func(no, eo int) string { return workGraphNextQuery(request, no, eo, nodeLimit, edgeLimit) }
+			return workGraphToolResult(bc, graph, options, true)
+		}
+		var cursor *brain.WorkGraphCursor
+		if continuation != nil {
+			cursor = &continuation.Cursor
+		}
+		graph, nextCursor, nodeMore, edgeMore, err := bc.Brain.GetWorkGraphPage(ctx, namespaces, includeDone, cursor, nodeLimit, edgeLimit)
 		if err != nil {
 			return nil, err
 		}
-		return jsonToolResult(bc, graph)
+		options.NodeMore, options.EdgeMore = nodeMore, edgeMore
+		options.NextQuery = func(nodeCount, edgeCount int) string {
+			pageCursor := nextCursor
+			if cursor != nil {
+				pageCursor.NodeSet, pageCursor.NodePriority, pageCursor.NodePosition, pageCursor.NodeID = cursor.NodeSet, cursor.NodePriority, cursor.NodePosition, cursor.NodeID
+				pageCursor.EdgeID = cursor.EdgeID
+			} else {
+				pageCursor.NodeSet, pageCursor.NodePriority, pageCursor.NodePosition, pageCursor.NodeID, pageCursor.EdgeID = false, 0, 0, 0, 0
+			}
+			if nodeCount > 0 {
+				last := graph.Nodes[nodeCount-1]
+				pageCursor.NodeSet, pageCursor.NodePriority, pageCursor.NodePosition, pageCursor.NodeID = true, last.Priority, last.Position, last.ID
+			}
+			if edgeCount > 0 {
+				pageCursor.EdgeID = graph.Edges[edgeCount-1].ID
+			}
+			token := encodeWorkGraphContinuation(workGraphContinuation{NamespaceQuery: namespaceQuery, IncludeDone: includeDone, Cursor: pageCursor})
+			payload, _ := json.Marshal(map[string]any{"project": request.GetString("project", ""), "namespaces": request.GetString("namespaces", "/"), "include_done": includeDone, "node_limit": nodeLimit, "edge_limit": edgeLimit, "continuation": token})
+			return "Call get_work_graph with arguments " + string(payload) + "."
+		}
+		return workGraphToolResult(bc, graph, options, continuation != nil || hasNodeLimit || hasEdgeLimit || nodeMore || edgeMore)
 	})
 
 	mcpServer.AddTool(mcp.NewTool("list_worktrees",

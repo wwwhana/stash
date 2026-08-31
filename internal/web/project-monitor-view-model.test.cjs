@@ -38,10 +38,27 @@ test('project monitor summarizes and filters project work without dropping unass
     assert.deepEqual(view.projectMonitorAgents(), ['codex', 'plato']);
     assert.equal(view.projectMonitorCount('doing'), 1);
     assert.equal(view.projectMonitorCount('blocked'), 1);
+    assert.equal(view.projectMonitorCount(''), 4);
+    assert.equal(view.projectMonitorCount('ready'), 1);
     assert.deepEqual(view.projectMonitorRows().map(item => item.id), [2, 1, 4, 3]);
     assert.deepEqual(view.projectMonitorBlockers({ id: 2 }).map(item => item.id), [1]);
 
     view.projectMonitorFilter = { status: 'doing', agent: 'codex' };
+    assert.deepEqual(view.projectMonitorRows().map(item => item.id), [1]);
+});
+
+test('expired leases and canceled work have separate counts and filters', () => {
+    const view = monitor();
+    const value = sampleMap();
+    value.work_items[0].lease_expires_at = '2000-01-01T00:00:00Z';
+    value.work_items[2].status = 'canceled';
+    view.setProjectMonitorMap(value);
+
+    assert.equal(view.projectMonitorCount('doing'), 0);
+    assert.equal(view.projectMonitorCount('expired'), 1);
+    assert.equal(view.projectMonitorCount('canceled'), 1);
+    assert.equal(view.projectMonitorDisplayStatus(value.work_items[0]), 'expired');
+    view.projectMonitorFilter.status = 'expired';
     assert.deepEqual(view.projectMonitorRows().map(item => item.id), [1]);
 });
 
@@ -68,6 +85,35 @@ test('project monitor fetches one project snapshot and only resumes the focused 
     assert.deepEqual(calls.at(-1), { name: 'resume_work', args: { work_item_id: 2, detail: 'brief' } });
 });
 
+test('an older project response cannot replace the newest project', async () => {
+    const view = monitor();
+    view.mapNamespaces = [
+        { slug: '/projects/a', label: 'A' },
+        { slug: '/projects/b', label: 'B' }
+    ];
+    view.loadMapNamespaces = async () => {};
+    view.toolValue = value => value;
+    view.markLoaded = () => {};
+    view.setNotice = () => {};
+    const pending = new Map();
+    view.invokeTool = async (_name, args) => new Promise(resolve => pending.set(args.namespace, resolve));
+
+    view.projectMonitorProjectSlug = '/projects/a';
+    const older = view.loadProjectMonitor(false);
+    await Promise.resolve();
+    view.projectMonitorProjectSlug = '/projects/b';
+    const newer = view.loadProjectMonitor(false);
+    await Promise.resolve();
+    pending.get('/projects/b')({ ...sampleMap(), work_items: [{ id: 20, title: 'B 작업', status: 'ready' }] });
+    await newer;
+    pending.get('/projects/a')({ ...sampleMap(), work_items: [{ id: 10, title: 'A 작업', status: 'ready' }] });
+    await older;
+
+    assert.equal(view.projectMonitorProjectSlug, '/projects/b');
+    assert.deepEqual(view.projectMonitorItems().map(item => item.id), [20, 4]);
+    assert.equal(view.projectMonitorLoading, false);
+});
+
 test('completed blockers no longer count as blocking work', () => {
     const view = monitor();
     const value = sampleMap();
@@ -75,6 +121,17 @@ test('completed blockers no longer count as blocking work', () => {
     view.setProjectMonitorMap(value);
 
     assert.deepEqual(view.projectMonitorBlockers({ id: 2 }), []);
+});
+
+test('blocked status remains visible without a blocks edge and blocker edges stay separate', () => {
+    const view = monitor();
+    const value = sampleMap();
+    value.edges = [];
+    view.setProjectMonitorMap(value);
+
+    const blocked = view.projectMonitorItems().find(item => item.id === 2);
+    assert.equal(view.projectMonitorIsBlocked(blocked), true);
+    assert.deepEqual(view.projectMonitorBlockers(blocked), []);
 });
 
 test('a focused brief immediately reconciles an expired row with its current status', async () => {

@@ -8,7 +8,9 @@
             require('./work-plan-view-model.js'),
             require('./issue-execution-view-model.js'),
             require('./map-scope-view-model.js'),
+            require('./work-board-scope-view-model.js'),
             require('./work-graph-view-model.js'),
+            require('./graph-viewport-view-model.js'),
             require('./work-monitor-view-model.js'),
             require('./project-monitor-view-model.js'),
             require('./goal-map-view-model.js')
@@ -20,7 +22,9 @@
             root.StashWorkPlanViewModel,
             root.StashIssueExecutionViewModel,
             root.StashMapScopeViewModel,
+            root.StashWorkBoardScopeViewModel,
             root.StashWorkGraphViewModel,
+            root.StashGraphViewportViewModel,
             root.StashWorkMonitorViewModel,
             root.StashProjectMonitorViewModel,
             root.StashGoalMapViewModel
@@ -38,25 +42,38 @@
     workPlanViewModel,
     issueExecutionViewModel,
     mapScopeViewModel,
+    workBoardScopeViewModel,
     workGraphViewModel,
+    graphViewportViewModel,
     workMonitorViewModel,
     projectMonitorViewModel,
     goalMapViewModel
 ) {
     'use strict';
 
+    // No duplicate keys are intentional. Shared behavior belongs in one ViewModel.
+    function composeViewModels(parts) {
+        const composed = {};
+        const owners = new Map();
+        for (const part of parts) {
+            for (const key of Reflect.ownKeys(part.value)) {
+                if (!Object.prototype.propertyIsEnumerable.call(part.value, key)) continue;
+                const previousOwner = owners.get(key);
+                if (previousOwner) {
+                    throw new Error(
+                        `Duplicate ViewModel key "${String(key)}" from "${previousOwner}" and "${part.name}".`
+                    );
+                }
+                owners.set(key, part.name);
+                composed[key] = part.value[key];
+            }
+        }
+        return composed;
+    }
+
     function createConsoleViewModel() {
-        return {
-            ...routeViewModel.createRouteViewModel(),
-            ...workPlanViewModel.createWorkPlanViewModel(),
-            ...issueExecutionViewModel.createIssueExecutionViewModel(),
-            ...mapScopeViewModel.createMapScopeViewModel(),
-            ...workGraphViewModel.createWorkGraphViewModel(),
-            ...workMonitorViewModel.createWorkMonitorViewModel(),
-            ...projectMonitorViewModel.createProjectMonitorViewModel(),
-            ...goalMapViewModel.createGoalMapViewModel(),
-            ...stateStore.createStateStore(),
-            ...apiClient.createApiClient(),
+        let workViewRequestSequence = 0;
+        const consoleViewModel = {
             init() {
                 window.addEventListener('popstate', () => {
                     if (!this.authChecked || (this.authRequired() && !this.auth.authenticated)) return;
@@ -275,6 +292,7 @@
 
             async loadListPage() {
                 this.loading = true;
+                this.listError = '';
                 this.result = '불러오는 중...';
                 try {
                     const args = {
@@ -295,6 +313,7 @@
                 } catch (e) {
                     this.resultValue = null;
                     this.result = '오류: ' + e.message;
+                    this.listError = e.message || '목록을 불러오지 못했습니다.';
                     this.setNotice('불러오지 못했습니다.', 'error', 0);
                 } finally {
                     this.loading = false;
@@ -404,7 +423,9 @@
             async loadWorkBoard(resetPage = true) {
                 this.activeNav = 'board';
                 this.resultTitle = '이슈 보드';
-                this.resultDescription = '작업을 상태별로 정리합니다.';
+                await this.loadMapNamespaces(false);
+                this.syncBoardProjectFromNamespace();
+                this.resultDescription = this.workBoardScopeLabel();
                 if (resetPage) {
                     this.boardPage.offset = 0;
                     this.boardPage.history = [];
@@ -498,10 +519,11 @@
             },
 
             async loadWorkView(view) {
+                const requestSequence = ++workViewRequestSequence;
                 this.view = view;
                 if (view === 'board') {
                     this.resultTitle = '이슈 보드';
-                    this.resultDescription = '작업을 상태별로 정리합니다.';
+                    this.resultDescription = this.workBoardScopeLabel();
                     this.boardError = '';
                 } else if (view === 'graph') {
                     this.resultTitle = '작업 흐름';
@@ -515,11 +537,12 @@
                     let graph;
                     if (view === 'board') {
                         const data = await this.invokeTool('list_work_items', {
-                            namespaces: '/', q: this.boardFilter.q, issue_type: this.boardFilter.issueType,
+                            namespaces: this.workBoardNamespacesArgument(), q: this.boardFilter.q, issue_type: this.boardFilter.issueType,
                             label: this.boardFilter.label,
                             limit: this.boardPage.limit + 1,
                             offset: this.boardPage.offset
                         });
+                        if (requestSequence !== workViewRequestSequence) return;
                         const value = this.toolValue(data);
                         const page = this.pageSlice(value, this.boardPage.limit, this.boardPage.offset);
                         this.boardPage.hasNext = page.hasMore;
@@ -531,6 +554,7 @@
                         if (selectedScope) graphArgs.project = selectedScope;
                         else graphArgs.namespaces = '/';
                         const data = await this.invokeTool('get_work_graph', graphArgs);
+                        if (requestSequence !== workViewRequestSequence) return;
                         graph = this.toolValue(data);
                     }
                     this.setWorkGraph(graph);
@@ -540,6 +564,7 @@
                     this.markLoaded();
                     this.setNotice('', 'success', 0);
                 } catch (e) {
+                    if (requestSequence !== workViewRequestSequence) return;
                     this.resultValue = null;
                     this.result = '오류: ' + e.message;
                     this.clearWorkGraph();
@@ -551,8 +576,10 @@
                     }
                     this.setNotice(view === 'board' ? '이슈를 불러오지 못했습니다.' : '그래프를 불러오지 못했습니다.', 'error', 0);
                 } finally {
-                    this.loading = false;
-                    this.syncRoute();
+                    if (requestSequence === workViewRequestSequence) {
+                        this.loading = false;
+                        this.syncRoute();
+                    }
                 }
             },
 
@@ -618,11 +645,50 @@
                 }
             },
 
+            async changeBoardItemStatus(item, status, control) {
+                const id = Number(item && item.id) || 0;
+                const previous = String(item && item.status || '');
+                const restore = () => {
+                    if (control) control.value = previous;
+                };
+                if (!id || !status || status === previous) return;
+                if (this.loading) {
+                    restore();
+                    return;
+                }
+                if (this.hasActiveIssueAttempt(item)) {
+                    restore();
+                    this.setNotice('실행 중에는 상태를 바꿀 수 없습니다.', 'error', 0);
+                    return;
+                }
+                if (this.issueCompletionRequiresFinishWork(status, item)) {
+                    restore();
+                    this.setNotice('완료 조건이 있는 작업은 ‘조건 확인 후 완료’에서 끝내세요.', 'error', 0);
+                    return;
+                }
+                const destination = this.boardItems(status).filter(candidate => Number(candidate.id) !== id);
+                const position = destination.reduce((max, candidate) => Math.max(max, Number(candidate.position) || 0), -1) + 1;
+                this.loading = true;
+                try {
+                    await this.invokeTool('update_work_item', { id, status, position });
+                    const current = this.graph.nodes.find(candidate => Number(candidate.id) === id);
+                    if (current) this.replaceWorkGraphNode({ ...current, status, position });
+                    this.setNotice('상태를 저장했습니다.');
+                } catch (e) {
+                    restore();
+                    this.result = '오류: ' + e.message;
+                    this.setNotice('상태를 저장하지 못했습니다.', 'error', 0);
+                } finally {
+                    this.loading = false;
+                    this.syncRoute();
+                }
+            },
+
             async createIssue() {
                 this.loading = true;
                 try {
                     await this.invokeTool('create_work_item', {
-                        namespace: '/', title: this.issueForm.title, description: this.issueForm.description,
+                        namespace: this.workBoardCreationNamespace(), title: this.issueForm.title, description: this.issueForm.description,
                         issue_type: this.issueForm.issueType, labels: this.issueForm.labels, status: 'backlog'
                     });
                     this.issueForm = { title: '', description: '', issueType: 'task', labels: '' };
@@ -638,12 +704,16 @@
             },
 
             async changeIssueStatus(status, control) {
-                if (!this.selectedIssue || this.loading) return;
+                if (!this.selectedIssue) return;
                 const previous = this.selectedIssue.status;
                 if (!status || status === previous) return;
                 const restore = () => {
                     if (control) control.value = previous;
                 };
+                if (this.loading) {
+                    restore();
+                    return;
+                }
                 if (this.executionLoading || this.executionError || this.hasActiveIssueAttempt()) {
                     restore();
                     this.setNotice(this.issueStatusGuardMessage() || '실행 상태를 확인한 뒤 바꿀 수 있습니다.', 'error', 0);
@@ -679,11 +749,12 @@
                 this.executionLoading = true;
                 this.selectedComments = [];
                 this.selectedMemoryLinks = [];
-                this.selectedIssue = this.graph.nodes.find(item => Number(item.id) === Number(id)) || { id, title: '이슈' };
-                this.openIssueDrawer(trigger);
+                this.selectedIssue = null;
                 try {
                     const item = this.toolValue(await this.invokeTool('get_work_item', { id }));
+                    if (!item || typeof item !== 'object' || !item.id) throw new Error('해당 이슈를 찾을 수 없습니다.');
                     this.selectedIssue = item;
+                    this.openIssueDrawer(trigger);
                     this.commentPage = { offset: 0, nextOffset: 0, limit: this.pageSize, hasNext: false, history: [] };
                     const [links] = await Promise.all([
                         this.invokeTool('list_work_item_memory_links', { work_item_id: id }).then(data => this.toolValue(data)),
@@ -693,6 +764,9 @@
                     this.selectedMemoryLinks = Array.isArray(links) ? links : [];
                     this.markLoaded();
                 } catch (e) {
+                    this.selectedIssue = null;
+                    this.selectedComments = [];
+                    this.selectedMemoryLinks = [];
                     this.result = '오류: ' + e.message;
                     if (!this.executionLoaded) {
                         this.executionLoading = false;
@@ -791,7 +865,7 @@
                 return {
                     backlog: '대기', ready: '준비', doing: '진행 중', blocked: '막힘',
                     review: '검토', done: '완료', canceled: '취소', active: '진행 중',
-                    completed: '완료', abandoned: '중단'
+                    completed: '완료', abandoned: '중단', expired: '연결 만료'
                 }[status] || status || '대기';
             },
 
@@ -822,9 +896,23 @@
                     removed: 'bg-gray-200 text-gray-600'
                 }[status] || 'bg-gray-100 text-gray-600';
             },
-
         };
+        return composeViewModels([
+            { name: 'routeViewModel', value: routeViewModel.createRouteViewModel() },
+            { name: 'workPlanViewModel', value: workPlanViewModel.createWorkPlanViewModel() },
+            { name: 'issueExecutionViewModel', value: issueExecutionViewModel.createIssueExecutionViewModel() },
+            { name: 'mapScopeViewModel', value: mapScopeViewModel.createMapScopeViewModel() },
+            { name: 'workBoardScopeViewModel', value: workBoardScopeViewModel.createWorkBoardScopeViewModel() },
+            { name: 'workGraphViewModel', value: workGraphViewModel.createWorkGraphViewModel() },
+            { name: 'graphViewportViewModel', value: graphViewportViewModel.createGraphViewportViewModel() },
+            { name: 'workMonitorViewModel', value: workMonitorViewModel.createWorkMonitorViewModel() },
+            { name: 'projectMonitorViewModel', value: projectMonitorViewModel.createProjectMonitorViewModel() },
+            { name: 'goalMapViewModel', value: goalMapViewModel.createGoalMapViewModel() },
+            { name: 'stateStore', value: stateStore.createStateStore() },
+            { name: 'apiClient', value: apiClient.createApiClient() },
+            { name: 'consoleViewModel', value: consoleViewModel }
+        ]);
     }
 
-    return { createConsoleViewModel };
+    return { composeViewModels, createConsoleViewModel };
 }));

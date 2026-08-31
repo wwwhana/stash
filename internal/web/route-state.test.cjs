@@ -45,7 +45,7 @@ test('goal map address restores hidden node kinds', () => {
 
 test('project plan and issue drawer keep only their own query state', () => {
     assert.equal(buildRoute('plan', { project: '/projects/demo', namespace: '/self', query: 'ignored' }), '/ui/plan?project=%2Fprojects%2Fdemo');
-    assert.equal(buildRoute('board', { query: '로그인', issueType: 'bug', label: 'urgent', offset: 50, issueID: 17 }), '/ui/issues?q=%EB%A1%9C%EA%B7%B8%EC%9D%B8&type=bug&label=urgent&offset=50&issue=17');
+    assert.equal(buildRoute('board', { project: '/projects/demo', namespace: '/projects/demo/api', query: '로그인', issueType: 'bug', label: 'urgent', offset: 50, issueID: 17 }), '/ui/issues?project=%2Fprojects%2Fdemo&namespace=%2Fprojects%2Fdemo%2Fapi&q=%EB%A1%9C%EA%B7%B8%EC%9D%B8&type=bug&label=urgent&offset=50&issue=17');
     assert.equal(buildRoute('graph', { namespace: '/projects/demo', issueID: 17 }), '/ui/work-graph?namespace=%2Fprojects%2Fdemo&issue=17');
 });
 
@@ -91,7 +91,7 @@ test('the console restores routes and exposes real navigation links', () => {
     assert.match(viewModel, /project: this\.graphProjectSlug/);
     assert.match(viewModel, /agent: this\.graphFilter\.agent/);
     assert.match(viewModel, /focus: this\.graphFocusedKey/);
-    assert.match(viewModel, /this\.focusGraphNode\(route\.focus\)/);
+    assert.match(viewModel, /await this\.focusGraphNodeByID\(route\.focus\)/);
     assert.match(app, /window\.addEventListener\('popstate'/);
     assert.match(app, /await this\.restoreRoute\(\)/);
 });

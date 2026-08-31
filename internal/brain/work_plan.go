@@ -347,6 +347,9 @@ func (b *Brain) UpdateWorkPlanComponent(ctx context.Context, componentID int64, 
 	if current.Metadata.Kind != workPlanComponentKind {
 		return nil, ErrWorkPlanComponentNotFound
 	}
+	if err := ensureNoActiveWorkPlanAttempt(ctx, tx, componentID, true); err != nil {
+		return nil, err
+	}
 	goalID := current.Item.GoalID
 	if input.GoalID != nil {
 		goalID, err = b.resolveProjectGoalForWork(ctx, current.Item.NamespaceID, input.GoalID, nil)
@@ -468,6 +471,9 @@ func (b *Brain) UpdateWorkPlanTask(ctx context.Context, taskID int64, input Work
 	if current.Metadata.Kind != workPlanTaskKind {
 		return nil, ErrWorkPlanTaskNotFound
 	}
+	if err := ensureNoActiveWorkPlanAttempt(ctx, tx, taskID, false); err != nil {
+		return nil, err
+	}
 	goalID := current.Item.GoalID
 	if input.GoalID != nil {
 		goalID, err = b.resolveProjectGoalForWork(ctx, current.Item.NamespaceID, input.GoalID, nil)
@@ -526,19 +532,30 @@ func (b *Brain) SetWorkPlanComponentPaths(ctx context.Context, componentID int64
 	if err != nil {
 		return nil, err
 	}
-	component, err := b.getWorkPlanItem(ctx, b.pool, componentID, false)
+	tx, err := b.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin update work plan component paths: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	component, err := b.getWorkPlanItem(ctx, tx, componentID, true)
 	if err != nil {
 		return nil, err
 	}
 	if component.Metadata.Kind != workPlanComponentKind {
 		return nil, ErrWorkPlanComponentNotFound
 	}
-	_, err = b.pool.Exec(ctx,
+	if err := ensureNoActiveWorkPlanAttempt(ctx, tx, componentID, true); err != nil {
+		return nil, err
+	}
+	_, err = tx.Exec(ctx,
 		`UPDATE work_plan_items SET owned_paths = $2, updated_at = now() WHERE work_item_id = $1`,
 		componentID, paths,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("update work plan component paths: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit update work plan component paths: %w", err)
 	}
 	return b.getWorkPlanComponent(ctx, componentID)
 }
@@ -550,22 +567,82 @@ func (b *Brain) LinkWorkPlanComponents(ctx context.Context, namespaceID, compone
 	if relationship != "needs" && relationship != "links" {
 		return nil, ErrWorkPlanInvalidRelationship
 	}
-	component, err := b.getWorkPlanItem(ctx, b.pool, componentID, false)
+	tx, err := b.pool.Begin(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("begin link work plan components: %w", err)
 	}
-	related, err := b.getWorkPlanItem(ctx, b.pool, relatedComponentID, false)
-	if err != nil {
-		return nil, err
+	defer tx.Rollback(ctx)
+	firstID, secondID := componentID, relatedComponentID
+	if firstID > secondID {
+		firstID, secondID = secondID, firstID
 	}
+	items := make(map[int64]workPlanItemRecord, 2)
+	for _, id := range []int64{firstID, secondID} {
+		item, itemErr := b.getWorkPlanItem(ctx, tx, id, true)
+		if itemErr != nil {
+			return nil, itemErr
+		}
+		items[id] = item
+	}
+	component := items[componentID]
+	related := items[relatedComponentID]
 	if component.Metadata.Kind != workPlanComponentKind || related.Metadata.Kind != workPlanComponentKind ||
 		component.Item.NamespaceID != namespaceID || related.Item.NamespaceID != namespaceID {
 		return nil, ErrWorkPlanComponentNotFound
 	}
-	if relationship == "needs" {
-		return b.AddWorkItemEdge(ctx, namespaceID, relatedComponentID, componentID, "blocks")
+	for _, id := range []int64{firstID, secondID} {
+		if err := ensureNoActiveWorkPlanAttempt(ctx, tx, id, true); err != nil {
+			return nil, err
+		}
 	}
-	return b.AddWorkItemEdge(ctx, namespaceID, componentID, relatedComponentID, "relates_to")
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, namespaceID); err != nil {
+		return nil, fmt.Errorf("lock work plan component graph: %w", err)
+	}
+	fromID, toID, edgeType := componentID, relatedComponentID, "relates_to"
+	if relationship == "needs" {
+		fromID, toID, edgeType = relatedComponentID, componentID, "blocks"
+	}
+	edge, err := insertWorkPlanComponentEdge(ctx, tx, namespaceID, fromID, toID, edgeType)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit link work plan components: %w", err)
+	}
+	return edge, nil
+}
+
+func insertWorkPlanComponentEdge(ctx context.Context, tx pgx.Tx, namespaceID, fromID, toID int64, edgeType string) (*models.WorkItemEdge, error) {
+	if fromID == toID {
+		return nil, ErrWorkItemCycle
+	}
+	if edgeType == "blocks" {
+		var cycle bool
+		if err := tx.QueryRow(ctx, `WITH RECURSIVE reachable(id) AS (
+			SELECT to_item_id FROM work_item_edges
+			 WHERE from_item_id = $1 AND edge_type = 'blocks' AND deleted_at IS NULL
+			UNION
+			SELECT edge.to_item_id FROM work_item_edges edge
+			 JOIN reachable r ON edge.from_item_id = r.id
+			 WHERE edge.edge_type = 'blocks' AND edge.deleted_at IS NULL
+		)
+		SELECT EXISTS (SELECT 1 FROM reachable WHERE id = $2)`, toID, fromID).Scan(&cycle); err != nil {
+			return nil, fmt.Errorf("check work plan component cycle: %w", err)
+		}
+		if cycle {
+			return nil, ErrWorkItemCycle
+		}
+	}
+	var edge models.WorkItemEdge
+	if err := tx.QueryRow(ctx,
+		`INSERT INTO work_item_edges (namespace_id, from_item_id, to_item_id, edge_type)
+		 VALUES ($1, $2, $3, $4)
+		 RETURNING id, namespace_id, from_item_id, to_item_id, edge_type, created_at, deleted_at`,
+		namespaceID, fromID, toID, edgeType,
+	).Scan(&edge.ID, &edge.NamespaceID, &edge.FromItemID, &edge.ToItemID, &edge.EdgeType, &edge.CreatedAt, &edge.DeletedAt); err != nil {
+		return nil, fmt.Errorf("create work plan component edge: %w", err)
+	}
+	return &edge, nil
 }
 
 func workItemInputFromExisting(item models.WorkItem) WorkItemInput {
@@ -574,6 +651,60 @@ func workItemInputFromExisting(item models.WorkItem) WorkItemInput {
 		Title: item.Title, Description: item.Description, Status: item.Status,
 		Priority: item.Priority, Position: item.Position, Owner: item.Owner, DueAt: item.DueAt,
 	}
+}
+
+func rejectActiveWorkAttempt(active bool) error {
+	if active {
+		return ErrActiveWorkAttempt
+	}
+	return nil
+}
+
+func ensureNoActiveWorkPlanAttempt(ctx context.Context, writer workItemRowWriter, workItemID int64, includeDescendants bool) error {
+	query := `SELECT EXISTS (
+		SELECT 1 FROM work_attempts attempt
+		WHERE attempt.work_item_id = $1 AND attempt.status = 'active'
+	)`
+	if includeDescendants {
+		query = `WITH RECURSIVE work_tree AS (
+			SELECT id FROM work_items WHERE id = $1 AND deleted_at IS NULL
+			UNION
+			SELECT child.id FROM work_items child JOIN work_tree parent ON child.parent_id = parent.id
+			WHERE child.deleted_at IS NULL
+		), locked_work AS (
+			SELECT item.id FROM work_items item JOIN work_tree ON work_tree.id = item.id
+			ORDER BY item.id FOR UPDATE OF item
+		)
+		SELECT EXISTS (
+			SELECT 1 FROM work_attempts attempt
+			WHERE attempt.work_item_id IN (SELECT id FROM locked_work) AND attempt.status = 'active'
+		)`
+	}
+	var active bool
+	if err := writer.QueryRow(ctx, query, workItemID).Scan(&active); err != nil {
+		return fmt.Errorf("check active work plan attempt: %w", err)
+	}
+	return rejectActiveWorkAttempt(active)
+}
+
+func deleteWorkPlanItem(ctx context.Context, tx pgx.Tx, workItemID int64) error {
+	result, err := tx.Exec(ctx,
+		`WITH RECURSIVE work_tree AS (
+			SELECT id FROM work_items WHERE id = $1 AND deleted_at IS NULL
+			UNION
+			SELECT child.id FROM work_items child JOIN work_tree parent ON child.parent_id = parent.id
+			WHERE child.deleted_at IS NULL
+		)
+		UPDATE work_items SET deleted_at = now(), updated_at = now()
+		WHERE id IN (SELECT id FROM work_tree) AND deleted_at IS NULL`, workItemID,
+	)
+	if err != nil {
+		return fmt.Errorf("delete work plan item: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return ErrWorkItemNotFound
+	}
+	return nil
 }
 
 func (b *Brain) transitionWorkPlanTask(ctx context.Context, taskID int64, status, agent, reason string) (*models.WorkPlanTask, error) {
@@ -594,6 +725,9 @@ func (b *Brain) transitionWorkPlanTask(ctx context.Context, taskID int64, status
 	}
 	if record.Metadata.Kind != workPlanTaskKind {
 		return nil, ErrWorkPlanTaskNotFound
+	}
+	if err := ensureNoActiveWorkPlanAttempt(ctx, tx, taskID, false); err != nil {
+		return nil, err
 	}
 	input := workItemInputFromExisting(record.Item)
 	switch status {
@@ -702,26 +836,54 @@ func (b *Brain) UnblockWorkPlanTask(ctx context.Context, taskID int64) (*models.
 // key is retired with the records; callers must create a new component rather
 // than reusing an old key for a different purpose.
 func (b *Brain) DeleteWorkPlanComponent(ctx context.Context, componentID int64) error {
-	record, err := b.getWorkPlanItem(ctx, b.pool, componentID, false)
+	tx, err := b.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin delete work plan component: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	record, err := b.getWorkPlanItem(ctx, tx, componentID, true)
 	if err != nil {
 		return err
 	}
 	if record.Metadata.Kind != workPlanComponentKind {
 		return ErrWorkPlanComponentNotFound
 	}
-	return b.deleteWorkItem(ctx, componentID)
+	if err := ensureNoActiveWorkPlanAttempt(ctx, tx, componentID, true); err != nil {
+		return err
+	}
+	if err := deleteWorkPlanItem(ctx, tx, componentID); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit work plan component deletion: %w", err)
+	}
+	return nil
 }
 
 // DeleteWorkPlanTask removes one executable child task from a component.
 func (b *Brain) DeleteWorkPlanTask(ctx context.Context, taskID int64) error {
-	record, err := b.getWorkPlanItem(ctx, b.pool, taskID, false)
+	tx, err := b.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin delete work plan task: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	record, err := b.getWorkPlanItem(ctx, tx, taskID, true)
 	if err != nil {
 		return err
 	}
 	if record.Metadata.Kind != workPlanTaskKind {
 		return ErrWorkPlanTaskNotFound
 	}
-	return b.deleteWorkItem(ctx, taskID)
+	if err := ensureNoActiveWorkPlanAttempt(ctx, tx, taskID, false); err != nil {
+		return err
+	}
+	if err := deleteWorkPlanItem(ctx, tx, taskID); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit work plan task deletion: %w", err)
+	}
+	return nil
 }
 
 func scanWorkPlanDecision(row pgx.Row) (*models.WorkPlanDecision, error) {

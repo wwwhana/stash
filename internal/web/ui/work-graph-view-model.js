@@ -9,17 +9,35 @@
 
     if (!workGraphLayout) throw new Error('작업 흐름 배치 모듈을 불러오지 못했습니다.');
 
+    function escapeSVGAttribute(value) {
+        return String(value === undefined || value === null ? '' : value)
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
     function createWorkGraphViewModel() {
         const layout = workGraphLayout;
         const defaultRelations = () => ({ part_of: true, blocks: true, relates_to: true });
+        const emptyGraphPage = () => ({ hasMore: false, nextNodeOffset: 0, nextEdgeOffset: 0, totalNodes: 0, totalEdges: 0 });
         const relationGroup = type => type === 'part_of' || type === 'blocks' ? type : 'relates_to';
         let activeDragHandle = null;
+        let graphFilterTrigger = null;
+        let graphFocusReturn = null;
+        let graphPageRequestSequence = 0;
         return {
             graph: { nodes: [], edges: [], worktrees: [] },
+            graphPage: emptyGraphPage(),
+            graphPageLoading: false,
+            graphPageError: '',
+            graphFocusLoading: false,
+            graphFocusError: '',
             workGraphLayout: layout.emptyLayout(),
             graphFilter: { query: '', status: '', agent: '', relations: defaultRelations() },
             graphFilterOpen: false,
             graphFocusedKey: '',
+            graphInspectorOverlay: false,
             graphNodeOffsets: {},
             graphDragState: null,
             graphMoveAnnouncement: '',
@@ -32,6 +50,14 @@
                     edges: Array.isArray(graph.edges) ? graph.edges : [],
                     worktrees: Array.isArray(graph.worktrees) ? graph.worktrees : []
                 };
+                this.graphPage = {
+                    hasMore: Boolean(graph.has_more),
+                    nextNodeOffset: Number(graph.next_node_offset) || 0,
+                    nextEdgeOffset: Number(graph.next_edge_offset) || 0,
+                    totalNodes: Number(graph.total_nodes) || this.graph.nodes.length,
+                    totalEdges: Number(graph.total_edges) || this.graph.edges.length
+                };
+                this.graphPageError = '';
                 const validIDs = new Set(this.graph.nodes.map(item => String(item.id)));
                 const validOffsetKeys = new Set(Array.from(validIDs).map(id => `node:${id}`));
                 this.graphNodeOffsets = Object.fromEntries(
@@ -39,7 +65,7 @@
                         validOffsetKeys.has(key) && offset && (Number(offset.x) || Number(offset.y))
                     ))
                 );
-                if (this.graph.nodes.length && this.graphFocusedKey && !validIDs.has(String(this.graphFocusedKey))) {
+                if (this.graph.nodes.length && this.graphFocusedKey && !validIDs.has(String(this.graphFocusedKey)) && !this.graphPage.hasMore) {
                     this.graphFocusedKey = '';
                     if (typeof this.clearWorkMonitor === 'function') this.clearWorkMonitor();
                 }
@@ -47,7 +73,71 @@
             },
 
             clearWorkGraph() {
+                graphPageRequestSequence += 1;
+                this.graphPageLoading = false;
                 this.setWorkGraph({ nodes: [], edges: [], worktrees: [] });
+            },
+
+            appendWorkGraphPage(value) {
+                const page = value && typeof value === 'object' ? value : {};
+                const merge = (current, incoming, keyOfItem) => {
+                    const result = current.slice();
+                    const seen = new Set(result.map(keyOfItem));
+                    for (const item of Array.isArray(incoming) ? incoming : []) {
+                        const key = keyOfItem(item);
+                        if (seen.has(key)) continue;
+                        seen.add(key);
+                        result.push(item);
+                    }
+                    return result;
+                };
+                const nodes = merge(this.graph.nodes, page.nodes, item => String(item && item.id));
+                const edges = merge(this.graph.edges, page.edges, item => item && item.id !== undefined && item.id !== null
+                    ? `id:${item.id}`
+                    : `${item && item.from_item_id}:${item && item.to_item_id}:${item && item.edge_type}`);
+                const worktrees = merge(this.graph.worktrees, page.worktrees, item => String(item && item.id));
+                this.setWorkGraph({ ...page, nodes, edges, worktrees });
+            },
+
+            async loadMoreWorkGraph() {
+                if (!this.graphPage.hasMore || this.graphPageLoading) return false;
+                const requestSequence = ++graphPageRequestSequence;
+                const before = {
+                    nodes: this.graph.nodes.length,
+                    edges: this.graph.edges.length,
+                    nodeOffset: this.graphPage.nextNodeOffset,
+                    edgeOffset: this.graphPage.nextEdgeOffset
+                };
+                this.graphPageLoading = true;
+                this.graphPageError = '';
+                try {
+                    const args = {
+                        include_done: true,
+                        node_offset: this.graphPage.nextNodeOffset,
+                        edge_offset: this.graphPage.nextEdgeOffset
+                    };
+                    const selectedScope = this.mapNamespaceSlug || this.graphProjectSlug;
+                    if (selectedScope) args.project = selectedScope;
+                    else args.namespaces = '/';
+                    const data = await this.invokeTool('get_work_graph', args);
+                    if (requestSequence !== graphPageRequestSequence) return false;
+                    const page = this.toolValue(data);
+                    if (!page || typeof page !== 'object') throw new Error('작업 흐름 응답이 올바르지 않습니다.');
+                    this.appendWorkGraphPage(page);
+                    this.resultValue = this.graph;
+                    this.resultKind = 'get_work_graph';
+                    this.result = JSON.stringify(this.graph, null, 2);
+                    if (typeof this.markLoaded === 'function') this.markLoaded();
+                    return this.graph.nodes.length > before.nodes || this.graph.edges.length > before.edges ||
+                        this.graphPage.nextNodeOffset > before.nodeOffset || this.graphPage.nextEdgeOffset > before.edgeOffset ||
+                        !this.graphPage.hasMore;
+                } catch (error) {
+                    if (requestSequence !== graphPageRequestSequence) return false;
+                    this.graphPageError = String(error && error.message || '').trim() || '다음 작업을 불러오지 못했습니다.';
+                    return false;
+                } finally {
+                    if (requestSequence === graphPageRequestSequence) this.graphPageLoading = false;
+                }
             },
 
             setWorkGraphWorktrees(worktrees) {
@@ -117,6 +207,9 @@
                     sourceNodeCount: this.graph.nodes.length,
                     relations
                 });
+                if (typeof this.updateGraphViewport === 'function') {
+                    this.updateGraphViewport(this.workGraphLayout);
+                }
                 if (!this.loading && this.view === 'graph') this.syncRoute(true);
             },
 
@@ -187,10 +280,11 @@
                 const state = this.graphDragState;
                 if (!state || !event || (state.pointerId !== undefined && event.pointerId !== state.pointerId)) return;
                 if (event.cancelable) event.preventDefault();
+                const scale = typeof this.graphViewportScale === 'function' ? this.graphViewportScale() : 1;
                 this.writeGraphNodeOffset(
                     state.key,
-                    state.originX + event.clientX - state.startX,
-                    state.originY + event.clientY - state.startY,
+                    state.originX + (event.clientX - state.startX) / scale,
+                    state.originY + (event.clientY - state.startY) / scale,
                     state.bounds
                 );
             },
@@ -261,6 +355,48 @@
                 this.graphMoveAnnouncement = '작업 위치를 기본 배치로 되돌렸습니다.';
             },
 
+            toggleGraphFilterMenu(trigger = null) {
+                if (this.graphFilterOpen) {
+                    this.closeGraphFilterMenu(false);
+                    return;
+                }
+                graphFilterTrigger = trigger || graphFilterTrigger;
+                this.graphFilterOpen = true;
+                const focusSearch = () => {
+                    if (typeof document === 'undefined') return;
+                    const search = document.getElementById('work-graph-filter-query');
+                    if (search && typeof search.focus === 'function') search.focus({ preventScroll: true });
+                };
+                if (typeof this.$nextTick === 'function') this.$nextTick(focusSearch);
+                else focusSearch();
+                // x-show can apply its display change one task after Alpine's
+                // reactive flush. Repeat once after that task so a real pointer
+                // click always lands in the first filter field.
+                if (typeof setTimeout === 'function') setTimeout(focusSearch, 0);
+            },
+
+            closeGraphFilterMenu(restoreFocus = false, restoreIfFocusInside = false) {
+                const trigger = graphFilterTrigger;
+                let shouldRestoreFocus = Boolean(restoreFocus);
+                if (!shouldRestoreFocus && restoreIfFocusInside && typeof document !== 'undefined') {
+                    const menu = document.getElementById('work-graph-filter-menu');
+                    const active = document.activeElement;
+                    shouldRestoreFocus = Boolean(
+                        menu && active && typeof menu.contains === 'function' && menu.contains(active)
+                    );
+                }
+                this.graphFilterOpen = false;
+                graphFilterTrigger = null;
+                if (!shouldRestoreFocus || !trigger || typeof trigger.focus !== 'function') return;
+                const focusTrigger = () => {
+                    if (trigger.isConnected === false) return;
+                    trigger.focus({ preventScroll: true });
+                };
+                if (typeof this.$nextTick === 'function') this.$nextTick(focusTrigger);
+                else if (typeof requestAnimationFrame === 'function') requestAnimationFrame(focusTrigger);
+                else focusTrigger();
+            },
+
             graphHasFilters() {
                 const relations = { ...defaultRelations(), ...(this.graphFilter.relations || {}) };
                 return Boolean(
@@ -302,7 +438,7 @@
                 if (query) chips.push({ key: 'query', label: `검색: ${query}` });
                 if (status) chips.push({ key: 'status', label: `상태: ${this.statusLabel(status)}` });
                 if (agent) chips.push({ key: 'agent', label: `담당: ${agent}` });
-                const labels = { part_of: '상하 관계', blocks: '선후 관계', relates_to: '관련 관계' };
+                const labels = { part_of: '상위·하위', blocks: '먼저·다음', relates_to: '관련 관계' };
                 const relations = { ...defaultRelations(), ...(this.graphFilter.relations || {}) };
                 Object.keys(labels).filter(relation => relations[relation] === false).forEach(relation => {
                     chips.push({ key: `relation:${relation}`, label: `${labels[relation]} 숨김` });
@@ -330,6 +466,11 @@
                 if (!item) return '';
                 const key = item.issue_key || '#' + item.id;
                 return item.title ? `${key} · ${item.title}` : key;
+            },
+
+            graphParentLabel(item) {
+                const parent = this.graphParentFor(item);
+                return parent ? `상위 ${this.graphWorkLabel(parent)}` : '';
             },
 
             graphFocusedItem() {
@@ -370,20 +511,94 @@
                 return path;
             },
 
-            focusGraphNode(key, scroll = true) {
+            graphFocusedDependencyPath() {
+                const focused = String(this.graphFocusedKey || '');
+                const result = {
+                    nodes: new Set(focused ? [focused] : []),
+                    upstreamNodes: new Set(), downstreamNodes: new Set(),
+                    upstreamEdges: new Set(), downstreamEdges: new Set()
+                };
+                if (!focused) return result;
+                const blocking = this.graph.edges.filter(edge => String(edge && edge.edge_type || '') === 'blocks');
+                const walk = (start, reverse, nodeSet, edgeSet) => {
+                    const pending = [start];
+                    const visited = new Set([start]);
+                    while (pending.length) {
+                        const current = pending.pop();
+                        for (const edge of blocking) {
+                            const from = String(edge.from_item_id);
+                            const to = String(edge.to_item_id);
+                            if ((reverse ? to : from) !== current) continue;
+                            const next = reverse ? from : to;
+                            edgeSet.add(edge.id === undefined || edge.id === null
+                                ? `${from}:${to}:blocks`
+                                : `work-edge-${edge.id}`);
+                            nodeSet.add(next);
+                            result.nodes.add(next);
+                            if (!visited.has(next)) {
+                                visited.add(next);
+                                pending.push(next);
+                            }
+                        }
+                    }
+                };
+                walk(focused, true, result.upstreamNodes, result.upstreamEdges);
+                walk(focused, false, result.downstreamNodes, result.downstreamEdges);
+                return result;
+            },
+
+            focusGraphNode(key, scroll = true, returnElement = null, focusInspector = false) {
                 const normalized = String(key === undefined || key === null ? '' : key);
                 if (!normalized || !this.graph.nodes.some(item => String(item.id) === normalized)) return;
+                if (returnElement && typeof returnElement.focus === 'function') graphFocusReturn = returnElement;
+                this.graphInspectorOverlay = this.graphInspectorIsOverlay();
                 const changed = this.graphFocusedKey !== normalized;
                 this.graphFocusedKey = normalized;
+                this.graphFocusError = '';
                 if (changed) this.syncRoute();
                 this.refreshWorkGraphLayout();
                 if (typeof this.loadWorkMonitor === 'function') this.loadWorkMonitor(Number(normalized));
                 if (scroll) this.scrollGraphNodeIntoView(normalized);
+                if (focusInspector) this.focusGraphInspector();
                 this.graphMoveAnnouncement = `${this.graphWorkLabel(this.graphFocusedItem())} 선택`;
             },
 
-            focusGraphNodeByID(id) {
-                this.focusGraphNode(String(id));
+            focusGraphNodeByID(id, focusInspector = false) {
+                return this.focusGraphNodeWhenLoaded(id, focusInspector);
+            },
+
+            async focusGraphNodeWhenLoaded(id, focusInspector = false, maxPages = 64) {
+                const key = String(id === undefined || id === null ? '' : id);
+                if (!key) return false;
+                this.graphFocusLoading = true;
+                this.graphFocusError = '';
+                let pageCount = 0;
+                try {
+                    while (!this.graph.nodes.some(item => String(item.id) === key) && this.graphPage.hasMore && pageCount < maxPages) {
+                        pageCount += 1;
+                        if (!await this.loadMoreWorkGraph()) break;
+                    }
+                    if (!this.graph.nodes.some(item => String(item.id) === key)) {
+                        this.graphFocusError = this.graphPage.hasMore
+                            ? '작업을 찾기 전에 불러오기 한도에 도달했습니다.'
+                            : '해당 작업을 찾을 수 없습니다.';
+                        return false;
+                    }
+                    this.focusGraphNode(key, true, null, focusInspector);
+                    // A loaded parent ID is enough to move upward, but the only
+                    // reliable way to discover every child is to finish the node
+                    // pages. Do that only after the user explicitly selects work.
+                    while (this.graphPage.hasMore && pageCount < maxPages) {
+                        pageCount += 1;
+                        if (!await this.loadMoreWorkGraph()) break;
+                    }
+                    if (this.graphPage.hasMore) {
+                        this.graphFocusError = '일부 상하 관계를 아직 불러오지 못했습니다.';
+                    }
+                    return true;
+                } finally {
+                    this.graphFocusLoading = false;
+                }
             },
 
             showGraphChildren(node) {
@@ -391,16 +606,116 @@
                 this.focusGraphNode(node.key, false);
             },
 
-            clearGraphFocus() {
+            focusGraphInspector() {
+                const focus = () => {
+                    if (typeof document === 'undefined') return;
+                    const inspector = document.querySelector('[data-graph-inspector]');
+                    if (!inspector) return;
+                    const closeButton = inspector.querySelector('[data-graph-inspector-close]');
+                    const target = closeButton && typeof closeButton.focus === 'function' ? closeButton : inspector;
+                    if (typeof target.focus === 'function') target.focus({ preventScroll: true });
+                };
+                if (typeof this.$nextTick === 'function') this.$nextTick(focus);
+                else focus();
+            },
+
+            graphInspectorIsOverlay() {
+                if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+                    return Boolean(this.graphInspectorOverlay);
+                }
+                return window.matchMedia('(max-width: 1120px)').matches;
+            },
+
+            refreshGraphInspectorMode() {
+                this.graphInspectorOverlay = this.graphInspectorIsOverlay();
+                return this.graphInspectorOverlay;
+            },
+
+            trapGraphInspectorFocus(event) {
+                if (!event || event.key !== 'Tab' || !this.graphInspectorIsOverlay()) return false;
+                const inspector = event.currentTarget && event.currentTarget.matches && event.currentTarget.matches('[data-graph-inspector]')
+                    ? event.currentTarget
+                    : (typeof document !== 'undefined' ? document.querySelector('[data-graph-inspector]') : null);
+                if (!inspector || typeof inspector.querySelectorAll !== 'function') return false;
+                const focusable = Array.from(inspector.querySelectorAll(
+                    'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), details > summary, [tabindex]:not([tabindex="-1"])'
+                )).filter(element => {
+                    if (!element || element.hidden || element.getAttribute('aria-hidden') === 'true') return false;
+                    if (typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') return true;
+                    const style = window.getComputedStyle(element);
+                    return style.display !== 'none' && style.visibility !== 'hidden';
+                });
+                if (!focusable.length) return false;
+                const active = typeof document !== 'undefined' ? document.activeElement : null;
+                const first = focusable[0];
+                const last = focusable[focusable.length - 1];
+                let target = null;
+                if (event.shiftKey && (active === first || !inspector.contains(active))) target = last;
+                if (!event.shiftKey && (active === last || !inspector.contains(active))) target = first;
+                if (!target) return false;
+                if (event.cancelable && typeof event.preventDefault === 'function') event.preventDefault();
+                target.focus({ preventScroll: true });
+                return true;
+            },
+
+            handleGraphEscape(event) {
+                let handled = false;
+                if (this.graphDragState) {
+                    this.cancelGraphNodeDrag(event);
+                    handled = true;
+                } else if (this.graphViewportPanState && typeof this.cancelGraphViewportPan === 'function') {
+                    this.cancelGraphViewportPan(event);
+                    handled = true;
+                } else if (this.graphFilterOpen) {
+                    this.closeGraphFilterMenu(true);
+                    handled = true;
+                } else if (this.graphFocusedKey) {
+                    this.clearGraphFocus(true);
+                    handled = true;
+                }
+                if (handled && event) {
+                    if (event.cancelable && typeof event.preventDefault === 'function') event.preventDefault();
+                    if (typeof event.stopPropagation === 'function') event.stopPropagation();
+                }
+                return handled;
+            },
+
+            clearGraphFocus(restoreFocus = false) {
                 if (!this.graphFocusedKey) return;
+                const previousKey = String(this.graphFocusedKey);
                 this.graphFocusedKey = '';
+                this.graphFocusError = '';
                 if (typeof this.clearWorkMonitor === 'function') this.clearWorkMonitor();
                 this.syncRoute();
                 this.refreshWorkGraphLayout();
+                if (restoreFocus) {
+                    let target = graphFocusReturn;
+                    graphFocusReturn = null;
+                    if (!target || typeof target.focus !== 'function' || target.isConnected === false) {
+                        target = null;
+                        if (typeof document !== 'undefined' && typeof document.querySelectorAll === 'function') {
+                            const nodes = Array.from(document.querySelectorAll('[data-graph-node-open]'));
+                            target = nodes.find(element => (
+                                element && element.dataset && String(element.dataset.graphNodeOpen) === previousKey
+                            )) || null;
+                        }
+                    }
+                    if (!target || typeof target.focus !== 'function') return;
+                    const focus = () => {
+                        if (target.isConnected === false) return;
+                        target.focus({ preventScroll: true });
+                    };
+                    if (typeof this.$nextTick === 'function') this.$nextTick(focus);
+                    else focus();
+                }
             },
 
             scrollGraphNodeIntoView(key) {
                 this.$nextTick(() => {
+                    if (typeof this.centerGraphNodeByID === 'function' && this.$refs && this.$refs.graphViewport) {
+                        this.centerGraphNodeByID(key, this.$refs.graphViewport);
+                        return;
+                    }
                     const nodes = Array.from(document.querySelectorAll('[data-graph-node-key]'));
                     const element = nodes.find(candidate => candidate.dataset.graphNodeKey === String(key));
                     const container = element && element.closest('.stash-graph-scroll');
@@ -433,10 +748,11 @@
 
             graphAriaLabel() {
                 const visible = this.workGraphLayout.visibleNodeCount;
-                const source = this.workGraphLayout.sourceNodeCount;
+                const source = Math.max(this.workGraphLayout.sourceNodeCount, Number(this.graphPage.totalNodes) || 0);
                 const disconnected = this.workGraphLayout.disconnected.length;
                 const cycles = this.workGraphLayout.cycles.length;
-                return `${this.graphScopeLabel()} 작업 ${visible}/${source}개, 연결 ${this.workGraphLayout.edges.length}개, 연결 없는 작업 ${disconnected}개, 순환 묶음 ${cycles}개.`;
+                const partial = this.graphPage.hasMore ? ' 일부 작업과 연결을 아직 불러오지 않았습니다.' : '';
+                return `${this.graphScopeLabel()} 작업 ${visible}/${source}개, 연결 ${this.workGraphLayout.edges.length}/${Math.max(this.workGraphLayout.edges.length, Number(this.graphPage.totalEdges) || 0)}개, 연결 없는 작업 ${disconnected}개, 순환 묶음 ${cycles}개.${partial}`;
             },
 
             graphCanvasViewBox() {
@@ -444,20 +760,60 @@
             },
 
             edgeMarkerId(edge) {
-                return 'stash-work-graph-arrow-' + String(edge && edge.key || '').replace(/[^a-zA-Z0-9_-]/g, '-');
+                const tone = String(edge && (edge.tone || edge.type) || 'relation')
+                    .replace(/[^a-zA-Z0-9_-]/g, '-');
+                return 'stash-work-graph-arrow-' + tone;
             },
 
             edgeMarkerUrl(edge) {
                 return `url(#${this.edgeMarkerId(edge)})`;
             },
 
+            graphEdgesMarkup() {
+                return this.workGraphLayout.edges.map(edge => {
+                    const classes = Object.entries(this.graphEdgeClasses(edge))
+                        .filter(([, enabled]) => enabled)
+                        .map(([name]) => name)
+                        .join(' ');
+                    const dash = edge.dashArray
+                        ? ` stroke-dasharray="${escapeSVGAttribute(edge.dashArray)}"`
+                        : '';
+                    const marker = edge.marker
+                        ? ` marker-end="${escapeSVGAttribute(this.edgeMarkerUrl(edge))}"`
+                        : '';
+                    return `<path class="stash-graph-edge ${escapeSVGAttribute(classes)}" d="${escapeSVGAttribute(edge.path)}" stroke="${escapeSVGAttribute(edge.stroke)}" stroke-width="1.7"${dash}${marker}></path>`;
+                }).join('');
+            },
+
+            graphEdgeClasses(edge) {
+                const focused = String(this.graphFocusedKey || '');
+                const hierarchyPath = new Set(this.graphFocusedPath().map(item => String(item.id)));
+                const dependencyPath = this.graphFocusedDependencyPath();
+                const upstream = Boolean(edge && dependencyPath.upstreamEdges.has(String(edge.key)));
+                const downstream = Boolean(edge && dependencyPath.downstreamEdges.has(String(edge.key)));
+                return {
+                    ['is-' + String(edge && (edge.tone || edge.type) || 'relation').replace(/[^a-z0-9_-]/gi, '')]: true,
+                    'is-active': Boolean(focused && edge && (
+                        upstream || downstream ||
+                        (edge.type === 'part_of' && hierarchyPath.has(String(edge.fromKey)) && hierarchyPath.has(String(edge.toKey)))
+                    )),
+                    'is-upstream': upstream,
+                    'is-downstream': downstream,
+                    'is-cycle': Boolean(edge && edge.cycle)
+                };
+            },
+
             graphNodeClasses(node) {
+                const dependencyPath = this.graphFocusedDependencyPath();
+                const hierarchyPath = this.graphFocusedPath().some(item => String(item.id) === String(node && node.key));
                 return {
                     ['is-' + String(node && node.item && node.item.status || 'unknown').replace(/[^a-z0-9_-]/gi, '')]: true,
                     'is-cycle': Boolean(node && node.cycle),
                     'is-moved': Boolean(node && node.offset && (node.offset.x || node.offset.y)),
                     'is-context': Boolean(node && node.context),
-                    'is-path': Boolean(node && this.graphFocusedPath().some(item => String(item.id) === String(node.key))),
+                    'is-path': Boolean(node && (dependencyPath.nodes.has(String(node.key)) || hierarchyPath)),
+                    'is-upstream': Boolean(node && dependencyPath.upstreamNodes.has(String(node.key))),
+                    'is-downstream': Boolean(node && dependencyPath.downstreamNodes.has(String(node.key))),
                     'is-focused': Boolean(node && String(node.key) === String(this.graphFocusedKey))
                 };
             },
@@ -475,20 +831,12 @@
                 return parts.join(' · ') || '독립 작업';
             },
 
-            graphNodeRoleLabel(node) {
-                if (node && node.isEntry) return '시작점';
-                if (node && node.isOutcome) return '최종점';
-                return '';
-            },
-
             graphNodeAriaLabel(node) {
                 const item = node.item;
                 const key = item.issue_key || '#' + item.id;
                 const parts = [`${key}: ${item.title}`, `상태 ${this.statusLabel(item.status)}`];
                 const parent = this.graphParentFor(item);
                 const children = this.graphChildrenFor(item);
-                const role = this.graphNodeRoleLabel(node);
-                if (role) parts.push(role);
                 if (parent) parts.push(`상위 작업 ${parent.issue_key || '#' + parent.id}`);
                 if (children.length) parts.push(`하위 작업 ${children.length}개`);
                 if (node.cycle) parts.push('서로 막는 연결에 포함됨');
@@ -508,6 +856,10 @@
                 await this.loadMapNamespaces(refreshNamespaces);
                 if (typeof this.syncGraphProjectFromNamespace === 'function') this.syncGraphProjectFromNamespace();
                 await this.loadWorkView('graph');
+                this.$nextTick(() => {
+                    if (typeof this.scheduleGraphViewportFit !== 'function' || !this.$refs || !this.$refs.graphViewport) return;
+                    this.scheduleGraphViewportFit(this.$refs.graphViewport, this.workGraphLayout);
+                });
             }
         };
     }

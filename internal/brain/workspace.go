@@ -767,7 +767,7 @@ func (b *Brain) boundedWorkspaceGraph(ctx context.Context, namespaceIDs []int64)
 // ResumeWorkspace returns one bounded project snapshot suitable for a new
 // session. It uses only persisted state and never invokes the embedding or
 // reasoning model.
-func (b *Brain) ResumeWorkspace(ctx context.Context, namespaceSlug string, namespaceID int64, worktreeID *int64, recentLimit int) (*models.WorkspaceResumeBundle, error) {
+func (b *Brain) ResumeWorkspace(ctx context.Context, namespaceSlug string, namespaceID int64, worktreeID *int64, principalID string, recentLimit int) (*models.WorkspaceResumeBundle, error) {
 	if err := validatePath(namespaceSlug); err != nil {
 		return nil, err
 	}
@@ -872,8 +872,9 @@ func (b *Brain) ResumeWorkspace(ctx context.Context, namespaceSlug string, names
 			 FROM work_attempts attempt
 			 JOIN work_items item ON item.id = attempt.work_item_id
 			 WHERE item.namespace_id = ANY($1) AND item.deleted_at IS NULL
+			   AND attempt.principal_id = $2
 			   AND attempt.status = 'active' AND attempt.lease_expires_at > clock_timestamp()
-			 ORDER BY attempt.work_item_id LIMIT 2`, namespaceIDs,
+			 ORDER BY attempt.work_item_id LIMIT 2`, namespaceIDs, principalID,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("find active workspace work: %w", err)

@@ -367,3 +367,65 @@ func TestWorkResumeResultKeepsCoreAndReportsTruncationWithinLimit(t *testing.T) 
 		t.Fatalf("compact resume bounds = totals:%#v truncated:%#v", compact.Totals, compact.Truncated)
 	}
 }
+
+func TestWorkResumeCollectionPagesRecoverEveryItemWithinSmallLimit(t *testing.T) {
+	const maxBytes = 1400
+	bundle := &models.WorkResumeBundle{WorkItem: models.WorkItem{ID: 91, Title: "paged resume"}}
+	for index := 0; index < 17; index++ {
+		bundle.Evidence = append(bundle.Evidence, models.WorkEvidence{
+			ID: int64(index + 1), WorkItemID: 91, EvidenceType: "test",
+			Summary: strings.Repeat("observed ", 18), Payload: json.RawMessage(`{"passed":true}`),
+		})
+	}
+	bc := &bootstrap.Context{Config: &config.Config{MCPMaxResponseBytes: maxBytes}}
+	for _, detail := range []string{"brief", "full"} {
+		offset := 0
+		seen := make([]int64, 0, len(bundle.Evidence))
+		for pageNumber := 0; ; pageNumber++ {
+			result, err := workResumeCollectionResult(bc, bundle, "evidence", detail, offset, 9)
+			if err != nil {
+				t.Fatalf("detail %s page %d: %v", detail, pageNumber, err)
+			}
+			text := toolResultText(t, result)
+			if len(text) > maxBytes {
+				t.Fatalf("detail %s page %d bytes = %d", detail, pageNumber, len(text))
+			}
+			var page workResumeCollectionPage
+			if err := json.Unmarshal([]byte(text), &page); err != nil {
+				t.Fatalf("decode detail %s page %d: %v", detail, pageNumber, err)
+			}
+			if page.Offset != offset || len(page.Items) == 0 {
+				t.Fatalf("detail %s page %d = %#v", detail, pageNumber, page)
+			}
+			for _, raw := range page.Items {
+				var item struct {
+					ID int64 `json:"id"`
+				}
+				if err := json.Unmarshal(raw, &item); err != nil {
+					t.Fatal(err)
+				}
+				seen = append(seen, item.ID)
+			}
+			if !page.HasMore {
+				if page.NextQuery != "" || page.NextOffset != 0 {
+					t.Fatalf("terminal page continuation = %#v", page)
+				}
+				break
+			}
+			if page.NextOffset != offset+len(page.Items) || !strings.Contains(page.NextQuery, "resume_work") ||
+				!strings.Contains(page.NextQuery, "detail="+detail) || !strings.Contains(page.NextQuery, "collection=evidence") ||
+				!strings.Contains(page.NextQuery, "collection_offset=") || !strings.Contains(page.NextQuery, "collection_limit=9") {
+				t.Fatalf("detail %s next query = %#v", detail, page)
+			}
+			offset = page.NextOffset
+		}
+		if len(seen) != len(bundle.Evidence) {
+			t.Fatalf("detail %s recovered %d items", detail, len(seen))
+		}
+		for index, id := range seen {
+			if id != int64(index+1) {
+				t.Fatalf("detail %s item %d = %d", detail, index, id)
+			}
+		}
+	}
+}

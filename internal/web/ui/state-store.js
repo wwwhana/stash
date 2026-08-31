@@ -35,6 +35,7 @@
             tokenOpen: false,
             pageSize: 50,
             listPage: { tool: '', args: {}, offset: 0, nextOffset: 0, limit: 50, hasNext: false, history: [] },
+            listError: '',
             boardPage: { offset: 0, nextOffset: 0, limit: 50, hasNext: false, history: [] },
             worktreePage: { offset: 0, nextOffset: 0, limit: 50, hasNext: false, history: [] },
             commentPage: { offset: 0, nextOffset: 0, limit: 50, hasNext: false, history: [] },

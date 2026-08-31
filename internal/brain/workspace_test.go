@@ -3,7 +3,38 @@ package brain
 import (
 	"encoding/json"
 	"testing"
+	"time"
 )
+
+func TestResumeWorkspaceKeepsCurrentWorkInsidePrincipal(t *testing.T) {
+	b, ctx, namespaceID := newWorkExecutionTestBrain(t)
+	var namespaceSlug string
+	if err := b.pool.QueryRow(ctx, `SELECT slug FROM namespaces WHERE id = $1`, namespaceID).Scan(&namespaceSlug); err != nil {
+		t.Fatalf("read namespace slug: %v", err)
+	}
+	item, _ := prepareWorkExecutionItem(t, b, ctx, namespaceID, "principal-owned workspace task")
+	if _, err := b.StartWorkAttemptForPrincipal(
+		ctx, item.ID, "agent-b", "principal-b", nil, time.Minute, "resume-workspace-principal-b",
+	); err != nil {
+		t.Fatalf("StartWorkAttemptForPrincipal: %v", err)
+	}
+
+	other, err := b.ResumeWorkspace(ctx, namespaceSlug, namespaceID, nil, "principal-a", 8)
+	if err != nil {
+		t.Fatalf("ResumeWorkspace principal-a: %v", err)
+	}
+	if other.CurrentWork != nil {
+		t.Fatalf("principal-a received another principal's work: %#v", other.CurrentWork.WorkItem)
+	}
+
+	owner, err := b.ResumeWorkspace(ctx, namespaceSlug, namespaceID, nil, "principal-b", 8)
+	if err != nil {
+		t.Fatalf("ResumeWorkspace principal-b: %v", err)
+	}
+	if owner.CurrentWork == nil || owner.CurrentWork.WorkItem.ID != item.ID {
+		t.Fatalf("principal-b current work = %#v, want %d", owner.CurrentWork, item.ID)
+	}
+}
 
 func TestNormalizeWorkspaceRemoteURLUnifiesGitTransports(t *testing.T) {
 	want := "github.com/example/project"

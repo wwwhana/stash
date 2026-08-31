@@ -116,6 +116,8 @@
             setText(params, 'agent', value.agent);
             setText(params, 'focus', value.focus);
         } else if (selected === 'board') {
+            setText(params, 'project', value.project);
+            setText(params, 'namespace', value.namespace);
             setText(params, 'q', value.query);
             setText(params, 'type', value.issueType);
             setText(params, 'label', value.label);

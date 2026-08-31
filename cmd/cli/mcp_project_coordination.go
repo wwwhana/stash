@@ -316,9 +316,9 @@ func registerProjectResourceTemplates(mcpServer *server.MCPServer, bc *bootstrap
 		if err != nil {
 			return nil, err
 		}
-		payload, err := json.Marshal(brief)
+		payload, err := jsonResourcePayload(bc, brief, fmt.Sprintf("Call resume_work with work_item_id=%d for bounded context and continuation metadata.", workItemID))
 		if err != nil {
-			return nil, fmt.Errorf("marshal work brief resource: %w", err)
+			return nil, fmt.Errorf("prepare work brief resource: %w", err)
 		}
 		return []mcp.ResourceContents{mcp.TextResourceContents{
 			URI: request.Params.URI, MIMEType: "application/json", Text: string(payload),
@@ -340,9 +340,9 @@ func registerProjectResourceTemplates(mcpServer *server.MCPServer, bc *bootstrap
 		if err := authorizeNamespaceID(ctx, bc, resource.NamespaceID); err != nil {
 			return nil, err
 		}
-		payload, err := json.Marshal(resource)
+		payload, err := jsonResourcePayload(bc, resource, fmt.Sprintf("Call get_work_resource with resource_id=%d for the bounded reference.", resourceID))
 		if err != nil {
-			return nil, fmt.Errorf("marshal work resource: %w", err)
+			return nil, fmt.Errorf("prepare work resource: %w", err)
 		}
 		return []mcp.ResourceContents{mcp.TextResourceContents{
 			URI: request.Params.URI, MIMEType: "application/json", Text: string(payload),

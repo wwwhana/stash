@@ -15,7 +15,6 @@
 
             async loadMapNamespaces(force = false) {
                 if (this.mapNamespacesLoaded && !force) return;
-                const chooseOnlyProject = !this.mapNamespacesLoaded && !this.mapNamespaceSlug;
                 this.mapNamespacesLoading = true;
                 this.mapNamespaceError = '';
                 try {
@@ -42,15 +41,11 @@
                     if (this.mapNamespaceSlug && !this.mapNamespaces.some(item => item.slug === this.mapNamespaceSlug)) {
                         this.mapNamespaceSlug = '';
                     }
-                    if (chooseOnlyProject && !this.mapNamespaceSlug) {
-                        const projects = this.mapNamespaces.filter(item => /^\/projects\/[^/]+$/.test(item.slug));
-                        if (projects.length === 1) this.mapNamespaceSlug = projects[0].slug;
-                    }
                     this.mapNamespacesLoaded = true;
                 } catch (_) {
                     this.mapNamespaces = [];
                     this.mapNamespaceError = '네임스페이스 목록을 불러오지 못했습니다.';
-                    this.mapNamespacesLoaded = true;
+                    this.mapNamespacesLoaded = false;
                 } finally {
                     this.mapNamespacesLoading = false;
                 }

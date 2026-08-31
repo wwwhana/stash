@@ -334,7 +334,13 @@ func registerWorkspaceTools(mcpServer *server.MCPServer, bc *bootstrap.Context) 
 				return nil, fmt.Errorf("worktree and project namespace must match")
 			}
 		}
-		bundle, err := bc.Brain.ResumeWorkspace(ctx, physicalNamespace, namespaceID, worktreeID, request.GetInt("recent_limit", 8))
+		principalID, err := workExecutionPrincipal(ctx)
+		if err != nil {
+			return nil, err
+		}
+		bundle, err := bc.Brain.ResumeWorkspace(
+			ctx, physicalNamespace, namespaceID, worktreeID, principalID, request.GetInt("recent_limit", 8),
+		)
 		if err != nil {
 			return nil, err
 		}
