@@ -1249,6 +1249,7 @@
                             <label class="stash-field"><span>담당</span><select x-model="projectMonitorFilter.agent" @change="projectMonitorFilterChanged()"><option value="">전체</option><template x-for="agent in projectMonitorAgents()" :key="'monitor-agent-' + agent"><option :value="agent" x-text="agent"></option></template></select></label>
                             <span x-show="projectMonitorFilterCount()" x-cloak class="stash-filter-count" :aria-label="'적용한 필터 ' + projectMonitorFilterCount() + '개'" x-text="'필터 ' + projectMonitorFilterCount() + '개'"></span>
                             <button type="button" class="stash-btn" @click="resetProjectMonitorFilters()" :disabled="!projectMonitorHasFilters()">초기화</button>
+                            <a class="stash-btn" href="/ui/monitor">새 관제 화면</a>
                         </div>
 
                         <div x-show="projectMonitorLoading" x-cloak class="stash-monitor-state" role="status">작업 현황을 불러오는 중</div>

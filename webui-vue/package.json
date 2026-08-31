@@ -1,0 +1,14 @@
+{
+  "name": "stash-vue-ui",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build"
+  },
+  "dependencies": {
+    "vue": "^3.5.18"
+  },
+  "devDependencies": {
+    "vite": "^7.1.3"
+  }
+}

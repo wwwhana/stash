@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ko">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <title>Stash 작업 관제</title>
+    <script>
+        (() => {
+            let preference = 'system';
+            try {
+                const stored = localStorage.getItem('stash.theme');
+                if (['system', 'light', 'dark'].includes(stored)) preference = stored;
+            } catch (_) { /* 시스템 설정 사용 */ }
+            window.stashVueApplyTheme = () => {
+                const dark = preference === 'dark' || (preference === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+                document.documentElement.dataset.stashThemePreference = preference;
+                document.documentElement.dataset.stashTheme = dark ? 'dark' : 'light';
+                document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+            };
+            window.stashVueApplyTheme();
+            const media = matchMedia('(prefers-color-scheme: dark)');
+            if (media.addEventListener) media.addEventListener('change', window.stashVueApplyTheme);
+            window.addEventListener('storage', event => {
+                if (event.key !== 'stash.theme') return;
+                preference = ['system', 'light', 'dark'].includes(event.newValue) ? event.newValue : 'system';
+                window.stashVueApplyTheme();
+            });
+        })();
+    </script>
+    <link rel="stylesheet" href="/vue-monitor.css">
+</head>
+<body>
+    <div id="vue-monitor-app" data-stash-vue-monitor></div>
+    <script src="/vue-monitor.js"></script>
+</body>
+</html>

@@ -9,6 +9,9 @@
 .env.*
 !.env.example
 
+# Vue UI build dependencies
+/webui-vue/node_modules/
+
 # IDE
 .idea/
 .vscode/
