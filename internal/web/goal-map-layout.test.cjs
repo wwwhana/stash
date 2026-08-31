@@ -53,6 +53,18 @@ test('work status and agent filters keep only related inputs and goals', () => {
     assert.equal(missed.goal_tree.goals.length, 0);
 });
 
+test('goal map search spans structured work metadata and supports multiple tokens', () => {
+    const value = sampleMap();
+    value.work_items[0].labels = ['지식'];
+    value.work_items[0].description = '외부 문서를 확인한다';
+    const filtered = filterGoalMap(value, {
+        query: '문서 지식', kinds: { goal: true, work: true, memory: true, resource: true }
+    });
+
+    assert.deepEqual(filtered.work_items.map(item => item.id), [10]);
+    assert.equal(filtered.goal_tree.goals.length, 2);
+});
+
 test('node kind and memory type filters are applied before relation expansion', () => {
     const value = sampleMap();
     value.memories.push({ key: 'memory:episode:6', memory_type: 'episode', memory_id: 6, content: '작업 경험' });

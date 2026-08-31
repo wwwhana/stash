@@ -1,9 +1,13 @@
 (function (root, factory) {
-    const api = factory();
+    const api = typeof module === 'object' && module.exports
+        ? factory(require('./search-utils.js'))
+        : factory(root.StashSearch);
     if (typeof module === 'object' && module.exports) module.exports = api;
     else root.StashProjectMonitorViewModel = api;
-}(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+}(typeof globalThis !== 'undefined' ? globalThis : this, function (searchUtils) {
     'use strict';
+
+    if (!searchUtils) throw new Error('검색 모듈을 불러오지 못했습니다.');
 
     const text = value => String(value || '').trim();
     const emptyMap = () => ({
@@ -18,7 +22,7 @@
             projectMonitorMap: emptyMap(),
             projectMonitorItemList: [],
             projectMonitorBlockersByWork: {},
-            projectMonitorFilter: { status: '', agent: '' },
+            projectMonitorFilter: { query: '', status: '', agent: '' },
             projectMonitorSelectedID: 0,
             projectMonitorLoading: false,
             projectMonitorError: '',
@@ -67,11 +71,26 @@
                 return this.projectMonitorItemList;
             },
 
+            projectMonitorSearchValues(item) {
+                const goalID = Number(item && item.goal_id) || 0;
+                const goal = this.projectMonitorMap.goal_tree.goals.find(candidate => Number(candidate.id) === goalID);
+                return [
+                    item && item.issue_key, item && item.title, item && item.description,
+                    item && item.status, item && item.owner, item && item.agent_id,
+                    item && item.reporter, item && item.issue_type, item && item.due_at,
+                    item && item.latest_result, item && item.next_action,
+                    item && item.labels, item && item.required_capabilities,
+                    goal && goal.content
+                ];
+            },
+
             projectMonitorRows() {
+                const query = text(this.projectMonitorFilter.query);
                 const status = text(this.projectMonitorFilter.status);
                 const agent = text(this.projectMonitorFilter.agent);
                 const rank = value => ({ expired: 0, blocked: 1, doing: 2, review: 3, ready: 4, backlog: 5, done: 6, canceled: 7 })[value] ?? 8;
                 return this.projectMonitorItems()
+                    .filter(item => !query || searchUtils.matchesSearch(this.projectMonitorSearchValues(item), query))
                     .filter(item => !status || this.projectMonitorDisplayStatus(item) === status)
                     .filter(item => !agent || text(item.agent_id || item.owner) === agent)
                     .sort((left, right) => (
@@ -166,11 +185,11 @@
             },
 
             projectMonitorHasFilters() {
-                return Boolean(text(this.projectMonitorFilter.status) || text(this.projectMonitorFilter.agent));
+                return Boolean(text(this.projectMonitorFilter.query) || text(this.projectMonitorFilter.status) || text(this.projectMonitorFilter.agent));
             },
 
             resetProjectMonitorFilters() {
-                this.projectMonitorFilter = { status: '', agent: '' };
+                this.projectMonitorFilter = { query: '', status: '', agent: '' };
                 this.syncRoute();
             },
 
@@ -240,7 +259,7 @@
                     const value = this.toolValue(data) || {};
                     this.setProjectMonitorMap(value);
                     if (this.projectMonitorFilter.agent && !this.projectMonitorAgents().includes(this.projectMonitorFilter.agent)) {
-                        this.projectMonitorFilter.agent = '';
+                    this.projectMonitorFilter.agent = '';
                     }
                     const selected = this.projectMonitorSelectedItem();
                     if (selected) {

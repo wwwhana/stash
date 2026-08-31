@@ -89,7 +89,7 @@ func main() {
 			{
 				Name:    "recall",
 				Aliases: []string{"search"},
-				Usage:   "Search for relevant memories",
+				Usage:   "Search memories with vector ranking and a trigram fallback",
 				Action:  recallCmd,
 				Flags: []cli.Flag{
 					&cli.StringSliceFlag{Name: "namespaces", Aliases: []string{"n"}, Usage: "Namespace paths to search (each includes descendants)"},
@@ -127,6 +127,7 @@ func main() {
 				Action: factsListCmd,
 				Flags: []cli.Flag{
 					&cli.StringSliceFlag{Name: "namespaces", Aliases: []string{"n"}, Usage: "Namespace paths to query (each includes descendants)"},
+					&cli.StringFlag{Name: "q", Usage: "Search content and structured fields"},
 					&cli.StringFlag{Name: "since", Usage: "Since timestamp (RFC3339)"},
 					&cli.StringFlag{Name: "until", Usage: "Until timestamp (RFC3339)"},
 					&cli.IntFlag{Name: "limit", Value: 100, Usage: "Max results"},
@@ -267,6 +268,7 @@ func main() {
 						Flags: []cli.Flag{
 							&cli.StringSliceFlag{Name: "namespaces", Aliases: []string{"n"}, Usage: "Namespace paths to query (each includes descendants)"},
 							&cli.StringFlag{Name: "status", Usage: "Filter by status: proposed, testing, confirmed, rejected"},
+							&cli.StringFlag{Name: "q", Usage: "Search content, verification plan, or rejection reason"},
 							&cli.IntFlag{Name: "limit", Value: 100, Usage: "Max results"},
 							&cli.IntFlag{Name: "offset", Value: 0, Usage: "Result offset"},
 						},
@@ -332,6 +334,7 @@ func main() {
 						Flags: []cli.Flag{
 							&cli.StringSliceFlag{Name: "namespaces", Aliases: []string{"n"}, Usage: "Namespace paths to query (each includes descendants)"},
 							&cli.StringFlag{Name: "status", Usage: "Filter by status: active, completed, abandoned"},
+							&cli.StringFlag{Name: "q", Usage: "Search content or notes"},
 							&cli.IntFlag{Name: "parent-id", Usage: "Filter by parent goal ID"},
 							&cli.IntFlag{Name: "limit", Value: 100, Usage: "Max results"},
 							&cli.IntFlag{Name: "offset", Value: 0, Usage: "Result offset"},

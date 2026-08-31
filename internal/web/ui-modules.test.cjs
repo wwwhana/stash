@@ -5,6 +5,7 @@ const vm = require('node:vm');
 
 const { createStateStore } = require('./ui/state-store.js');
 const { createApiClient } = require('./ui/api-client.js');
+const { createThemeViewModel } = require('./ui/theme-view-model.js');
 const { createRouteViewModel } = require('./ui/route-view-model.js');
 const { createMapScopeViewModel } = require('./ui/map-scope-view-model.js');
 const { createWorkGraphViewModel } = require('./ui/work-graph-view-model.js');
@@ -21,10 +22,12 @@ test('the HTML loads every view-model before Alpine starts', () => {
     const scripts = Array.from(html.matchAll(/<script defer src="([^"]+)"><\/script>/g), match => match[1]);
 
     assert.deepEqual(scripts, [
+        '/search-utils.js',
         '/work-graph-layout.js',
         '/goal-map-layout.js',
         '/route-state.js',
         '/state-store.js',
+        '/theme-view-model.js',
         '/api-client.js',
         '/route-view-model.js',
         '/map-scope-view-model.js',
@@ -41,6 +44,7 @@ test('the HTML loads every view-model before Alpine starts', () => {
     ]);
     assert.doesNotMatch(html, /<script>/);
     assert.match(html, /<link rel="stylesheet" href="\/work-graph-board\.css">/);
+    assert.match(html, /<link rel="stylesheet" href="\/theme\.css">/);
 });
 
 test('the common state store returns isolated mutable state', () => {
@@ -53,6 +57,13 @@ test('the common state store returns isolated mutable state', () => {
     assert.deepEqual(second.boardPage.history, []);
     assert.notStrictEqual(first.notice, second.notice);
     assert.notStrictEqual(first.agentGuide, '');
+});
+
+test('the theme view-model exposes a single preference for every screen', () => {
+    const theme = createThemeViewModel();
+    assert.deepEqual(theme.themeOptions.map(option => option.value), ['system', 'light', 'dark']);
+    assert.equal(typeof theme.initTheme, 'function');
+    assert.equal(typeof theme.setThemePreference, 'function');
 });
 
 test('the common API module owns HTTP and MCP transport helpers', () => {
@@ -107,6 +118,41 @@ test('the console composes modules into one Alpine view-model without shared sta
     assert.notStrictEqual(first.workExecution, second.workExecution);
 });
 
+test('list views send text and status filters through the MCP request', async () => {
+    const vm = createConsoleViewModel();
+    const calls = [];
+    Object.assign(vm, {
+        invokeTool: async (tool, args) => { calls.push({ tool, args }); return []; },
+        toolValue(value) { return value; },
+        markLoaded() {},
+        setNotice() {},
+        syncRoute() {}
+    });
+
+    await vm.callTool('list_hypotheses', { namespaces: '/projects/demo', q: '문서 연결', status: 'testing' });
+    assert.equal(calls[0].tool, 'list_hypotheses');
+    assert.equal(calls[0].args.q, '문서 연결');
+    assert.equal(calls[0].args.status, 'testing');
+
+    vm.listQuery = '근거';
+    vm.listStatus = 'confirmed';
+    await vm.applyListFilters();
+    assert.equal(calls.at(-1).args.q, '근거');
+    assert.equal(calls.at(-1).args.status, 'confirmed');
+    assert.equal(vm.listPage.offset, 0);
+});
+
+test('the token control is hidden when neither API nor administrator access is configured', () => {
+    const vm = createConsoleViewModel();
+    vm.auth = { auth_mode: 'none' };
+    assert.equal(vm.tokenControlVisible(), false);
+    vm.adminConfigured = true;
+    assert.equal(vm.tokenControlVisible(), true);
+    vm.adminConfigured = false;
+    vm.auth = { auth_mode: 'oauth' };
+    assert.equal(vm.tokenControlVisible(), true);
+});
+
 test('ViewModel composition rejects duplicate keys and names both owners', () => {
     assert.throws(
         () => composeViewModels([
@@ -126,6 +172,7 @@ test('the browser UMD path exposes the graph viewport through stashConsole', () 
     Object.assign(browser, {
         StashStateStore: { createStateStore: () => ({}) },
         StashApiClient: { createApiClient: () => ({}) },
+        StashThemeViewModel: { createThemeViewModel: () => ({}) },
         StashRouteViewModel: { createRouteViewModel: () => ({}) },
         StashWorkPlanViewModel: { createWorkPlanViewModel: () => ({}) },
         StashIssueExecutionViewModel: { createIssueExecutionViewModel: () => ({}) },

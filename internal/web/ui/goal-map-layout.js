@@ -1,9 +1,13 @@
 (function (root, factory) {
-    const api = factory();
+    const api = typeof module === 'object' && module.exports
+        ? factory(require('./search-utils.js'))
+        : factory(root.StashSearch);
     if (typeof module === 'object' && module.exports) module.exports = api;
     if (root) root.StashGoalMap = api;
-}(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+}(typeof globalThis !== 'undefined' ? globalThis : this, function (searchUtils) {
     'use strict';
+
+    if (!searchUtils) throw new Error('검색 모듈을 불러오지 못했습니다.');
 
     const MIN_CANVAS_WIDTH = 920;
     const MIN_CANVAS_HEIGHT = 720;
@@ -142,15 +146,14 @@
     }
 
     function includesText(values, query) {
-        if (!query) return true;
-        return values.some(value => String(value || '').toLocaleLowerCase('ko').includes(query));
+        return searchUtils.matchesSearch(values, query);
     }
 
     function filterGoalMap(rawMap, rawFilters) {
         const goalMap = rawMap && typeof rawMap === 'object' ? rawMap : {};
         const filters = rawFilters && typeof rawFilters === 'object' ? rawFilters : {};
         const kinds = filters.kinds && typeof filters.kinds === 'object' ? filters.kinds : {};
-        const query = String(filters.query || '').trim().toLocaleLowerCase('ko');
+        const query = String(filters.query || '').trim();
         const status = String(filters.status || '').trim();
         const agent = String(filters.agent || '').trim();
         const memoryType = String(filters.memoryType || '').trim();
@@ -161,14 +164,17 @@
             const owner = String(item.agent_id || item.owner || '').trim();
             if (agent && owner !== agent) return false;
             return !withQuery || includesText([
-                item.issue_key, item.title, item.status, owner, item.latest_result,
-                item.next_action, ...(Array.isArray(item.required_capabilities) ? item.required_capabilities : [])
+                item.issue_key, item.title, item.description, item.status, owner,
+                item.reporter, item.issue_type, item.due_at, item.latest_result,
+                item.next_action, item.labels, item.required_capabilities
             ], query);
         };
         const entries = [];
         if (kinds.goal !== false) {
             for (const item of Array.isArray(tree.goals) ? tree.goals : []) {
-                entries.push({ key: `goal:${item.id}`, kind: 'goal', item, matchesQuery: includesText([item.content, item.status], query) });
+                entries.push({ key: `goal:${item.id}`, kind: 'goal', item, matchesQuery: includesText([
+                    item.content, item.status, item.notes, item.parent_id, item.depth
+                ], query) });
             }
         }
         if (kinds.work !== false) {
@@ -181,7 +187,10 @@
             for (const item of Array.isArray(goalMap.resources) ? goalMap.resources : []) {
                 entries.push({
                     key: String(item.key), kind: 'resource', item,
-                    matchesQuery: includesText([item.title, item.summary, item.source, item.kind, item.external_id, item.uri], query)
+                    matchesQuery: includesText([
+                        item.title, item.summary, item.source, item.kind, item.authority,
+                        item.external_id, item.uri, item.revision
+                    ], query)
                 });
             }
         }
@@ -190,7 +199,9 @@
                 if (memoryType && item.memory_type !== memoryType) continue;
                 entries.push({
                     key: String(item.key), kind: 'memory', item,
-                    matchesQuery: includesText([item.content, item.memory_type, item.status], query)
+                    matchesQuery: includesText([
+                        item.content, item.memory_type, item.status, item.source, item.created_at
+                    ], query)
                 });
             }
         }

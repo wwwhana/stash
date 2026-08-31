@@ -92,17 +92,24 @@ func (b *Brain) RecallWithOptions(ctx context.Context, namespaces []string, quer
 		return []RecallResult{}, nil
 	}
 
-	vec, err := b.embedder.EmbedQuery(ctx, query)
-	if err != nil {
-		return nil, fmt.Errorf("embed: %w", err)
-	}
-
-	pgVec := pgvector.NewVector(vec)
-
 	nsIDs, err := b.resolveNamespaceIDs(ctx, namespaces)
 	if err != nil {
 		return nil, err
 	}
+
+	vec, err := b.embedder.EmbedQuery(ctx, query)
+	if err != nil {
+		// The original text remains searchable while an episode or fact waits
+		// for indexing. Do not make a provider outage hide that durable data:
+		// use the already-installed pg_trgm indexes as a bounded lexical fallback.
+		keywordResults, keywordErr := b.keywordCandidatesWithError(ctx, nsIDs, query, window)
+		if keywordErr != nil {
+			return nil, fmt.Errorf("embed query failed: %s; trigram fallback failed: %w", embeddingErrorText(err), keywordErr)
+		}
+		return b.finishRecall(ctx, nil, keywordResults, offset, limit, window), nil
+	}
+
+	pgVec := pgvector.NewVector(vec)
 
 	// Collect facts and episodes as INDEPENDENT candidate pools, each up to `limit`.
 	//
@@ -194,16 +201,22 @@ func (b *Brain) RecallWithOptions(ctx context.Context, namespaces []string, quer
 	// and is language-neutral, which matters because the corpus is mixed Korean/English.
 	keywordResults := b.keywordCandidates(ctx, nsIDs, query, window)
 
-	merged := fuseRRF(results, keywordResults, window)
+	return b.finishRecall(ctx, results, keywordResults, offset, limit, window), nil
+}
+
+// finishRecall applies the same ranking, pagination, and provenance lookup to
+// both hybrid results and the trigram-only fallback.
+func (b *Brain) finishRecall(ctx context.Context, vectorResults, keywordResults []RecallResult, offset, limit, window int) []RecallResult {
+	merged := fuseRRF(vectorResults, keywordResults, window)
 	if offset >= len(merged) {
-		return []RecallResult{}, nil
+		return []RecallResult{}
 	}
 	merged = merged[offset:]
 	if len(merged) > limit {
 		merged = merged[:limit]
 	}
 	b.attachFactSources(ctx, merged)
-	return merged, nil
+	return merged
 }
 
 // attachFactSources fills SourceEpisodeIDs for the fact rows in the result set.
@@ -251,7 +264,21 @@ func (b *Brain) attachFactSources(ctx context.Context, results []RecallResult) {
 // Keyword search is a supplement: if it fails (e.g. pg_trgm missing), recall still
 // returns vector results rather than erroring out.
 func (b *Brain) keywordCandidates(ctx context.Context, nsIDs []int64, query string, limit int) []RecallResult {
+	out, _ := b.keywordCandidatesWithError(ctx, nsIDs, query, limit)
+	return out
+}
+
+// keywordCandidatesWithError runs both trigram pools and reports an error only
+// when no pool could be read. A partial result is still useful if one table is
+// temporarily unavailable, and preserves the old hybrid-search behaviour.
+func (b *Brain) keywordCandidatesWithError(ctx context.Context, nsIDs []int64, query string, limit int) ([]RecallResult, error) {
 	var out []RecallResult
+	var firstErr error
+	recordErr := func(stage string, err error) {
+		if err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("%s: %w", stage, err)
+		}
+	}
 
 	if sql, args, err := b.queries.KeywordFacts(nsIDs, query, limit); err == nil {
 		if rows, err := b.pool.Query(ctx, sql, args...); err == nil {
@@ -259,14 +286,20 @@ func (b *Brain) keywordCandidates(ctx context.Context, nsIDs []int64, query stri
 				var r RecallResult
 				var createdAt time.Time
 				if err := rows.Scan(&r.ID, &r.NamespaceID, &r.Content, &r.Confidence, &createdAt, &r.Score); err != nil {
+					recordErr("scan trigram facts", err)
 					break
 				}
 				r.Type = "fact"
 				r.CreatedAt = createdAt.Format(time.RFC3339)
 				out = append(out, r)
 			}
+			recordErr("read trigram facts", rows.Err())
 			rows.Close()
+		} else {
+			recordErr("query trigram facts", err)
 		}
+	} else {
+		recordErr("build trigram facts query", err)
 	}
 
 	if sql, args, err := b.queries.KeywordEpisodes(nsIDs, query, limit); err == nil {
@@ -275,6 +308,7 @@ func (b *Brain) keywordCandidates(ctx context.Context, nsIDs []int64, query stri
 				var r RecallResult
 				var occurredAt, createdAt time.Time
 				if err := rows.Scan(&r.ID, &r.NamespaceID, &r.Content, &occurredAt, &createdAt, &r.Score); err != nil {
+					recordErr("scan trigram episodes", err)
 					break
 				}
 				r.Type = "episode"
@@ -282,11 +316,19 @@ func (b *Brain) keywordCandidates(ctx context.Context, nsIDs []int64, query stri
 				r.CreatedAt = createdAt.Format(time.RFC3339)
 				out = append(out, r)
 			}
+			recordErr("read trigram episodes", rows.Err())
 			rows.Close()
+		} else {
+			recordErr("query trigram episodes", err)
 		}
+	} else {
+		recordErr("build trigram episodes query", err)
 	}
 
-	return out
+	if len(out) == 0 && firstErr != nil {
+		return nil, firstErr
+	}
+	return out, nil
 }
 
 // fuseRRF merges two ranked lists with Reciprocal Rank Fusion.

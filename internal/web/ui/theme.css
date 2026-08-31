@@ -1,0 +1,750 @@
+/* Every screen reads the same semantic palette. The bootstrap script writes
+   data-stash-theme before the first stylesheet paints, so a route change never
+   changes the selected theme. */
+:root,
+:root[data-stash-theme="light"] {
+    color-scheme: light;
+    --stash-ink: #172033;
+    --stash-muted: #667085;
+    --stash-subtle: #7b8497;
+    --stash-line: #e1e6ee;
+    --stash-line-strong: #cbd3df;
+    --stash-canvas: #f6f8fb;
+    --stash-surface: #ffffff;
+    --stash-surface-raised: #ffffff;
+    --stash-surface-soft: #f8fafc;
+    --stash-surface-muted: #f2f4f7;
+    --stash-field: #ffffff;
+    --stash-field-border: #d0d5dd;
+    --stash-accent: #4f46e5;
+    --stash-accent-strong: #4338ca;
+    --stash-accent-soft: #eef2ff;
+    --stash-on-accent: #ffffff;
+    --stash-positive: #047857;
+    --stash-positive-soft: #e8f7ef;
+    --stash-danger: #b42318;
+    --stash-danger-soft: #fff1f0;
+    --stash-warning: #9a5b00;
+    --stash-warning-soft: #fff7df;
+    --stash-info: #0369a1;
+    --stash-info-soft: #e0f2fe;
+    --stash-code-bg: #0b1221;
+    --stash-code-text: #b8f7cf;
+    --stash-topbar: #16233f;
+    --stash-topbar-ink: #f8fafc;
+    --stash-overlay: rgba(15, 23, 42, .42);
+    --stash-shadow-sm: 0 1px 2px rgba(16, 24, 40, .05), 0 1px 4px rgba(16, 24, 40, .04);
+    --stash-shadow-md: 0 12px 32px rgba(16, 24, 40, .12);
+
+    --graph-bg: #f4f6fa;
+    --graph-surface: #ffffff;
+    --graph-raised: #f8fafc;
+    --graph-hover: #eef2ff;
+    --graph-line: #d7dee9;
+    --graph-text: #172033;
+    --graph-soft: #344054;
+    --graph-muted: #667085;
+    --graph-faint: #98a2b3;
+    --graph-amber: #a16207;
+    --graph-violet: #4f46e5;
+    --graph-danger: #b42318;
+    --graph-success: #047857;
+}
+
+:root[data-stash-theme="dark"] {
+    color-scheme: dark;
+    --stash-ink: #edf2f7;
+    --stash-muted: #aeb9c9;
+    --stash-subtle: #8996aa;
+    --stash-line: #2b3748;
+    --stash-line-strong: #435268;
+    --stash-canvas: #0e141d;
+    --stash-surface: #151d28;
+    --stash-surface-raised: #1b2634;
+    --stash-surface-soft: #202c3b;
+    --stash-surface-muted: #263445;
+    --stash-field: #111a26;
+    --stash-field-border: #435268;
+    --stash-accent: #a5b4fc;
+    --stash-accent-strong: #818cf8;
+    --stash-accent-soft: rgba(129, 140, 248, .16);
+    --stash-on-accent: #111827;
+    --stash-positive: #6ee7b7;
+    --stash-positive-soft: rgba(16, 185, 129, .16);
+    --stash-danger: #fda4af;
+    --stash-danger-soft: rgba(244, 63, 94, .16);
+    --stash-warning: #fcd34d;
+    --stash-warning-soft: rgba(245, 158, 11, .16);
+    --stash-info: #7dd3fc;
+    --stash-info-soft: rgba(14, 165, 233, .16);
+    --stash-code-bg: #090d14;
+    --stash-code-text: #b8f7cf;
+    --stash-topbar: #0b111b;
+    --stash-topbar-ink: #f8fafc;
+    --stash-overlay: rgba(0, 0, 0, .62);
+    --stash-shadow-sm: 0 1px 2px rgba(0, 0, 0, .25), 0 4px 16px rgba(0, 0, 0, .12);
+    --stash-shadow-md: 0 18px 42px rgba(0, 0, 0, .36);
+
+    --graph-bg: #090d14;
+    --graph-surface: #151b24;
+    --graph-raised: #1b2430;
+    --graph-hover: #263244;
+    --graph-line: #354255;
+    --graph-text: #f4f6f8;
+    --graph-soft: #d6dde7;
+    --graph-muted: #a3afbf;
+    --graph-faint: #7f8da1;
+    --graph-amber: #f2bd68;
+    --graph-violet: #a5b4fc;
+    --graph-danger: #fda4af;
+    --graph-success: #6ee7b7;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root:not([data-stash-theme]) {
+        color-scheme: dark;
+        --stash-canvas: #0e141d;
+        --stash-surface: #151d28;
+        --stash-surface-raised: #1b2634;
+        --stash-ink: #edf2f7;
+        --stash-muted: #aeb9c9;
+        --stash-subtle: #8996aa;
+        --stash-line: #2b3748;
+    }
+}
+
+html,
+body,
+body.stash-body {
+    color: var(--stash-ink);
+    background: var(--stash-canvas) !important;
+}
+
+body.stash-body,
+.stash-app,
+.stash-main,
+.stash-panel,
+.stash-panel-body,
+.stash-result-content,
+.stash-board,
+.stash-worktrees,
+.stash-agent,
+.stash-maintenance,
+.stash-plan,
+.stash-monitor,
+.stash-goal-map {
+    color: var(--stash-ink) !important;
+    background: var(--stash-canvas) !important;
+}
+
+.stash-topbar {
+    color: var(--stash-topbar-ink) !important;
+    background: var(--stash-topbar) !important;
+}
+
+.stash-sidebar-card,
+.stash-panel,
+.stash-panel-header,
+.stash-result-card,
+.stash-board-stat,
+.stash-board-state,
+.stash-issue-form,
+.stash-kanban > div,
+.stash-kanban .stash-issue-card,
+.stash-worktrees article,
+.stash-monitor-toolbar,
+.stash-monitor-goal,
+.stash-monitor-stat,
+.stash-monitor-selected,
+.stash-monitor-table-wrap,
+.stash-plan-stat,
+.stash-plan-validation,
+.stash-plan-component,
+.stash-plan-task,
+.stash-plan-decision,
+.stash-plan-empty,
+.stash-maintenance-model,
+.stash-maintenance-stat,
+.stash-maintenance-actions,
+.stash-auth-card {
+    color: var(--stash-ink);
+    border-color: var(--stash-line);
+    background: var(--stash-surface) !important;
+}
+
+.stash-panel-header {
+    border-color: var(--stash-line) !important;
+}
+
+.stash-panel-header h2,
+.stash-board-intro h3,
+.stash-plan h3,
+.stash-plan h4,
+.stash-plan h5,
+.stash-monitor h3,
+.stash-maintenance h3,
+.stash-agent h3,
+.stash-worktrees h3,
+.stash-result-card h3,
+.stash-auth-card h1,
+.stash-board-state strong,
+.stash-plan-component h4,
+.stash-plan-stat strong,
+.stash-maintenance-stat strong,
+.stash-monitor-stat strong,
+.stash-monitor-goal strong,
+.stash-monitor-selected__title strong,
+.stash-plan-validation__title,
+.stash-plan-finding strong,
+.stash-plan-decision strong {
+    color: var(--stash-ink) !important;
+}
+
+.stash-panel-description,
+.stash-board-intro p,
+.stash-plan-component__description,
+.stash-monitor-goal small,
+.stash-maintenance-intro p,
+.stash-agent-header p,
+.stash-result-card p,
+.stash-plan-decision p,
+.stash-maintenance-actions p {
+    color: var(--stash-muted) !important;
+}
+
+.stash-sidebar-label,
+.stash-panel-updated,
+.stash-board-stat span,
+.stash-plan-stat span,
+.stash-maintenance-stat span,
+.stash-monitor-stat span,
+.stash-plan-form__hint,
+.stash-plan-validation__meta,
+.stash-plan-finding__target,
+.stash-plan-decision small,
+.stash-field label {
+    color: var(--stash-subtle) !important;
+}
+
+.stash-nav-item {
+    color: var(--stash-muted) !important;
+}
+
+.stash-nav-item:hover {
+    color: var(--stash-accent-strong) !important;
+    background: var(--stash-accent-soft) !important;
+}
+
+.stash-nav-item.is-active {
+    color: var(--stash-accent) !important;
+    background: var(--stash-accent-soft) !important;
+}
+
+.stash-nav-icon {
+    color: inherit !important;
+}
+
+.stash-nav-divider {
+    background: var(--stash-line) !important;
+}
+
+.stash-btn,
+.stash-pagination button,
+.stash-graph-reset,
+.stash-monitor-toolbar select,
+.stash-board-toolbar input,
+.stash-board-toolbar select,
+.stash-plan-toolbar input,
+.stash-plan-toolbar select,
+.stash-plan-path-editor input,
+.stash-plan-form input,
+.stash-plan-form textarea,
+.stash-plan-form select,
+.stash-execution-form input,
+.stash-execution-form textarea,
+.stash-execution-form select,
+.stash-issue-status select,
+.stash-issue-detail form input,
+.stash-field input,
+.stash-field select,
+.stash-field textarea {
+    color: var(--stash-ink) !important;
+    border-color: var(--stash-field-border) !important;
+    background: var(--stash-field) !important;
+}
+
+.stash-btn:hover:not(:disabled),
+.stash-pagination button:hover:not(:disabled) {
+    color: var(--stash-accent-strong) !important;
+    border-color: var(--stash-accent) !important;
+    background: var(--stash-accent-soft) !important;
+}
+
+.stash-btn-primary,
+.stash-btn-primary:hover:not(:disabled),
+.stash-btn-success,
+.stash-btn-success:hover:not(:disabled) {
+    color: var(--stash-on-accent) !important;
+    border-color: var(--stash-accent-strong) !important;
+    background: var(--stash-accent-strong) !important;
+}
+
+.stash-btn-success,
+.stash-btn-success:hover:not(:disabled) {
+    border-color: var(--stash-positive) !important;
+    background: var(--stash-positive) !important;
+}
+
+input::placeholder,
+textarea::placeholder {
+    color: var(--stash-subtle) !important;
+}
+
+.stash-token-popover {
+    color: var(--stash-ink) !important;
+    border-color: var(--stash-line) !important;
+    background: var(--stash-surface) !important;
+    box-shadow: var(--stash-shadow-md) !important;
+}
+
+.stash-token-popover input {
+    color: var(--stash-ink) !important;
+    border-color: var(--stash-field-border) !important;
+    background: var(--stash-field) !important;
+}
+
+.stash-auth-screen {
+    background: radial-gradient(circle at 50% 0%, var(--stash-accent-soft) 0, var(--stash-canvas) 48%, var(--stash-surface-muted) 100%) !important;
+}
+
+.stash-auth-card {
+    box-shadow: var(--stash-shadow-md) !important;
+}
+
+.stash-auth-retry {
+    color: var(--stash-muted) !important;
+    border-color: var(--stash-line) !important;
+    background: var(--stash-surface) !important;
+}
+
+.stash-auth-error,
+.stash-board-state.is-error,
+.stash-monitor-state.is-error,
+.stash-plan-empty.is-error,
+.stash-maintenance-error,
+.stash-execution-error {
+    color: var(--stash-danger) !important;
+    border-color: color-mix(in srgb, var(--stash-danger) 35%, var(--stash-line)) !important;
+    background: var(--stash-danger-soft) !important;
+}
+
+.stash-board-state,
+.stash-monitor-state,
+.stash-plan-empty,
+.stash-graph-empty,
+.stash-result-empty,
+.stash-maintenance-empty {
+    color: var(--stash-muted) !important;
+    border-color: var(--stash-line-strong) !important;
+    background: var(--stash-surface-soft) !important;
+}
+
+.stash-board-toolbar,
+.stash-plan-toolbar,
+.stash-monitor-toolbar,
+.stash-issue-form,
+.stash-plan-form,
+.stash-execution-form,
+.stash-maintenance-actions {
+    border-color: var(--stash-line) !important;
+    background: var(--stash-surface-soft) !important;
+}
+
+.stash-kanban > div,
+.stash-kanban .stash-issue-card,
+.stash-plan-task,
+.stash-plan-component,
+.stash-monitor-detail > div,
+.stash-execution-card,
+.stash-execution-summary div,
+.stash-execution-condition,
+.stash-execution-condition-editor,
+.stash-execution-evidence,
+.stash-comment {
+    border-color: var(--stash-line) !important;
+    background: var(--stash-surface-raised) !important;
+}
+
+.stash-kanban__count,
+.stash-plan-chip,
+.stash-result-card__chip,
+.stash-execution__state,
+.stash-execution-condition__mark,
+.stash-monitor-status,
+.stash-plan-task__state.is-ready {
+    color: var(--stash-muted) !important;
+    background: var(--stash-surface-muted) !important;
+}
+
+.stash-issue-card-title,
+.stash-plan-task__title,
+.stash-plan-task__detail,
+.stash-plan-tech,
+.stash-plan-tech strong,
+.stash-monitor-table td,
+.stash-monitor-work-button,
+.stash-monitor-detail strong,
+.stash-monitor-detail small,
+.stash-execution-card p,
+.stash-execution-condition__copy strong,
+.stash-execution-condition__copy small,
+.stash-execution-summary dd,
+.stash-execution-next,
+.stash-comment__body,
+.stash-comment__author {
+    color: var(--stash-ink) !important;
+}
+
+.stash-issue-card-meta,
+.stash-issue-card-key,
+.stash-monitor-table th,
+.stash-monitor-agent small,
+.stash-plan-tech,
+.stash-plan-task__detail,
+.stash-execution-list__empty,
+.stash-execution-card h5,
+.stash-execution-next span,
+.stash-comment__author {
+    color: var(--stash-subtle) !important;
+}
+
+.stash-issue-card-type,
+.stash-plan-chip.is-path,
+.stash-monitor-status.is-doing,
+.stash-plan-task__state.is-doing,
+.stash-execution__state.is-active {
+    color: var(--stash-accent) !important;
+    background: var(--stash-accent-soft) !important;
+}
+
+.stash-issue-card-state,
+.stash-monitor-status.is-blocked,
+.stash-monitor-status.is-expired,
+.stash-plan-task__state.is-blocked,
+.stash-execution__state.is-blocked,
+.stash-execution-blocker {
+    color: var(--stash-danger) !important;
+    background: var(--stash-danger-soft) !important;
+}
+
+.stash-monitor-status.is-review,
+.stash-plan-task__state.is-review {
+    color: #d8b4fe !important;
+    background: rgba(168, 85, 247, .16) !important;
+}
+
+.stash-monitor-status.is-done,
+.stash-plan-task__state.is-done,
+.stash-execution__state.is-finished,
+.stash-execution-condition__mark.is-verified,
+.stash-plan-chip.is-edge {
+    color: var(--stash-positive) !important;
+    background: var(--stash-positive-soft) !important;
+}
+
+.stash-issue-status__note,
+.stash-execution-lease-note,
+.stash-plan-warning,
+.stash-plan-validation.is-stale,
+.stash-plan-validation__status,
+.stash-plan-validation__stale,
+.stash-plan-finding {
+    color: var(--stash-warning) !important;
+    border-color: color-mix(in srgb, var(--stash-warning) 35%, var(--stash-line)) !important;
+    background: var(--stash-warning-soft) !important;
+}
+
+.stash-issue-detail {
+    color: var(--stash-ink) !important;
+    border-color: var(--stash-line) !important;
+    background: var(--stash-surface) !important;
+    box-shadow: -18px 0 40px rgba(0, 0, 0, .28), 0 0 0 100vmax var(--stash-overlay) !important;
+}
+
+.stash-issue-detail__header {
+    border-color: var(--stash-line) !important;
+    background: color-mix(in srgb, var(--stash-surface) 94%, transparent) !important;
+}
+
+.stash-drawer-backdrop {
+    background: var(--stash-overlay) !important;
+}
+
+.stash-monitor-table th,
+.stash-monitor-table td {
+    border-color: var(--stash-line) !important;
+}
+
+.stash-monitor-table tr.is-selected td,
+.stash-monitor-table tr.is-selected {
+    background: var(--stash-accent-soft) !important;
+}
+
+.stash-result-raw pre,
+.stash-text-output,
+.stash-agent textarea {
+    color: var(--stash-code-text) !important;
+    border-color: var(--stash-line) !important;
+    background: var(--stash-code-bg) !important;
+}
+
+.stash-theme-control {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+    color: rgba(248, 250, 252, .78);
+    font-size: 10px;
+    font-weight: 750;
+}
+
+.stash-theme-control select {
+    min-height: 30px;
+    min-width: 86px;
+    max-width: 116px;
+    padding: 4px 24px 4px 8px;
+    border: 1px solid rgba(255, 255, 255, .18);
+    border-radius: 7px;
+    color: var(--stash-topbar-ink);
+    background: rgba(255, 255, 255, .09);
+    font-size: 10px;
+    font-weight: 700;
+}
+
+.stash-theme-control select:hover,
+.stash-theme-control select:focus-visible {
+    border-color: rgba(255, 255, 255, .42);
+    background: rgba(255, 255, 255, .16);
+    outline: none;
+}
+
+/* The graph has its own dense palette, but it still follows the global choice. */
+html[data-stash-theme="light"] .stash-root.is-graph-view .stash-main,
+html[data-stash-theme="light"] .stash-root.is-graph-view .stash-panel,
+html[data-stash-theme="light"] .stash-root.is-graph-view .stash-panel-body,
+html[data-stash-theme="light"] .stash-graph {
+    color: var(--graph-text) !important;
+    background: var(--graph-bg) !important;
+}
+
+html[data-stash-theme="light"] .stash-root.is-graph-view .stash-sidebar {
+    border-color: var(--graph-line) !important;
+    background: #e9edf4 !important;
+}
+
+html[data-stash-theme="light"] .stash-root.is-graph-view .stash-nav-item {
+    color: var(--graph-muted) !important;
+}
+
+html[data-stash-theme="light"] .stash-root.is-graph-view .stash-nav-item:hover,
+html[data-stash-theme="light"] .stash-root.is-graph-view .stash-nav-item.is-active {
+    color: var(--graph-text) !important;
+    background: var(--graph-hover) !important;
+}
+
+html[data-stash-theme="light"] .stash-graph-header {
+    border-color: var(--graph-line) !important;
+    background: rgba(255, 255, 255, .94) !important;
+}
+
+html[data-stash-theme="light"] .stash-graph-title,
+html[data-stash-theme="light"] .stash-graph-node__title,
+html[data-stash-theme="light"] .stash-graph-navigator__current strong,
+html[data-stash-theme="light"] .stash-graph-inspector__header h3 {
+    color: var(--graph-text) !important;
+}
+
+html[data-stash-theme="light"] .stash-graph-scope,
+html[data-stash-theme="light"] .stash-graph-project,
+html[data-stash-theme="light"] .stash-graph-project-note,
+html[data-stash-theme="light"] .stash-graph-summary span,
+html[data-stash-theme="light"] .stash-graph-legend,
+html[data-stash-theme="light"] .stash-graph-node__badges,
+html[data-stash-theme="light"] .stash-graph-node__key,
+html[data-stash-theme="light"] .stash-graph-node__meta,
+html[data-stash-theme="light"] .stash-graph-inspector__header span,
+html[data-stash-theme="light"] .stash-graph-inspector h4,
+html[data-stash-theme="light"] .stash-graph-navigator__current span,
+html[data-stash-theme="light"] .stash-graph-navigator__group > span,
+html[data-stash-theme="light"] .stash-work-monitor__item span,
+html[data-stash-theme="light"] .stash-work-monitor__item small,
+html[data-stash-theme="light"] .stash-work-monitor__state {
+    color: var(--graph-muted) !important;
+}
+
+html[data-stash-theme="light"] .stash-graph-toolbar,
+html[data-stash-theme="light"] .stash-graph-navigator,
+html[data-stash-theme="light"] .stash-work-monitor,
+html[data-stash-theme="light"] .stash-graph-canvas-tools,
+html[data-stash-theme="light"] .stash-graph-inspector__actions {
+    border-color: var(--graph-line) !important;
+    background: rgba(255, 255, 255, .9) !important;
+}
+
+html[data-stash-theme="light"] .stash-graph-project select,
+html[data-stash-theme="light"] .stash-graph .stash-filter-trigger,
+html[data-stash-theme="light"] .stash-graph .stash-graph-reset,
+html[data-stash-theme="light"] .stash-graph .stash-map-filter input,
+html[data-stash-theme="light"] .stash-graph .stash-map-filter select,
+html[data-stash-theme="light"] .stash-graph .stash-map-types button,
+html[data-stash-theme="light"] .stash-graph .stash-filter-chip,
+html[data-stash-theme="light"] .stash-graph-navigator__links button,
+html[data-stash-theme="light"] .stash-graph-inspector__actions button,
+html[data-stash-theme="light"] .stash-work-monitor__item {
+    color: var(--graph-soft) !important;
+    border-color: var(--graph-line) !important;
+    background: var(--graph-surface) !important;
+}
+
+html[data-stash-theme="light"] .stash-graph .stash-filter-menu {
+    color: var(--graph-text) !important;
+    border-color: var(--graph-line) !important;
+    background: var(--graph-surface) !important;
+    box-shadow: var(--stash-shadow-md) !important;
+}
+
+html[data-stash-theme="light"] .stash-graph .stash-map-types button[aria-pressed="true"],
+html[data-stash-theme="light"] .stash-graph .stash-filter-trigger:hover,
+html[data-stash-theme="light"] .stash-graph .stash-filter-trigger[aria-expanded="true"],
+html[data-stash-theme="light"] .stash-graph .stash-graph-reset:hover:not(:disabled),
+html[data-stash-theme="light"] .stash-graph-navigator__links button:hover,
+html[data-stash-theme="light"] .stash-graph-inspector__actions button:hover {
+    color: var(--graph-violet) !important;
+    border-color: var(--graph-violet) !important;
+    background: var(--graph-hover) !important;
+}
+
+html[data-stash-theme="light"] .stash-graph-scroll {
+    border-color: var(--graph-line) !important;
+    background: #edf1f6 !important;
+    scrollbar-color: var(--graph-line) var(--graph-raised);
+}
+
+html[data-stash-theme="light"] .stash-graph-grid {
+    opacity: .32;
+    background-image: radial-gradient(circle, rgba(100, 116, 139, .42) .75px, transparent .9px);
+}
+
+html[data-stash-theme="light"] .stash-graph-node {
+    color: var(--graph-text) !important;
+    border-color: var(--graph-line) !important;
+    background: linear-gradient(180deg, #ffffff 0%, #f7f9fc 100%) !important;
+    box-shadow: 0 7px 18px rgba(34, 48, 78, .12) !important;
+}
+
+html[data-stash-theme="light"] .stash-graph-node:hover {
+    border-color: var(--graph-violet) !important;
+}
+
+html[data-stash-theme="light"] .stash-graph-node.is-focused {
+    border-color: var(--graph-amber) !important;
+    box-shadow: 0 0 0 2px rgba(161, 98, 7, .18), 0 10px 24px rgba(34, 48, 78, .18) !important;
+}
+
+html[data-stash-theme="light"] .stash-graph-node__open:hover,
+html[data-stash-theme="light"] .stash-graph-node__actions button:hover,
+html[data-stash-theme="light"] .stash-graph-node__actions button:focus-visible {
+    color: var(--graph-text) !important;
+    background: var(--graph-hover) !important;
+}
+
+html[data-stash-theme="light"] .stash-graph-node__actions {
+    border-color: var(--graph-line) !important;
+}
+
+html[data-stash-theme="light"] .stash-graph-node__actions button {
+    color: var(--graph-violet) !important;
+    border-color: var(--graph-line) !important;
+    background: rgba(248, 250, 252, .94) !important;
+}
+
+html[data-stash-theme="light"] .stash-graph-drag-handle,
+html[data-stash-theme="light"] .stash-graph-canvas-tools button,
+html[data-stash-theme="light"] .stash-graph-inspector__header > button {
+    color: var(--graph-muted) !important;
+    border-color: var(--graph-line) !important;
+    background: transparent !important;
+}
+
+html[data-stash-theme="light"] .stash-graph-drag-handle:hover,
+html[data-stash-theme="light"] .stash-graph-canvas-tools button:hover,
+html[data-stash-theme="light"] .stash-graph-inspector__header > button:hover {
+    color: var(--graph-text) !important;
+    background: var(--graph-hover) !important;
+}
+
+html[data-stash-theme="light"] .stash-graph-inspector {
+    color: var(--graph-soft) !important;
+    border-color: var(--graph-line) !important;
+    background: var(--graph-surface) !important;
+    box-shadow: -18px 0 42px rgba(34, 48, 78, .16) !important;
+}
+
+html[data-stash-theme="light"] .stash-graph-inspector__header,
+html[data-stash-theme="light"] .stash-graph-inspector__actions,
+html[data-stash-theme="light"] .stash-graph-navigator,
+html[data-stash-theme="light"] .stash-work-monitor {
+    border-color: var(--graph-line) !important;
+}
+
+html[data-stash-theme="light"] .stash-graph-navigator__links button,
+html[data-stash-theme="light"] .stash-work-monitor__item strong,
+html[data-stash-theme="light"] .stash-work-monitor__item small,
+html[data-stash-theme="light"] .stash-graph-inspector__header i {
+    color: var(--graph-soft) !important;
+}
+
+html[data-stash-theme="light"] .stash-graph-empty {
+    color: var(--graph-muted) !important;
+    border-color: var(--graph-line) !important;
+    background: var(--graph-raised) !important;
+}
+
+html[data-stash-theme="light"] .stash-graph-cycle-alert,
+html[data-stash-theme="light"] .stash-graph-hierarchy-alert,
+html[data-stash-theme="light"] .stash-graph-page-alert {
+    color: var(--graph-soft) !important;
+    border-color: color-mix(in srgb, var(--graph-amber) 38%, var(--graph-line)) !important;
+    background: #fff8e8 !important;
+}
+
+html[data-stash-theme="light"] .stash-graph-cycle-alert {
+    border-color: rgba(190, 24, 93, .35) !important;
+    background: #fff1f3 !important;
+}
+
+html[data-stash-theme="light"] .stash-graph-cycle-alert strong,
+html[data-stash-theme="light"] .stash-graph-cycle-list span {
+    color: #9f1239 !important;
+}
+
+html[data-stash-theme="light"] .stash-graph-hierarchy-alert strong,
+html[data-stash-theme="light"] .stash-graph-page-alert button {
+    color: #92400e !important;
+}
+
+html[data-stash-theme="light"] .stash-graph-page-alert button {
+    border-color: rgba(161, 98, 7, .38) !important;
+    background: rgba(161, 98, 7, .08) !important;
+}
+
+@media (max-width: 680px) {
+    .stash-theme-control > span {
+        display: none;
+    }
+
+    .stash-theme-control select {
+        min-width: 78px;
+        max-width: 92px;
+    }
+}

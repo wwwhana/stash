@@ -471,6 +471,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 	mcpServer.AddTool(mcp.NewTool("query_facts",
 		mcp.WithDescription(render("query_facts_description")),
 		mcp.WithString("namespaces", mcp.Description(render("namespaces_param"))),
+		mcp.WithString("q", mcp.Description("내용, 개체, 속성, 값으로 사실을 찾습니다.")),
 		mcp.WithNumber("limit", mcp.Description(render("pagination_limit")), mcp.DefaultNumber(100)),
 		mcp.WithNumber("offset", mcp.Description(render("pagination_offset")), mcp.DefaultNumber(0)),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -484,7 +485,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 			Offset: request.GetInt("offset", 0),
 		}
 
-		facts, err := bc.Brain.QueryFacts(ctx, namespaces, nil, nil, page)
+		facts, err := bc.Brain.QueryFactsFiltered(ctx, namespaces, nil, nil, request.GetString("q", ""), page)
 		if err != nil {
 			return nil, err
 		}
@@ -683,6 +684,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		mcp.WithDescription(render("list_hypotheses_description")),
 		mcp.WithString("namespaces", mcp.Description(render("namespaces_param"))),
 		mcp.WithString("status", mcp.Description(render("list_hypotheses_status"))),
+		mcp.WithString("q", mcp.Description("내용, 검증 방법, 상태, 기각 사유로 가설을 찾습니다.")),
 		mcp.WithNumber("limit", mcp.Description(render("pagination_limit")), mcp.DefaultNumber(100)),
 		mcp.WithNumber("offset", mcp.Description(render("pagination_offset")), mcp.DefaultNumber(0)),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -697,7 +699,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		}
 		status := request.GetString("status", "")
 
-		hypotheses, err := bc.Brain.ListHypotheses(ctx, namespaces, status, page)
+		hypotheses, err := bc.Brain.ListHypothesesFiltered(ctx, namespaces, status, request.GetString("q", ""), page)
 		if err != nil {
 			return nil, err
 		}
@@ -798,6 +800,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		mcp.WithDescription(render("list_goals_description")),
 		mcp.WithString("namespaces", mcp.Description(render("namespaces_param"))),
 		mcp.WithString("status", mcp.Description(render("list_goals_status"))),
+		mcp.WithString("q", mcp.Description("내용, 메모, 상태로 목표를 찾습니다.")),
 		mcp.WithNumber("parent_id", mcp.Description(render("list_goals_parent_id"))),
 		mcp.WithNumber("limit", mcp.Description(render("pagination_limit")), mcp.DefaultNumber(100)),
 		mcp.WithNumber("offset", mcp.Description(render("pagination_offset")), mcp.DefaultNumber(0)),
@@ -826,7 +829,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 			parentID = &pid64
 		}
 
-		goals, err := bc.Brain.ListGoals(ctx, namespaces, status, parentID, page)
+		goals, err := bc.Brain.ListGoalsFiltered(ctx, namespaces, status, parentID, request.GetString("q", ""), page)
 		if err != nil {
 			return nil, err
 		}

@@ -78,6 +78,11 @@ func (b *Brain) CreateGoal(ctx context.Context, nsID int64, content string, pare
 
 // ListGoals returns goals across namespaces, optionally filtered by status and parent.
 func (b *Brain) ListGoals(ctx context.Context, namespaceSlugs []string, status string, parentID *int64, page Pagination) ([]models.Goal, error) {
+	return b.ListGoalsFiltered(ctx, namespaceSlugs, status, parentID, "", page)
+}
+
+// ListGoalsFiltered adds a text search over goal content, notes, and status.
+func (b *Brain) ListGoalsFiltered(ctx context.Context, namespaceSlugs []string, status string, parentID *int64, textQuery string, page Pagination) ([]models.Goal, error) {
 	nsIDs, err := b.resolveNamespaceIDs(ctx, namespaceSlugs)
 	if err != nil {
 		return nil, err
@@ -101,6 +106,13 @@ func (b *Brain) ListGoals(ctx context.Context, namespaceSlugs []string, status s
 		args = append(args, *parentID)
 	} else if status == "" {
 		query += " AND parent_id IS NULL"
+	}
+
+	for _, token := range searchTextTokens(textQuery) {
+		argN++
+		pattern := "%" + escapeLikePattern(token) + "%"
+		query += fmt.Sprintf(" AND (content ILIKE $%d ESCAPE '\\' OR COALESCE(notes, '') ILIKE $%d ESCAPE '\\' OR status ILIKE $%d ESCAPE '\\')", argN, argN, argN)
+		args = append(args, pattern)
 	}
 
 	argN++

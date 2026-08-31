@@ -28,6 +28,19 @@ func TestLikePatternForDescendants(t *testing.T) {
 	}
 }
 
+func TestSearchTextTokensSplitsAndTrims(t *testing.T) {
+	got := searchTextTokens("  문서   연결\t결과  ")
+	want := []string{"문서", "연결", "결과"}
+	if len(got) != len(want) {
+		t.Fatalf("searchTextTokens length = %d, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("searchTextTokens[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
 func TestValidationRejectsAmbiguousInput(t *testing.T) {
 	if err := validateContent(" \t\n"); err != ErrEmptyContent {
 		t.Fatalf("whitespace content error = %v, want ErrEmptyContent", err)

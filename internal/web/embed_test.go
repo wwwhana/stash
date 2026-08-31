@@ -27,8 +27,12 @@ func TestUIAssetsAndUnknownPathsKeepFileServerBehavior(t *testing.T) {
 	handler := GetUIHandler()
 
 	assets := map[string]string{
+		"/search-utils.js":               "StashSearch",
 		"/route-state.js":                 "StashRouteState",
 		"/state-store.js":                 "StashStateStore",
+		"/theme-view-model.js":            "StashThemeViewModel",
+		"/theme-bootstrap.js":             "stashTheme",
+		"/theme.css":                      "data-stash-theme",
 		"/api-client.js":                  "StashApiClient",
 		"/route-view-model.js":            "StashRouteViewModel",
 		"/map-scope-view-model.js":        "StashMapScopeViewModel",

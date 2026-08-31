@@ -4,6 +4,7 @@
         ? factory(
             require('./state-store.js'),
             require('./api-client.js'),
+            require('./theme-view-model.js'),
             require('./route-view-model.js'),
             require('./work-plan-view-model.js'),
             require('./issue-execution-view-model.js'),
@@ -18,6 +19,7 @@
         : factory(
             root.StashStateStore,
             root.StashApiClient,
+            root.StashThemeViewModel,
             root.StashRouteViewModel,
             root.StashWorkPlanViewModel,
             root.StashIssueExecutionViewModel,
@@ -38,6 +40,7 @@
 }(typeof globalThis !== 'undefined' ? globalThis : this, function (
     stateStore,
     apiClient,
+    themeViewModel,
     routeViewModel,
     workPlanViewModel,
     issueExecutionViewModel,
@@ -75,6 +78,7 @@
         let workViewRequestSequence = 0;
         const consoleViewModel = {
             init() {
+                this.initTheme();
                 window.addEventListener('popstate', () => {
                     if (!this.authChecked || (this.authRequired() && !this.auth.authenticated)) return;
                     this.restoreRoute();
@@ -161,8 +165,10 @@
                     const body = await this.adminRequest('/admin/maintenance/embeddings');
                     this.applyMaintenanceStatus(body);
                     this.isAdmin = true;
+                    this.adminConfigured = true;
                 } catch (e) {
                     this.isAdmin = false;
+                    this.adminConfigured = Boolean(e && e.status && !(e.status === 503 && /not configured|not initialized/i.test(String(e.message || ''))));
                     if (e.status >= 500) this.adminError = e.message;
                     if (showError) {
                         this.setNotice(this.adminError || '관리자 권한을 확인하지 못했습니다.', 'error', 0);
@@ -286,8 +292,43 @@
                 this.resultKind = toolName;
                 this.resultTitle = this.toolLabel(toolName);
                 this.resultDescription = '선택한 기억 항목의 응답입니다.';
+                this.listQuery = this.listSearchableTool(toolName) ? String(args && args.q || '') : '';
+                this.listStatus = this.listStatusTool(toolName) ? String(args && args.status || '') : '';
                 this.listPage = { tool: toolName, args: { ...args }, offset: Math.max(0, Number(offset) || 0), nextOffset: 0, limit: this.pageSize, hasNext: false, history: [] };
                 await this.loadListPage();
+            },
+
+            listSearchableTool(toolName = this.listPage && this.listPage.tool) {
+                return ['query_facts', 'list_hypotheses', 'list_goals'].includes(toolName);
+            },
+
+            listStatusTool(toolName = this.listPage && this.listPage.tool) {
+                return ['list_hypotheses', 'list_goals'].includes(toolName);
+            },
+
+            listQueryHasFilter() {
+                return Boolean(String(this.listQuery || '').trim());
+            },
+
+            async applyListQuery() {
+                if (!this.listSearchableTool()) return;
+                this.listPage.offset = 0;
+                this.listPage.history = [];
+                await this.loadListPage();
+            },
+
+            async applyListFilters() {
+                if (!this.listSearchableTool()) return;
+                this.listPage.offset = 0;
+                this.listPage.history = [];
+                await this.loadListPage();
+            },
+
+            async clearListQuery() {
+                if (!this.listQueryHasFilter() && !String(this.listStatus || '').trim()) return;
+                this.listQuery = '';
+                this.listStatus = '';
+                await this.applyListFilters();
             },
 
             async loadListPage() {
@@ -300,6 +341,8 @@
                         limit: this.listPage.limit + 1,
                         offset: this.listPage.offset
                     };
+                    if (this.listSearchableTool()) args.q = String(this.listQuery || '').trim();
+                    if (this.listStatusTool()) args.status = String(this.listStatus || '').trim();
                     const data = await this.invokeTool(this.listPage.tool, args);
                     const value = this.toolValue(data);
                     const pageLimit = this.listPage.limit;
@@ -342,6 +385,10 @@
 
             authRequired() {
                 return ['oauth', 'oidc'].includes(this.authMode());
+            },
+
+            tokenControlVisible() {
+                return this.authRequired() || this.adminConfigured || this.isAdmin || Boolean(String(this.token || '').trim() || String(this.adminToken || '').trim());
             },
 
             resultItems() {
@@ -910,6 +957,7 @@
             { name: 'goalMapViewModel', value: goalMapViewModel.createGoalMapViewModel() },
             { name: 'stateStore', value: stateStore.createStateStore() },
             { name: 'apiClient', value: apiClient.createApiClient() },
+            { name: 'themeViewModel', value: themeViewModel.createThemeViewModel() },
             { name: 'consoleViewModel', value: consoleViewModel }
         ]);
     }

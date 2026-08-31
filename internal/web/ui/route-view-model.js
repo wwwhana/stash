@@ -49,6 +49,7 @@
                 } else if (route === 'monitor') {
                     Object.assign(state, {
                         project: this.projectMonitorProjectSlug,
+                        query: this.projectMonitorFilter.query,
                         status: this.projectMonitorFilter.status,
                         agent: this.projectMonitorFilter.agent,
                         focus: this.projectMonitorSelectedID
@@ -65,6 +66,8 @@
                 } else if (route === 'worktrees') {
                     state.offset = this.worktreePage.offset;
                 } else if (['list_namespaces', 'query_facts', 'list_hypotheses', 'list_goals'].includes(route)) {
+                    state.query = this.listQuery;
+                    state.status = this.listStatus;
                     state.offset = this.listPage.offset;
                 }
                 return state;
@@ -88,7 +91,7 @@
                 if (route.route === 'plan') this.planNamespaceSlug = route.project;
                 if (route.route === 'monitor') {
                     this.projectMonitorProjectSlug = route.project;
-                    this.projectMonitorFilter = { status: route.status, agent: route.agent };
+                    this.projectMonitorFilter = { query: route.query, status: route.status, agent: route.agent };
                     this.projectMonitorSelectedID = Number(route.focus) || 0;
                 }
                 if (route.route === 'goal-map') {
@@ -121,7 +124,11 @@
                     this.worktreePage.offset = route.offset;
                     this.worktreePage.history = [];
                 }
-                if (['query_facts', 'list_hypotheses', 'list_goals'].includes(route.route)) this.mapNamespaceSlug = route.namespace;
+                if (['query_facts', 'list_hypotheses', 'list_goals'].includes(route.route)) {
+                    this.mapNamespaceSlug = route.namespace;
+                    this.listQuery = route.query;
+                    this.listStatus = route.status;
+                }
             },
 
             async restoreRoute() {
@@ -139,7 +146,7 @@
                     else if (route.route === 'agent') this.showAgentGuide();
                     else if (route.route === 'maintenance') await this.loadMaintenance();
                     else {
-                        const args = route.route === 'list_namespaces' ? {} : { namespaces: route.namespace || '/' };
+                        const args = route.route === 'list_namespaces' ? {} : { namespaces: route.namespace || '/', q: route.query, status: route.status };
                         await this.callTool(route.route, args, route.offset);
                     }
                     if (generation !== this.routeRestoreGeneration) return;

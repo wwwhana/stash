@@ -121,6 +121,12 @@ func (b *Brain) CreateHypothesis(ctx context.Context, nsID int64, content, verif
 
 // ListHypotheses returns hypotheses across namespaces, optionally filtered by status.
 func (b *Brain) ListHypotheses(ctx context.Context, namespaceSlugs []string, status string, page Pagination) ([]models.Hypothesis, error) {
+	return b.ListHypothesesFiltered(ctx, namespaceSlugs, status, "", page)
+}
+
+// ListHypothesesFiltered adds a text search over hypothesis content, status,
+// verification instructions, method, and rejection reason.
+func (b *Brain) ListHypothesesFiltered(ctx context.Context, namespaceSlugs []string, status, textQuery string, page Pagination) ([]models.Hypothesis, error) {
 	nsIDs, err := b.resolveNamespaceIDs(ctx, namespaceSlugs)
 	if err != nil {
 		return nil, err
@@ -128,30 +134,30 @@ func (b *Brain) ListHypotheses(ctx context.Context, namespaceSlugs []string, sta
 
 	page = b.sanitizePage(page)
 
-	if status != "" {
-		rows, err := b.pool.Query(ctx,
-			`SELECT id, namespace_id, content, confidence, status, verification_plan, method,
-			 confirmed_fact_id, rejection_reason, source_fact_ids, tested_at, confirmed_at, rejected_at,
-			 created_at, updated_at, deleted_at
-			 FROM hypotheses WHERE namespace_id = ANY($1) AND status = $2 AND deleted_at IS NULL
-			 ORDER BY updated_at DESC LIMIT $3 OFFSET $4`,
-			nsIDs, status, page.Limit, page.Offset,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("list hypotheses: %w", err)
-		}
-		defer rows.Close()
-		return scanHypothesisRows(rows)
-	}
-
-	rows, err := b.pool.Query(ctx,
-		`SELECT id, namespace_id, content, confidence, status, verification_plan, method,
+	query := `SELECT id, namespace_id, content, confidence, status, verification_plan, method,
 		 confirmed_fact_id, rejection_reason, source_fact_ids, tested_at, confirmed_at, rejected_at,
 		 created_at, updated_at, deleted_at
-		 FROM hypotheses WHERE namespace_id = ANY($1) AND deleted_at IS NULL
-		 ORDER BY updated_at DESC LIMIT $2 OFFSET $3`,
-		nsIDs, page.Limit, page.Offset,
-	)
+		 FROM hypotheses WHERE namespace_id = ANY($1) AND deleted_at IS NULL`
+	args := []any{nsIDs}
+	argN := 1
+	if status != "" {
+		argN++
+		query += fmt.Sprintf(" AND status = $%d", argN)
+		args = append(args, status)
+	}
+	for _, token := range searchTextTokens(textQuery) {
+		argN++
+		pattern := "%" + escapeLikePattern(token) + "%"
+		query += fmt.Sprintf(" AND (content ILIKE $%d ESCAPE '\\' OR status ILIKE $%d ESCAPE '\\' OR verification_plan ILIKE $%d ESCAPE '\\' OR COALESCE(method, '') ILIKE $%d ESCAPE '\\' OR COALESCE(rejection_reason, '') ILIKE $%d ESCAPE '\\')", argN, argN, argN, argN, argN)
+		args = append(args, pattern)
+	}
+	argN++
+	query += fmt.Sprintf(" ORDER BY updated_at DESC LIMIT $%d", argN)
+	args = append(args, page.Limit)
+	argN++
+	query += fmt.Sprintf(" OFFSET $%d", argN)
+	args = append(args, page.Offset)
+	rows, err := b.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list hypotheses: %w", err)
 	}

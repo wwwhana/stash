@@ -108,3 +108,21 @@ test('a page from an old graph scope is discarded', async () => {
     assert.deepEqual(vm.graph.nodes, []);
     assert.equal(vm.graphPageLoading, false);
 });
+
+test('search can explicitly load the remaining graph pages before filtering', async () => {
+    const vm = viewModel();
+    vm.graphFilter.query = '문서';
+    vm.setWorkGraph({
+        nodes: [{ ...node(1), title: '문서 시작' }], edges: [], worktrees: [],
+        has_more: true, next_node_offset: 1, next_edge_offset: 0, total_nodes: 2, total_edges: 0
+    });
+    vm.invokeTool = async () => ({
+        nodes: [{ ...node(2), title: '문서 끝' }], edges: [], worktrees: [],
+        has_more: false, next_node_offset: 2, next_edge_offset: 0, total_nodes: 2, total_edges: 0
+    });
+    vm.toolValue = value => value;
+
+    assert.equal(await vm.loadAllWorkGraphForSearch(), true);
+    assert.deepEqual(vm.graph.nodes.map(item => item.id), [1, 2]);
+    assert.deepEqual(vm.workGraphLayout.nodes.map(item => item.item.id), [1, 2]);
+});

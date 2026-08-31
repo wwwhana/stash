@@ -220,6 +220,12 @@ func escapeLikePattern(s string) string {
 	return likeEscaper.Replace(s)
 }
 
+// searchTextTokens keeps server-side list searches consistent with the UI:
+// every whitespace-delimited token must match at least one searchable field.
+func searchTextTokens(value string) []string {
+	return strings.Fields(strings.TrimSpace(value))
+}
+
 // likePatternForDescendants builds a LIKE prefix for slug descendant lookup.
 func likePatternForDescendants(path string) string {
 	return escapeLikePattern(path) + "/%"

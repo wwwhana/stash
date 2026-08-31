@@ -381,7 +381,9 @@ func (b *Brain) ListWorkItems(ctx context.Context, namespaceSlugs []string, stat
 }
 
 // ListWorkItemsFiltered lists issues with optional status, type, label, text,
-// and worktree filters. The text filter searches the key, title, and body.
+// and worktree filters. The text filter searches the key, title, body, labels,
+// owner, reporter, type, and status so one board search covers the visible
+// issue metadata.
 func (b *Brain) ListWorkItemsFiltered(ctx context.Context, namespaceSlugs []string, status, issueType, label, textQuery string, worktreeID *int64, page Pagination) ([]models.WorkItem, error) {
 	nsIDs, err := b.resolveNamespaceIDs(ctx, namespaceSlugs)
 	if err != nil {
@@ -420,9 +422,9 @@ func (b *Brain) ListWorkItemsFiltered(ctx context.Context, namespaceSlugs []stri
 		args = append(args, label)
 		arg++
 	}
-	if strings.TrimSpace(textQuery) != "" {
-		pattern := "%" + escapeLikePattern(strings.TrimSpace(textQuery)) + "%"
-		query += fmt.Sprintf(" AND (issue_key ILIKE $%d ESCAPE '\\' OR title ILIKE $%d ESCAPE '\\' OR description ILIKE $%d ESCAPE '\\')", arg, arg, arg)
+	for _, token := range searchTextTokens(textQuery) {
+		pattern := "%" + escapeLikePattern(token) + "%"
+		query += fmt.Sprintf(" AND (issue_key ILIKE $%d ESCAPE '\\' OR title ILIKE $%d ESCAPE '\\' OR description ILIKE $%d ESCAPE '\\' OR COALESCE(array_to_string(labels, ' '), '') ILIKE $%d ESCAPE '\\' OR owner ILIKE $%d ESCAPE '\\' OR reporter ILIKE $%d ESCAPE '\\' OR issue_type ILIKE $%d ESCAPE '\\' OR status ILIKE $%d ESCAPE '\\')", arg, arg, arg, arg, arg, arg, arg, arg)
 		args = append(args, pattern)
 		arg++
 	}

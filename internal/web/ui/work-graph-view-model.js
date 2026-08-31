@@ -1,13 +1,14 @@
 (function (root, factory) {
     const api = typeof module === 'object' && module.exports
-        ? factory(require('./work-graph-layout.js'))
-        : factory(root.StashWorkGraph);
+        ? factory(require('./work-graph-layout.js'), require('./search-utils.js'))
+        : factory(root.StashWorkGraph, root.StashSearch);
     if (typeof module === 'object' && module.exports) module.exports = api;
     else root.StashWorkGraphViewModel = api;
-}(typeof globalThis !== 'undefined' ? globalThis : this, function (workGraphLayout) {
+}(typeof globalThis !== 'undefined' ? globalThis : this, function (workGraphLayout, searchUtils) {
     'use strict';
 
     if (!workGraphLayout) throw new Error('작업 흐름 배치 모듈을 불러오지 못했습니다.');
+    if (!searchUtils) throw new Error('검색 모듈을 불러오지 못했습니다.');
 
     function escapeSVGAttribute(value) {
         return String(value === undefined || value === null ? '' : value)
@@ -26,6 +27,7 @@
         let graphFilterTrigger = null;
         let graphFocusReturn = null;
         let graphPageRequestSequence = 0;
+        let graphSearchRequestSequence = 0;
         return {
             graph: { nodes: [], edges: [], worktrees: [] },
             graphPage: emptyGraphPage(),
@@ -74,6 +76,7 @@
 
             clearWorkGraph() {
                 graphPageRequestSequence += 1;
+                graphSearchRequestSequence += 1;
                 this.graphPageLoading = false;
                 this.setWorkGraph({ nodes: [], edges: [], worktrees: [] });
             },
@@ -140,6 +143,19 @@
                 }
             },
 
+            async loadAllWorkGraphForSearch(maxPages = 256) {
+                if (!String(this.graphFilter.query || '').trim() || this.loading || this.graphPageLoading) return false;
+                const requestSequence = ++graphSearchRequestSequence;
+                let pages = 0;
+                while (this.graphPage.hasMore && pages < maxPages && requestSequence === graphSearchRequestSequence) {
+                    pages += 1;
+                    if (!await this.loadMoreWorkGraph()) break;
+                }
+                if (requestSequence !== graphSearchRequestSequence) return false;
+                this.refreshWorkGraphLayout();
+                return !this.graphPage.hasMore;
+            },
+
             setWorkGraphWorktrees(worktrees) {
                 this.graph = { ...this.graph, worktrees: Array.isArray(worktrees) ? worktrees : [] };
             },
@@ -153,7 +169,7 @@
             },
 
             refreshWorkGraphLayout() {
-                const query = String(this.graphFilter.query || '').trim().toLocaleLowerCase('ko');
+                const query = String(this.graphFilter.query || '').trim();
                 const status = String(this.graphFilter.status || '').trim();
                 const agent = String(this.graphFilter.agent || '').trim();
                 const hasNodeFilters = Boolean(query || status || agent);
@@ -166,10 +182,10 @@
                     if (!query) return true;
                     const values = [
                         item.issue_key, item.title, item.description, item.status, item.owner,
-                        ...(Array.isArray(item.labels) ? item.labels : []),
-                        ...(Array.isArray(item.required_capabilities) ? item.required_capabilities : [])
+                        item.agent_id, item.reporter, item.issue_type, item.due_at,
+                        item.latest_result, item.next_action, item.labels, item.required_capabilities
                     ];
-                    return values.some(value => String(value || '').toLocaleLowerCase('ko').includes(query));
+                    return searchUtils.matchesSearch(values, query);
                 }).map(item => String(item.id)));
                 const visibleIDs = new Set(matchedIDs);
                 if (this.graphFocusedKey && byID.has(String(this.graphFocusedKey))) visibleIDs.add(String(this.graphFocusedKey));

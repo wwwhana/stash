@@ -55,7 +55,7 @@ func hypothesisListCmd(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	bc := getBootstrap(cmd)
-	hypotheses, err := bc.Brain.ListHypotheses(ctx, namespaces, status, page)
+	hypotheses, err := bc.Brain.ListHypothesesFiltered(ctx, namespaces, status, cmd.String("q"), page)
 	if err != nil {
 		return err
 	}

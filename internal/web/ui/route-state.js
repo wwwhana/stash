@@ -112,6 +112,7 @@
             setText(params, 'project', value.project);
         } else if (selected === 'monitor') {
             setText(params, 'project', value.project);
+            setText(params, 'q', value.query);
             setText(params, 'status', value.status);
             setText(params, 'agent', value.agent);
             setText(params, 'focus', value.focus);
@@ -126,6 +127,8 @@
             setOffset(params, value.offset);
         } else if (['query_facts', 'list_hypotheses', 'list_goals'].includes(selected)) {
             setText(params, 'namespace', value.namespace);
+            setText(params, 'q', value.query);
+            setText(params, 'status', value.status);
             setOffset(params, value.offset);
         } else if (selected === 'list_namespaces') {
             setOffset(params, value.offset);

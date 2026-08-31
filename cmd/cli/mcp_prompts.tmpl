@@ -43,10 +43,10 @@ Exact existing namespace path. Defaults to /.
 {{end}}
 
 {{define "recall_description"}}
-Search episodes and facts by semantic and keyword relevance. Use before history-dependent answers.
+Search episodes and facts by semantic and keyword relevance. If the embedding provider is unavailable, Stash automatically returns trigram-only matches from the saved text. Use before history-dependent answers.
 {{end}}
 {{define "recall_min_score"}}
-Optional minimum vector similarity from 0 to 1; 0 disables the filter.
+Optional minimum vector similarity from 0 to 1; 0 disables the vector filter. Trigram-only fallback results are ranked by their text-match score.
 {{end}}
 {{define "recall_query"}}
 Specific search query using names, identifiers, and relevant terms.

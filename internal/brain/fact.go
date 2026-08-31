@@ -13,6 +13,12 @@ import (
 // QueryFacts returns facts across namespaces matching the given slug paths, within an optional time range.
 // Each path matches itself and all descendants.
 func (b *Brain) QueryFacts(ctx context.Context, namespaceSlugs []string, since, until *time.Time, page Pagination) ([]models.Fact, error) {
+	return b.QueryFactsFiltered(ctx, namespaceSlugs, since, until, "", page)
+}
+
+// QueryFactsFiltered is QueryFacts with an optional text search over the fact
+// content and its structured entity/property/value fields.
+func (b *Brain) QueryFactsFiltered(ctx context.Context, namespaceSlugs []string, since, until *time.Time, textQuery string, page Pagination) ([]models.Fact, error) {
 	nsIDs, err := b.resolveNamespaceIDs(ctx, namespaceSlugs)
 	if err != nil {
 		return nil, err
@@ -35,6 +41,12 @@ func (b *Brain) QueryFacts(ctx context.Context, namespaceSlugs []string, since, 
 		argN++
 		query += fmt.Sprintf(" AND created_at <= $%d", argN)
 		args = append(args, *until)
+	}
+	for _, token := range searchTextTokens(textQuery) {
+		argN++
+		pattern := "%" + escapeLikePattern(token) + "%"
+		query += fmt.Sprintf(" AND (content ILIKE $%d ESCAPE '\\' OR COALESCE(entity, '') ILIKE $%d ESCAPE '\\' OR COALESCE(property, '') ILIKE $%d ESCAPE '\\' OR COALESCE(value, '') ILIKE $%d ESCAPE '\\')", argN, argN, argN, argN)
+		args = append(args, pattern)
 	}
 
 	argN++

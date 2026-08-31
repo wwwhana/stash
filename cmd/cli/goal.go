@@ -51,7 +51,7 @@ func goalListCmd(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	bc := getBootstrap(cmd)
-	goals, err := bc.Brain.ListGoals(ctx, namespaces, status, parentID, page)
+	goals, err := bc.Brain.ListGoalsFiltered(ctx, namespaces, status, parentID, cmd.String("q"), page)
 	if err != nil {
 		return err
 	}
@@ -77,8 +77,8 @@ func goalShowCmd(ctx context.Context, cmd *cli.Command) error {
 	total, completed, _ := bc.Brain.GetGoalProgress(ctx, id)
 
 	return printJSON(map[string]any{
-		"goal":       g,
-		"sub_goals":  map[string]int{"total": total, "completed": completed},
+		"goal":      g,
+		"sub_goals": map[string]int{"total": total, "completed": completed},
 	})
 }
 

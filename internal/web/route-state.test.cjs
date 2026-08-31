@@ -51,16 +51,26 @@ test('project plan and issue drawer keep only their own query state', () => {
 
 test('project monitor address restores project filters and focused work', () => {
     const href = buildRoute('monitor', {
-        project: '/projects/demo', status: 'doing', agent: 'codex', focus: 42, issueID: 17
+        project: '/projects/demo', query: '문서 연결', status: 'doing', agent: 'codex', focus: 42, issueID: 17
     });
-    assert.equal(href, '/ui/monitor?project=%2Fprojects%2Fdemo&status=doing&agent=codex&focus=42&issue=17');
+    assert.equal(href, '/ui/monitor?project=%2Fprojects%2Fdemo&q=%EB%AC%B8%EC%84%9C+%EC%97%B0%EA%B2%B0&status=doing&agent=codex&focus=42&issue=17');
     const route = readRoute(href);
     assert.equal(route.route, 'monitor');
     assert.equal(route.project, '/projects/demo');
+    assert.equal(route.query, '문서 연결');
     assert.equal(route.status, 'doing');
     assert.equal(route.agent, 'codex');
     assert.equal(route.focus, '42');
     assert.equal(route.issueID, 17);
+});
+
+test('fact, hypothesis, and goal list addresses restore their search', () => {
+    const href = buildRoute('list_hypotheses', { namespace: '/projects/demo', query: '지원 정책', status: 'testing', offset: 50 });
+    assert.equal(href, '/ui/hypotheses?namespace=%2Fprojects%2Fdemo&q=%EC%A7%80%EC%9B%90+%EC%A0%95%EC%B1%85&status=testing&offset=50');
+    const route = readRoute(href);
+    assert.equal(route.query, '지원 정책');
+    assert.equal(route.status, 'testing');
+    assert.equal(route.offset, 50);
 });
 
 test('root and unknown paths safely select the goal map', () => {

@@ -179,7 +179,7 @@ func registerWorkGraphTools(mcpServer *server.MCPServer, bc *bootstrap.Context) 
 		mcp.WithString("status", mcp.Description("backlog, ready, doing, blocked, review, done, or canceled")),
 		mcp.WithString("issue_type", mcp.Description("task, bug, feature, chore, or question")),
 		mcp.WithString("label", mcp.Description("Filter by one label")),
-		mcp.WithString("q", mcp.Description("Search issue key, title, or description")),
+		mcp.WithString("q", mcp.Description("Search issue key, title, description, labels, owner, reporter, type, or status")),
 		mcp.WithNumber("worktree_id", mcp.Description("Optional registered worktree ID")),
 		mcp.WithNumber("limit", mcp.Description("Maximum results"), mcp.DefaultNumber(100)),
 		mcp.WithNumber("offset", mcp.Description("Result offset"), mcp.DefaultNumber(0)),

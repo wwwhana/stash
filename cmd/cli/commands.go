@@ -169,7 +169,7 @@ func factsListCmd(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	bc := getBootstrap(cmd)
-	facts, err := bc.Brain.QueryFacts(ctx, namespaces, since, until, page)
+	facts, err := bc.Brain.QueryFactsFiltered(ctx, namespaces, since, until, cmd.String("q"), page)
 	if err != nil {
 		return err
 	}
