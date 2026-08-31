@@ -79,12 +79,30 @@ func TestRecallUsesTrigramWhenQueryEmbeddingFails(t *testing.T) {
 		t.Fatalf("insert fact: %v", err)
 	}
 
+	// Structured fields are part of the trigram search text even when the
+	// human-readable fact content does not contain the queried identifier.
+	structuredFactIDs := make(map[int64]string, 3)
+	for _, field := range []string{"entity", "property", "value"} {
+		var id int64
+		if err := p.QueryRow(ctx,
+			`INSERT INTO facts (namespace_id, content, confidence, entity, property, value)
+			 VALUES ($1, $2, 1, CASE WHEN $3 = 'entity' THEN $4 END,
+			                    CASE WHEN $3 = 'property' THEN $4 END,
+			                    CASE WHEN $3 = 'value' THEN $4 END)
+			 RETURNING id`,
+			namespaceID, "structured fact content", field, marker,
+		).Scan(&id); err != nil {
+			t.Fatalf("insert structured %s fact: %v", field, err)
+		}
+		structuredFactIDs[id] = field
+	}
+
 	results, err := b.RecallWithOptions(ctx, []string{slug}, marker, 10, RecallOptions{})
 	if err != nil {
 		t.Fatalf("RecallWithOptions should use trigram fallback: %v", err)
 	}
-	if len(results) < 2 {
-		t.Fatalf("trigram fallback returned %d results, want episode and fact: %#v", len(results), results)
+	if len(results) < 5 {
+		t.Fatalf("trigram fallback returned %d results, want episode and four facts: %#v", len(results), results)
 	}
 	seen := map[string]bool{}
 	for _, result := range results {
@@ -100,8 +118,11 @@ func TestRecallUsesTrigramWhenQueryEmbeddingFails(t *testing.T) {
 		if result.Type == "fact" && result.ID == factID {
 			seen["fact"] = true
 		}
+		if field, ok := structuredFactIDs[result.ID]; ok {
+			seen["structured-"+field] = true
+		}
 	}
-	if !seen["episode"] || !seen["fact"] {
+	if !seen["episode"] || !seen["fact"] || !seen["structured-entity"] || !seen["structured-property"] || !seen["structured-value"] {
 		t.Fatalf("trigram fallback missed stored rows: seen=%v results=%#v", seen, results)
 	}
 }

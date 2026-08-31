@@ -110,7 +110,7 @@ HTTP MCP 요청은 `Authorization: Bearer <access-token>` 헤더를 보내야 �
 
 `stash serve`는 MCP, 관리 화면, OAuth 경로, 운영 지표, 상태 확인을 하나의 HTTP 포트(기본 `:8080`)에서 제공합니다. Prometheus 지표는 `http://localhost:8080/metrics`에서 확인하고, `/healthz`는 데이터베이스 연결을, `/readyz`는 준비 상태를 확인합니다. HTTP 요청, 인증 결과, MCP 도구 호출, 외부 제공자 호출, 네임스페이스 범위 적용, 기억 통합 작업, 임베딩 재시도 대기 건수를 기록합니다. 요청·인증·도구·제공자·범위 지표의 라벨에는 사용자 ID와 실제 네임스페이스 이름을 넣지 않습니다.
 
-임베딩 API가 짧은 요청 재시도 후에도 실패하면 원문은 인덱싱 대기 상태로 저장됩니다. PostgreSQL 연결은 정상이지만 벡터 값만 저장하지 못한 경우에도 원문을 보존합니다. 서버는 성공할 때까지 횟수 제한 없이 다시 처리하며, 재시도 간격은 설정한 최댓값까지만 늘어납니다. 임베딩 제공자가 잠시 응답하지 않아도 `recall`은 저장된 원문을 PostgreSQL 트라이그램 검색으로 찾아 작업을 계속할 수 있습니다. `STASH_EMBEDDING_RETRY_INTERVAL`, `STASH_EMBEDDING_RETRY_MAX_INTERVAL`, `STASH_EMBEDDING_RETRY_BATCH_SIZE`로 주기와 한 번에 처리할 수를 설정합니다.
+임베딩 API가 짧은 요청 재시도 후에도 실패하면 원문은 인덱싱 대기 상태로 저장됩니다. PostgreSQL 연결은 정상이지만 벡터 값만 저장하지 못한 경우에도 원문을 보존합니다. 한 항목이 다섯 번 실패하면 자동 재시도를 멈추고 관리자가 다시 시작할 때까지 일시 중지해, 작은 일일 한도를 계속 소모하지 않게 합니다. 재시도 간격은 설정한 최댓값 안에서 늘어납니다. 임베딩 제공자가 잠시 응답하지 않아도 `recall`은 저장된 원문과 사실의 `entity`·`property`·`value` 필드를 PostgreSQL 트라이그램 검색으로 찾아 작업을 계속할 수 있습니다. `STASH_EMBEDDING_RETRY_INTERVAL`, `STASH_EMBEDDING_RETRY_MAX_INTERVAL`, `STASH_EMBEDDING_RETRY_BATCH_SIZE`로 주기와 한 번에 처리할 수를 설정합니다.
 
 `STASH_ADMIN_SUBJECTS`(쉼표로 구분한 OIDC subject)나 `STASH_ADMIN_TOKEN`을 설정하면 관리 화면에 **임베딩 관리** 메뉴가 나타납니다. 대기 건수, 현재 모델과 차원, 최근 제공자 오류를 확인할 수 있습니다. **대기 항목 즉시 재시도**는 지금 처리 중인 항목을 건드리지 않고 예약된 실패 건을 즉시 깨웁니다. **전체 다시 계산**은 저장된 벡터와 임시 캐시를 비운 뒤 살아 있는 모든 에피소드와 팩트를 다시 등록하며 원문은 유지합니다.
 

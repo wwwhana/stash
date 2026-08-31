@@ -45,9 +45,14 @@ test('project monitor summarizes and filters project work without dropping unass
 
     view.projectMonitorFilter = { status: 'doing', agent: 'codex' };
     assert.deepEqual(view.projectMonitorRows().map(item => item.id), [1]);
+    assert.equal(view.projectMonitorFilterCount(), 2);
 
     view.projectMonitorFilter = { query: '문서 범위', status: '', agent: '' };
     assert.deepEqual(view.projectMonitorRows().map(item => item.id), [1]);
+    assert.equal(view.projectMonitorFilterCount(), 1);
+
+    view.resetProjectMonitorFilters();
+    assert.equal(view.projectMonitorFilterCount(), 0);
 });
 
 test('expired leases and canceled work have separate counts and filters', () => {

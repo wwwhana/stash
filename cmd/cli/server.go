@@ -26,6 +26,12 @@ var (
 		},
 		[]string{"result"},
 	)
+	embeddingRetryPaused = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "stash_embedding_retry_paused_total",
+			Help: "Embedding rows paused after reaching the retry attempt limit",
+		},
+	)
 	embeddingQueued = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Name: "stash_embedding_queued_total",
@@ -47,7 +53,7 @@ var (
 )
 
 func init() {
-	prometheus.MustRegister(buildInfo, embeddingRetryAttempts, embeddingQueued, embeddingPending, mcpResponseLimited)
+	prometheus.MustRegister(buildInfo, embeddingRetryAttempts, embeddingRetryPaused, embeddingQueued, embeddingPending, mcpResponseLimited)
 	buildInfo.WithLabelValues("0.2.8").Set(1)
 }
 
@@ -62,6 +68,9 @@ func recordEmbeddingRetryMetrics(result brain.EmbeddingRetryResult) {
 	}
 	if result.Failed > 0 {
 		embeddingRetryAttempts.WithLabelValues("failed").Add(float64(result.Failed))
+	}
+	if result.Paused > 0 {
+		embeddingRetryPaused.Add(float64(result.Paused))
 	}
 	embeddingPending.Set(float64(result.Pending))
 }

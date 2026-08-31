@@ -28,6 +28,35 @@ func TestEmbeddingRetryDelayUsesExponentialBackoffWithCap(t *testing.T) {
 	}
 }
 
+func TestEmbeddingRetryDelayDoesNotOverflowForLargeAttemptCount(t *testing.T) {
+	maximum := time.Duration(1 << 62) // still below the time.Duration limit
+	if got := embeddingRetryDelay(time.Hour, maximum, 10000); got != maximum {
+		t.Fatalf("large attempt count delay = %s, want configured maximum %s", got, maximum)
+	}
+}
+
+func TestEmbeddingRetryDelayWithJitterStaysBetweenFloorAndCap(t *testing.T) {
+	base := time.Minute
+	maximum := 10 * time.Minute
+	floor := embeddingRetryDelay(base, maximum, 3)
+	for i := 0; i < 100; i++ {
+		got := embeddingRetryDelayWithJitter(base, maximum, 3)
+		if got < floor || got > maximum {
+			t.Fatalf("jittered delay = %s, want between %s and %s", got, floor, maximum)
+		}
+	}
+}
+
+func TestEmbeddingRetryNextAtPausesAtAttemptCap(t *testing.T) {
+	now := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
+	if next, paused := embeddingRetryNextAt(now, time.Minute, time.Hour, embeddingRetryMaxAttempts-1); paused || !next.After(now) {
+		t.Fatalf("attempt below cap returned next=%v paused=%v", next, paused)
+	}
+	if next, paused := embeddingRetryNextAt(now, time.Minute, time.Hour, embeddingRetryMaxAttempts); !paused || !next.IsZero() {
+		t.Fatalf("attempt cap returned next=%v paused=%v, want zero time and paused", next, paused)
+	}
+}
+
 func TestEmbeddingErrorTextIsBounded(t *testing.T) {
 	input := strings.Repeat("오", embeddingErrorRuneLimit+100)
 	got := embeddingErrorText(errors.New(input))

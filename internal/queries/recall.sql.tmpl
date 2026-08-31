@@ -44,15 +44,15 @@ SELECT
     content,
     confidence,
     created_at,
-    word_similarity({{.Bind .Args.query}}, content) AS score
+    word_similarity({{.Bind .Args.query}}, search_text) AS score
 FROM facts
 WHERE deleted_at IS NULL
     AND valid_until IS NULL
-    AND {{.Bind .Args.query}} <% content
+    AND {{.Bind .Args.query}} <% search_text
 {{if .Args.namespace_ids}}
     AND namespace_id IN ({{range $i, $id := .Args.namespace_ids}}{{if $i}}, {{end}}{{$.Bind $id}}{{end}})
 {{end}}
-ORDER BY word_similarity({{.Bind .Args.query}}, content) DESC
+ORDER BY word_similarity({{.Bind .Args.query}}, search_text) DESC
 LIMIT {{.Bind .Args.limit}}
 {{end}}
 

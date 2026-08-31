@@ -15,7 +15,7 @@
             adminLoading: false,
             maintenanceAction: false,
             adminError: '',
-            maintenance: { model: '', dimensions: 0, episodes_total: 0, facts_total: 0, episodes_pending: 0, facts_pending: 0, pending: 0, due: 0, failed: 0, latest_error: '' },
+            maintenance: { model: '', dimensions: 0, episodes_total: 0, facts_total: 0, episodes_pending: 0, facts_pending: 0, pending: 0, due: 0, failed: 0, paused: 0, latest_error: '' },
             sessionId: '',
             requestId: 0,
             auth: { auth_mode: 'none', authenticated: false, user: '' },

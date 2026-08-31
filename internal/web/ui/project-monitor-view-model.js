@@ -188,6 +188,12 @@
                 return Boolean(text(this.projectMonitorFilter.query) || text(this.projectMonitorFilter.status) || text(this.projectMonitorFilter.agent));
             },
 
+            projectMonitorFilterCount() {
+                return Number(Boolean(text(this.projectMonitorFilter.query))) +
+                    Number(Boolean(text(this.projectMonitorFilter.status))) +
+                    Number(Boolean(text(this.projectMonitorFilter.agent)));
+            },
+
             resetProjectMonitorFilters() {
                 this.projectMonitorFilter = { query: '', status: '', agent: '' };
                 this.syncRoute();

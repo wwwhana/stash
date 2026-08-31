@@ -701,12 +701,13 @@
         .stash-maintenance-model { flex: 0 0 auto; padding: 10px 12px; border: 1px solid var(--stash-line); border-radius: 10px; color: #475467; background: #fff; font-size: 11px; box-shadow: var(--stash-shadow-sm); }
         .stash-maintenance-model strong { display: block; max-width: 240px; overflow: hidden; color: var(--stash-indigo); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
         .stash-maintenance-model span { display: block; margin-top: 4px; color: var(--stash-subtle); font-size: 10px; }
-        .stash-maintenance-stats { display: grid; grid-template-columns: repeat(4, minmax(90px, 1fr)); gap: 8px; margin-bottom: 14px; }
+        .stash-maintenance-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin-bottom: 14px; }
         .stash-maintenance-stat { padding: 13px 12px; border: 1px solid var(--stash-line); border-radius: 10px; background: #fff; box-shadow: var(--stash-shadow-sm); }
         .stash-maintenance-stat strong { display: block; color: var(--stash-ink); font-size: 22px; line-height: 1; }
         .stash-maintenance-stat span { display: block; margin-top: 6px; color: var(--stash-subtle); font-size: 10px; }
         .stash-maintenance-stat.is-due strong { color: var(--stash-indigo); }
         .stash-maintenance-stat.is-failed strong { color: var(--stash-red); }
+        .stash-maintenance-stat.is-paused strong { color: var(--stash-warning); }
         .stash-maintenance-error { margin-bottom: 14px; padding: 12px 13px; border: 1px solid #f5c2c0; border-radius: 10px; color: #8f211b; background: #fff4f3; }
         .stash-maintenance-error strong { display: block; font-size: 11px; }
         .stash-maintenance-error pre { max-height: 180px; margin: 7px 0 0; overflow: auto; color: #6f2420; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -1246,6 +1247,7 @@
                             <label class="stash-field stash-monitor-search"><span>검색</span><input type="search" x-model="projectMonitorFilter.query" @input.debounce.180ms="projectMonitorFilterChanged()" @keydown.enter.prevent="projectMonitorFilterChanged()" placeholder="작업, 결과, 다음 행동" aria-label="작업 관제 검색"></label>
                             <label class="stash-field"><span>상태</span><select x-model="projectMonitorFilter.status" @change="projectMonitorFilterChanged()"><option value="">전체</option><option value="backlog">대기</option><option value="ready">준비</option><option value="doing">진행 중</option><option value="blocked">막힘</option><option value="review">검토</option><option value="done">완료</option><option value="canceled">취소</option><option value="expired">연결 만료</option></select></label>
                             <label class="stash-field"><span>담당</span><select x-model="projectMonitorFilter.agent" @change="projectMonitorFilterChanged()"><option value="">전체</option><template x-for="agent in projectMonitorAgents()" :key="'monitor-agent-' + agent"><option :value="agent" x-text="agent"></option></template></select></label>
+                            <span x-show="projectMonitorFilterCount()" x-cloak class="stash-filter-count" :aria-label="'적용한 필터 ' + projectMonitorFilterCount() + '개'" x-text="'필터 ' + projectMonitorFilterCount() + '개'"></span>
                             <button type="button" class="stash-btn" @click="resetProjectMonitorFilters()" :disabled="!projectMonitorHasFilters()">초기화</button>
                         </div>
 
@@ -1451,6 +1453,7 @@
                                     <div class="stash-maintenance-stat"><strong x-text="maintenance.pending || 0"></strong><span>대기 중</span></div>
                                     <div class="stash-maintenance-stat is-due"><strong x-text="maintenance.due || 0"></strong><span>지금 처리 가능</span></div>
                                     <div class="stash-maintenance-stat is-failed"><strong x-text="maintenance.failed || 0"></strong><span>최근 실패 있음</span></div>
+                                    <div class="stash-maintenance-stat is-paused"><strong x-text="maintenance.paused || 0"></strong><span>일시 중지</span></div>
                                     <div class="stash-maintenance-stat"><strong x-text="(maintenance.episodes_total || 0) + (maintenance.facts_total || 0) - (maintenance.pending || 0)"></strong><span>벡터 저장됨</span></div>
                                 </div>
                                 <div x-show="maintenance.latest_error" class="stash-maintenance-error">

@@ -66,6 +66,20 @@ test('the theme view-model exposes a single preference for every screen', () => 
     assert.equal(typeof theme.setThemePreference, 'function');
 });
 
+test('the project monitor shows how many filters are active', () => {
+    const html = fs.readFileSync(require.resolve('./ui/index.html'), 'utf8');
+    assert.match(html, /projectMonitorFilterCount\(\)/);
+    assert.match(html, /class="stash-filter-count"/);
+});
+
+test('embedding maintenance exposes paused retry rows', () => {
+    const html = fs.readFileSync(require.resolve('./ui/index.html'), 'utf8');
+    const state = fs.readFileSync(require.resolve('./ui/state-store.js'), 'utf8');
+    assert.match(html, /maintenance\.paused/);
+    assert.match(html, />일시 중지<\/span>/);
+    assert.match(state, /paused: 0/);
+});
+
 test('the common API module owns HTTP and MCP transport helpers', () => {
     const api = createApiClient();
 

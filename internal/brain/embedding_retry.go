@@ -3,6 +3,7 @@ package brain
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"strings"
 	"time"
 
@@ -12,15 +13,26 @@ import (
 const (
 	embeddingClaimLease     = 5 * time.Minute
 	embeddingErrorRuneLimit = 2000
+	// A row is paused after this many failed provider attempts. The attempt
+	// count includes the claim currently being processed, so this is a hard
+	// cap on provider calls for one queued row until an operator wakes it.
+	embeddingRetryMaxAttempts = 5
+	// Positive jitter keeps retries from arriving in one burst while never
+	// scheduling an attempt earlier than the exponential backoff floor.
+	embeddingRetryJitterDivisor = 5
 )
 
 // EmbeddingRetryResult reports one durable retry pass. Failed rows remain in
-// PostgreSQL with their original content and a later retry time.
+// PostgreSQL with their original content and a later retry time, or with a
+// paused marker after the hard attempt cap is reached.
 type EmbeddingRetryResult struct {
 	Attempted int64 `json:"attempted"`
 	Indexed   int64 `json:"indexed"`
 	Failed    int64 `json:"failed"`
 	Pending   int64 `json:"pending"`
+	// Paused counts rows that reached the hard attempt cap in this pass. They
+	// remain pending until ForceRetryPendingEmbeddings or a reindex wakes them.
+	Paused int64 `json:"paused,omitempty"`
 	// Error contains the first bounded failure in this pass. The per-row
 	// embedding_last_error column remains the detailed durable record; this
 	// summary makes an aggregate warning actionable without a database query.
@@ -39,6 +51,7 @@ type EmbeddingMaintenanceStatus struct {
 	Pending         int64  `json:"pending"`
 	Due             int64  `json:"due"`
 	Failed          int64  `json:"failed"`
+	Paused          int64  `json:"paused,omitempty"`
 	LatestError     string `json:"latest_error,omitempty"`
 }
 
@@ -72,7 +85,7 @@ func (b *Brain) EmbeddingMaintenanceStatus(ctx context.Context) (EmbeddingMainte
 	}
 	status := EmbeddingMaintenanceStatus{Model: b.embedder.Model(), Dimensions: b.embedder.Dims()}
 	for _, table := range []string{"episodes", "facts"} {
-		var total, pending, due, failed int64
+		var total, pending, due, failed, paused int64
 		query := fmt.Sprintf(`
 			SELECT count(*) FILTER (WHERE deleted_at IS NULL),
 			       count(*) FILTER (WHERE embedding IS NULL AND deleted_at IS NULL),
@@ -80,14 +93,19 @@ func (b *Brain) EmbeddingMaintenanceStatus(ctx context.Context) (EmbeddingMainte
 			           WHERE embedding IS NULL AND deleted_at IS NULL
 			             AND (embedding_retry_at IS NULL OR embedding_retry_at <= now())
 			             AND (embedding_lease_until IS NULL OR embedding_lease_until <= now())
+			             AND embedding_attempts < %d
 			       ),
 			       count(*) FILTER (
 			           WHERE embedding IS NULL AND deleted_at IS NULL
 			             AND embedding_attempts > 0 AND embedding_last_error IS NOT NULL
+			       ),
+			       count(*) FILTER (
+			           WHERE embedding IS NULL AND deleted_at IS NULL
+			             AND embedding_attempts >= %d
 			       )
 			FROM %s
-		`, table)
-		if err := b.pool.QueryRow(ctx, query).Scan(&total, &pending, &due, &failed); err != nil {
+		`, embeddingRetryMaxAttempts, embeddingRetryMaxAttempts, table)
+		if err := b.pool.QueryRow(ctx, query).Scan(&total, &pending, &due, &failed, &paused); err != nil {
 			return status, fmt.Errorf("read %s embedding status: %w", table, err)
 		}
 		if table == "episodes" {
@@ -98,6 +116,7 @@ func (b *Brain) EmbeddingMaintenanceStatus(ctx context.Context) (EmbeddingMainte
 		status.Pending += pending
 		status.Due += due
 		status.Failed += failed
+		status.Paused += paused
 	}
 
 	if err := b.pool.QueryRow(ctx, `
@@ -139,11 +158,16 @@ func (b *Brain) ForceRetryPendingEmbeddings(ctx context.Context) (int64, error) 
 	for _, table := range []string{"episodes", "facts"} {
 		result, err := tx.Exec(ctx, fmt.Sprintf(`
 			UPDATE %s
-			SET embedding_retry_at = now(), embedding_updated_at = now()
+			SET embedding_retry_at = now(),
+			    embedding_attempts = CASE
+			        WHEN embedding_attempts >= %d THEN 0
+			        ELSE embedding_attempts
+			    END,
+			    embedding_updated_at = now()
 			WHERE embedding IS NULL
 			  AND deleted_at IS NULL
 			  AND (embedding_lease_until IS NULL OR embedding_lease_until <= now())
-		`, table))
+		`, table, embeddingRetryMaxAttempts))
 		if err != nil {
 			return woken, fmt.Errorf("wake %s embeddings: %w", table, err)
 		}
@@ -274,15 +298,19 @@ func (b *Brain) RetryPendingEmbeddings(ctx context.Context, batchSize int) (Embe
 				if result.Error == "" {
 					result.Error = embeddingErrorText(err)
 				}
-				next := time.Now().UTC().Add(embeddingRetryDelay(
+				next, paused := embeddingRetryNextAt(
+					time.Now().UTC(),
 					b.config.EmbeddingRetryInterval,
 					b.config.EmbeddingRetryMaxInterval,
 					item.Attempts,
-				))
+				)
 				if updateErr := b.recordEmbeddingFailure(ctx, table, item.ID, err, next); updateErr != nil {
 					return result, updateErr
 				}
 				result.Failed++
+				if paused {
+					result.Paused++
+				}
 				continue
 			}
 
@@ -291,15 +319,19 @@ func (b *Brain) RetryPendingEmbeddings(ctx context.Context, batchSize int) (Embe
 				if result.Error == "" {
 					result.Error = embeddingErrorText(err)
 				}
-				next := time.Now().UTC().Add(embeddingRetryDelay(
+				next, paused := embeddingRetryNextAt(
+					time.Now().UTC(),
 					b.config.EmbeddingRetryInterval,
 					b.config.EmbeddingRetryMaxInterval,
 					item.Attempts,
-				))
+				)
 				if updateErr := b.recordEmbeddingFailure(ctx, table, item.ID, err, next); updateErr != nil {
 					return result, fmt.Errorf("%v; %w", err, updateErr)
 				}
 				result.Failed++
+				if paused {
+					result.Paused++
+				}
 				continue
 			}
 			if updated {
@@ -344,6 +376,7 @@ func (b *Brain) claimPendingEmbeddings(ctx context.Context, table string, limit 
 				  AND deleted_at IS NULL
 				  AND (embedding_retry_at IS NULL OR embedding_retry_at <= now())
 				  AND (embedding_lease_until IS NULL OR embedding_lease_until <= now())
+				  AND embedding_attempts < %d
 				ORDER BY COALESCE(embedding_retry_at, created_at), id
 			LIMIT $1
 			FOR UPDATE SKIP LOCKED
@@ -356,7 +389,7 @@ func (b *Brain) claimPendingEmbeddings(ctx context.Context, table string, limit 
 		FROM candidates
 		WHERE target.id = candidates.id
 		RETURNING target.id, target.content, target.embedding_attempts
-	`, table, table)
+	`, table, embeddingRetryMaxAttempts, table)
 
 	rows, err := b.pool.Query(ctx, query, limit, leaseUntil)
 	if err != nil {
@@ -411,7 +444,11 @@ func (b *Brain) recordEmbeddingFailure(ctx context.Context, table string, id int
 			embedding_updated_at = now()
 		WHERE id = $3 AND embedding IS NULL
 	`, table)
-	_, err := b.pool.Exec(ctx, query, embeddingErrorText(cause), retryAt, id)
+	var scheduledRetry any
+	if !retryAt.IsZero() {
+		scheduledRetry = retryAt
+	}
+	_, err := b.pool.Exec(ctx, query, embeddingErrorText(cause), scheduledRetry, id)
 	if err != nil {
 		return fmt.Errorf("record %s embedding failure %d: %w", table, id, err)
 	}
@@ -427,7 +464,9 @@ func embeddingRetryDelay(base, maximum time.Duration, attempts int) time.Duratio
 	}
 	delay := base
 	for i := 1; i < attempts; i++ {
-		if delay >= maximum/2 {
+		// Compare before doubling so a large configured duration or attempt
+		// count cannot overflow time.Duration and produce an immediate retry.
+		if delay >= maximum-delay {
 			return maximum
 		}
 		delay *= 2
@@ -436,6 +475,38 @@ func embeddingRetryDelay(base, maximum time.Duration, attempts int) time.Duratio
 		return maximum
 	}
 	return delay
+}
+
+// embeddingRetryDelayWithJitter adds a bounded positive jitter to the
+// exponential floor. The upper bound is the configured maximum, so jitter
+// cannot make a retry arrive later than the operator's cap (or overflow a
+// time.Duration). A separate helper keeps embeddingRetryDelay deterministic
+// for callers and tests that need the exact exponential floor.
+func embeddingRetryDelayWithJitter(base, maximum time.Duration, attempts int) time.Duration {
+	delay := embeddingRetryDelay(base, maximum, attempts)
+	if delay <= 0 || maximum <= delay {
+		return delay
+	}
+	jitterWindow := delay / embeddingRetryJitterDivisor
+	available := maximum - delay
+	if jitterWindow > available {
+		jitterWindow = available
+	}
+	if jitterWindow <= 0 {
+		return delay
+	}
+	jitter := time.Duration(rand.Int63n(int64(jitterWindow) + 1))
+	return delay + jitter
+}
+
+// embeddingRetryNextAt returns the next durable retry time and whether the
+// row reached the hard attempt cap. A zero time is stored as NULL, which is
+// the durable paused marker; claimPendingEmbeddings excludes capped rows.
+func embeddingRetryNextAt(now time.Time, base, maximum time.Duration, attempts int) (time.Time, bool) {
+	if attempts >= embeddingRetryMaxAttempts {
+		return time.Time{}, true
+	}
+	return now.Add(embeddingRetryDelayWithJitter(base, maximum, attempts)), false
 }
 
 func embeddingErrorText(err error) string {
