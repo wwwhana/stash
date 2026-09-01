@@ -210,7 +210,7 @@ func Init(ctx context.Context, cfg Config) (*Provider, error) {
 			ClientSecret: cfg.ClientSecret,
 			RedirectURL:  cfg.RedirectURL,
 			Endpoint:     provider.Endpoint(),
-			Scopes:       []string{oidc.ScopeOpenID, "profile", "email"},
+			Scopes:       []string{oidc.ScopeOpenID},
 		}
 		verifier = provider.Verifier(&oidc.Config{ClientID: cfg.ClientID})
 	}
@@ -514,10 +514,18 @@ func (p *Provider) completeOIDCLogin(r *http.Request, providedState string, w ht
 
 	idToken, err := p.verifyIdentityToken(r.Context(), rawIDToken)
 	if err != nil {
-		// Keep the browser response generic, but retain the verifier reason in
-		// server logs so provider configuration failures are diagnosable without
-		// exposing the token.
-		log.Printf("OIDC identity token verification failed: %v", err)
+		// Some OAuth providers expose an opaque access token and publish no
+		// usable JWKS for their ID token. The authorization-code exchange has
+		// already authenticated the confidential client, so an active token
+		// introspection result bound to that same client is a safe OAuth
+		// compatibility fallback. Keep the verifier error in the log so the
+		// provider can still be configured for normal OIDC validation later.
+		if subject, expiresAt, introspectionErr := p.introspectLoginAccessToken(r.Context(), token.AccessToken); introspectionErr == nil {
+			log.Printf("OIDC identity token verification failed; accepted introspected access token: %v", err)
+			return subject, expiresAt, nil
+		} else {
+			log.Printf("OIDC identity token verification failed: %v (access-token introspection fallback failed: %v)", err, introspectionErr)
+		}
 		return "", time.Time{}, &authHTTPError{http.StatusUnauthorized, "identity token is invalid"}
 	}
 	if idToken.Nonce == "" || len(idToken.Nonce) != len(nonceCookie.Value) || subtle.ConstantTimeCompare([]byte(idToken.Nonce), []byte(nonceCookie.Value)) != 1 {
@@ -541,15 +549,75 @@ func (p *Provider) completeOIDCLogin(r *http.Request, providedState string, w ht
 // is deliberately separate so an asymmetric token can never be verified with
 // the client secret.
 func (p *Provider) verifyIdentityToken(ctx context.Context, raw string) (*oidc.IDToken, error) {
+	var hmacErr error
 	if p.hmacVerifier != nil {
 		if token, err := p.hmacVerifier.Verify(ctx, raw); err == nil {
 			return token, nil
+		} else {
+			hmacErr = err
 		}
 	}
 	if p.verifier == nil {
+		if hmacErr != nil {
+			return nil, fmt.Errorf("HMAC identity-token verification failed: %w", hmacErr)
+		}
 		return nil, errors.New("OIDC identity-token verifier is unavailable")
 	}
-	return p.verifier.Verify(ctx, raw)
+	token, err := p.verifier.Verify(ctx, raw)
+	if err != nil && hmacErr != nil {
+		return nil, fmt.Errorf("HMAC identity-token verification failed: %v; standard verification failed: %w", hmacErr, err)
+	}
+	return token, err
+}
+
+// introspectLoginAccessToken is the OAuth compatibility path used only after
+// ID-token verification fails. It accepts a token that the upstream provider
+// reports as active and whose audience is the configured browser client. A
+// resource-server audience is deliberately not enough here: that token must
+// be issued for this login client, not merely for Stash's MCP endpoint.
+func (p *Provider) introspectLoginAccessToken(ctx context.Context, rawToken string) (string, time.Time, error) {
+	if p == nil || p.introspectionEndpoint == "" || strings.TrimSpace(p.config.ClientID) == "" || p.config.ClientSecret == "" {
+		return "", time.Time{}, errors.New("OIDC login introspection is not configured")
+	}
+	rawToken = strings.TrimSpace(rawToken)
+	if rawToken == "" {
+		return "", time.Time{}, errors.New("access token is missing")
+	}
+	form := url.Values{"token": {rawToken}, "token_type_hint": {"access_token"}}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, p.introspectionEndpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.SetBasicAuth(p.config.ClientID, p.config.ClientSecret)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return "", time.Time{}, fmt.Errorf("introspection returned HTTP %d", response.StatusCode)
+	}
+	var result struct {
+		Active bool            `json:"active"`
+		Sub    string          `json:"sub"`
+		Exp    int64           `json:"exp"`
+		Aud    json.RawMessage `json:"aud"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 256<<10)).Decode(&result); err != nil {
+		return "", time.Time{}, err
+	}
+	if !result.Active || strings.TrimSpace(result.Sub) == "" || result.Exp <= time.Now().Unix() {
+		return "", time.Time{}, errors.New("inactive OIDC login access token")
+	}
+	audience, err := decodeAudience(result.Aud)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	if !audienceContains(audience, strings.TrimSpace(p.config.ClientID)) {
+		return "", time.Time{}, errors.New("OIDC login access token has unexpected audience")
+	}
+	return result.Sub, time.Unix(result.Exp, 0), nil
 }
 
 func loginStateMatches(r *http.Request, providedState string) bool {
@@ -655,20 +723,12 @@ func (p *Provider) resourceAllowed(resource string, r *http.Request) bool {
 	return resource == wanted
 }
 
-func normalizeScope(raw string) string {
-	if strings.TrimSpace(raw) == "" {
-		return "openid profile email"
-	}
-	seen := make(map[string]struct{})
-	var scopes []string
-	for _, scope := range strings.Fields(raw) {
-		if _, ok := seen[scope]; ok {
-			continue
-		}
-		seen[scope] = struct{}{}
-		scopes = append(scopes, scope)
-	}
-	return strings.Join(scopes, " ")
+func normalizeScope(_ string) string {
+	// Stash only needs the stable subject from an ID token. Keep the upstream
+	// request to the one scope this broker advertises, even when a client has
+	// cached an older metadata response or asks for optional profile fields.
+	// This also makes the client's no-scope retry genuinely scope-minimal.
+	return oidc.ScopeOpenID
 }
 
 func mergeQuery(existing string, values url.Values) string {
@@ -789,7 +849,7 @@ func (p *Provider) HandleAuthorizationServerMetadata(w http.ResponseWriter, r *h
 		"authorization_endpoint":                issuer + "/authorize",
 		"token_endpoint":                        issuer + "/oauth/token",
 		"registration_endpoint":                 issuer + "/oauth/register",
-		"scopes_supported":                      []string{"openid", "profile", "email"},
+		"scopes_supported":                      []string{oidc.ScopeOpenID},
 		"response_types_supported":              []string{"code"},
 		"grant_types_supported":                 []string{"authorization_code", "refresh_token"},
 		"code_challenge_methods_supported":      []string{"S256"},
@@ -816,7 +876,7 @@ func (p *Provider) HandleProtectedResourceMetadata(w http.ResponseWriter, r *htt
 	response := map[string]any{
 		"resource":              p.resourceURLForMetadata(r),
 		"authorization_servers": []string{p.authorizationServerURL(r)},
-		"scopes_supported":      []string{"openid", "profile", "email"},
+		"scopes_supported":      []string{oidc.ScopeOpenID},
 		"resource_name":         "Stash Memory MCP",
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -1040,11 +1100,22 @@ func (p *Provider) accessTokenAudienceAllowed(audience []string) bool {
 	if resourceURL := strings.TrimRight(strings.TrimSpace(p.config.MCPResourceURL), "/"); resourceURL != "" {
 		expected = append(expected, resourceURL)
 	}
+	for _, wanted := range expected {
+		if audienceContains(audience, wanted) {
+			return true
+		}
+	}
+	return false
+}
+
+func audienceContains(audience []string, wanted string) bool {
+	wanted = strings.TrimSpace(wanted)
+	if wanted == "" {
+		return false
+	}
 	for _, actual := range audience {
-		for _, wanted := range expected {
-			if actual == wanted || strings.TrimRight(actual, "/") == wanted {
-				return true
-			}
+		if actual == wanted || strings.TrimRight(actual, "/") == wanted {
+			return true
 		}
 	}
 	return false

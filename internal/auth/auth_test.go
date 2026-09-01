@@ -193,6 +193,99 @@ func TestHMACOIDCVerifierAcceptsAuthentikStyleIDToken(t *testing.T) {
 	}
 }
 
+func TestLoginAccessTokenIntrospectionRequiresBrowserAudience(t *testing.T) {
+	expires := time.Now().Add(time.Hour).Unix()
+	audience := []string{"browser-client"}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if user, secret, ok := r.BasicAuth(); !ok || user != "browser-client" || secret != "client-secret" {
+			http.Error(w, "invalid credentials", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"active": true,
+			"sub":    "subject-1",
+			"exp":    expires,
+			"aud":    audience,
+		})
+	}))
+	defer server.Close()
+
+	p := &Provider{
+		config:                Config{ClientID: "browser-client", ClientSecret: "client-secret"},
+		introspectionEndpoint: server.URL,
+	}
+	subject, gotExpiry, err := p.introspectLoginAccessToken(context.Background(), "access-token")
+	if err != nil {
+		t.Fatalf("introspect login token: %v", err)
+	}
+	if subject != "subject-1" || gotExpiry.Unix() != expires {
+		t.Fatalf("introspected identity = (%q, %v), want subject and expiry", subject, gotExpiry)
+	}
+
+	audience = []string{"mcp-client"}
+	if _, _, err := p.introspectLoginAccessToken(context.Background(), "access-token"); err == nil || !strings.Contains(err.Error(), "unexpected audience") {
+		t.Fatalf("unexpected audience result = %v", err)
+	}
+}
+
+func TestCompleteOIDCLoginFallsBackToIntrospection(t *testing.T) {
+	expires := time.Now().Add(time.Hour).Unix()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/token":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token": "access-token",
+				"token_type":   "Bearer",
+				"expires_in":   3600,
+				"id_token":     "not-a-valid-id-token",
+			})
+		case "/introspect":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"active": true,
+				"sub":    "subject-1",
+				"exp":    expires,
+				"aud":    []string{"browser-client"},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	verifier := newHMACVerifier("https://auth.example.com/", "browser-client", "wrong-secret", false)
+	p := &Provider{
+		config: Config{
+			ClientID:     "browser-client",
+			ClientSecret: "client-secret",
+			RedirectURL:  "https://stash.example.com/auth/callback",
+		},
+		oauth2Config: oauth2.Config{
+			ClientID:     "browser-client",
+			ClientSecret: "client-secret",
+			RedirectURL:  "https://stash.example.com/auth/callback",
+			Endpoint: oauth2.Endpoint{
+				TokenURL: server.URL + "/token",
+			},
+		},
+		verifier:              verifier,
+		hmacVerifier:          verifier,
+		introspectionEndpoint: server.URL + "/introspect",
+	}
+	req := httptest.NewRequest(http.MethodGet, "https://stash.example.com/auth/callback?state=internal-state&code=auth-code", nil)
+	req.AddCookie(&http.Cookie{Name: stateCookieName, Value: "internal-state"})
+	req.AddCookie(&http.Cookie{Name: nonceCookieName, Value: "nonce"})
+	rec := httptest.NewRecorder()
+	subject, gotExpiry, authErr := p.completeOIDCLogin(req, "internal-state", rec)
+	if authErr != nil {
+		t.Fatalf("complete login error = %v", authErr)
+	}
+	if subject != "subject-1" || gotExpiry.Unix() != expires {
+		t.Fatalf("completed identity = (%q, %v), want subject and expiry", subject, gotExpiry)
+	}
+}
+
 func TestOAuthAuthorizationServerMetadata(t *testing.T) {
 	p := newLocalOAuthProvider()
 	req := httptest.NewRequest(http.MethodGet, "https://stash.example.com/.well-known/oauth-authorization-server", nil)
@@ -202,12 +295,13 @@ func TestOAuthAuthorizationServerMetadata(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
 	var body struct {
-		Issuer        string   `json:"issuer"`
-		Authorization string   `json:"authorization_endpoint"`
-		Token         string   `json:"token_endpoint"`
-		Registration  string   `json:"registration_endpoint"`
-		PKCEMethods   []string `json:"code_challenge_methods_supported"`
-		GrantTypes    []string `json:"grant_types_supported"`
+		Issuer          string   `json:"issuer"`
+		Authorization   string   `json:"authorization_endpoint"`
+		Token           string   `json:"token_endpoint"`
+		Registration    string   `json:"registration_endpoint"`
+		ScopesSupported []string `json:"scopes_supported"`
+		PKCEMethods     []string `json:"code_challenge_methods_supported"`
+		GrantTypes      []string `json:"grant_types_supported"`
 	}
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 		t.Fatalf("decode metadata: %v", err)
@@ -217,6 +311,9 @@ func TestOAuthAuthorizationServerMetadata(t *testing.T) {
 	}
 	if len(body.PKCEMethods) != 1 || body.PKCEMethods[0] != "S256" || len(body.GrantTypes) != 2 {
 		t.Fatalf("metadata OAuth capabilities = %#v", body)
+	}
+	if len(body.ScopesSupported) != 1 || body.ScopesSupported[0] != oidc.ScopeOpenID {
+		t.Fatalf("metadata scopes = %#v, want only %q", body.ScopesSupported, oidc.ScopeOpenID)
 	}
 }
 
@@ -248,6 +345,67 @@ func TestOAuthAuthorizeStartsPKCEBrokerFlow(t *testing.T) {
 	}
 	if len(p.pending) != 1 {
 		t.Fatalf("pending authorization requests = %d, want 1", len(p.pending))
+	}
+}
+
+func TestOAuthAuthorizeWithoutScopeUsesOnlyOpenID(t *testing.T) {
+	p := newLocalOAuthProvider()
+	p.oauth2Config.Endpoint.AuthURL = "https://auth.example.com/application/o/authorize/"
+	verifier := "pkce-verifier"
+	sum := sha256.Sum256([]byte(verifier))
+	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
+	query := url.Values{
+		"response_type":         {"code"},
+		"client_id":             {"codex"},
+		"redirect_uri":          {"http://127.0.0.1:43123/callback"},
+		"state":                 {"client-state"},
+		"code_challenge":        {challenge},
+		"code_challenge_method": {"S256"},
+		"resource":              {"https://stash.example.com/mcp"},
+	}
+	req := httptest.NewRequest(http.MethodGet, "https://stash.example.com/authorize?"+query.Encode(), nil)
+	rec := httptest.NewRecorder()
+	p.HandleAuthorize(rec, req)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("authorize status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	location, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("parse upstream authorization location: %v", err)
+	}
+	if got := location.Query().Get("scope"); got != oidc.ScopeOpenID {
+		t.Fatalf("upstream scope = %q, want %q", got, oidc.ScopeOpenID)
+	}
+}
+
+func TestOAuthAuthorizeDropsUnsupportedCachedScopes(t *testing.T) {
+	p := newLocalOAuthProvider()
+	p.oauth2Config.Endpoint.AuthURL = "https://auth.example.com/application/o/authorize/"
+	verifier := "pkce-verifier"
+	sum := sha256.Sum256([]byte(verifier))
+	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
+	query := url.Values{
+		"response_type":         {"code"},
+		"client_id":             {"codex"},
+		"redirect_uri":          {"http://127.0.0.1:43123/callback"},
+		"state":                 {"client-state"},
+		"code_challenge":        {challenge},
+		"code_challenge_method": {"S256"},
+		"resource":              {"https://stash.example.com/mcp"},
+		"scope":                 {"openid profile email"},
+	}
+	req := httptest.NewRequest(http.MethodGet, "https://stash.example.com/authorize?"+query.Encode(), nil)
+	rec := httptest.NewRecorder()
+	p.HandleAuthorize(rec, req)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("authorize status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	location, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("parse upstream authorization location: %v", err)
+	}
+	if got := location.Query().Get("scope"); got != oidc.ScopeOpenID {
+		t.Fatalf("upstream scope = %q, want %q", got, oidc.ScopeOpenID)
 	}
 }
 
@@ -471,8 +629,8 @@ func TestProtectedResourceMetadataUsesEndpointPath(t *testing.T) {
 	if len(body.AuthorizationServers) != 1 || body.AuthorizationServers[0] != "https://auth.example.com/application/o/stash-codex/" {
 		t.Fatalf("authorization servers = %#v", body.AuthorizationServers)
 	}
-	if len(body.ScopesSupported) == 0 || body.ScopesSupported[0] != "openid" {
-		t.Fatalf("scopes = %#v", body.ScopesSupported)
+	if len(body.ScopesSupported) != 1 || body.ScopesSupported[0] != oidc.ScopeOpenID {
+		t.Fatalf("scopes = %#v, want only %q", body.ScopesSupported, oidc.ScopeOpenID)
 	}
 }
 
