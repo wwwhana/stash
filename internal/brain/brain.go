@@ -19,14 +19,15 @@ import (
 )
 
 var (
-	ErrNamespaceNotFound = fmt.Errorf("brain: namespace not found — call create_namespace first")
-	ErrEpisodeNotFound   = fmt.Errorf("brain: episode not found")
-	ErrFactNotFound      = fmt.Errorf("brain: fact not found")
-	ErrEmptyContent      = fmt.Errorf("brain: content cannot be empty")
-	ErrContentTooLong    = fmt.Errorf("brain: content exceeds maximum length")
-	ErrInvalidConfidence = fmt.Errorf("brain: confidence must be between 0 and 1")
-	ErrInvalidScore      = fmt.Errorf("brain: score must be between 0 and 1")
-	ErrInvalidPath       = fmt.Errorf("brain: namespace path must start with / and contain valid segments (lowercase alphanumeric, hyphens, underscores)")
+	ErrNamespaceNotFound         = fmt.Errorf("brain: namespace not found — call create_namespace first")
+	ErrCannotDeleteRootNamespace = fmt.Errorf("brain: the root namespace cannot be deleted")
+	ErrEpisodeNotFound           = fmt.Errorf("brain: episode not found")
+	ErrFactNotFound              = fmt.Errorf("brain: fact not found")
+	ErrEmptyContent              = fmt.Errorf("brain: content cannot be empty")
+	ErrContentTooLong            = fmt.Errorf("brain: content exceeds maximum length")
+	ErrInvalidConfidence         = fmt.Errorf("brain: confidence must be between 0 and 1")
+	ErrInvalidScore              = fmt.Errorf("brain: score must be between 0 and 1")
+	ErrInvalidPath               = fmt.Errorf("brain: namespace path must start with / and contain valid segments (lowercase alphanumeric, hyphens, underscores)")
 
 	pathSegmentRe         = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 	ErrNamespacesRequired = fmt.Errorf("brain: at least one namespace is required")
@@ -236,7 +237,7 @@ func likePatternForDescendants(path string) string {
 func (b *Brain) resolveNamespaceID(ctx context.Context, path string) (int64, error) {
 	var id int64
 	err := b.pool.QueryRow(ctx,
-		"SELECT id FROM namespaces WHERE slug = $1", path,
+		"SELECT id FROM namespaces WHERE slug = $1 AND deleted_at IS NULL", path,
 	).Scan(&id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -287,7 +288,7 @@ func (b *Brain) resolveNamespaceIDs(ctx context.Context, paths []string) ([]int6
 // For "/", returns all namespace IDs.
 func (b *Brain) resolveNamespaceIDWithDescendants(ctx context.Context, path string) ([]int64, error) {
 	if path == "/" {
-		rows, err := b.pool.Query(ctx, "SELECT id FROM namespaces")
+		rows, err := b.pool.Query(ctx, "SELECT id FROM namespaces WHERE deleted_at IS NULL")
 		if err != nil {
 			return nil, fmt.Errorf("resolve all namespaces: %w", err)
 		}
@@ -311,7 +312,7 @@ func (b *Brain) resolveNamespaceIDWithDescendants(ctx context.Context, path stri
 	// in PostgreSQL. Escape it so `/foo_bar` only matches its own descendants,
 	// not `/fooXbar/...` for any X.
 	rows, err := b.pool.Query(ctx,
-		`SELECT id FROM namespaces WHERE slug = $1 OR slug LIKE $2 ESCAPE '\'`,
+		`SELECT id FROM namespaces WHERE deleted_at IS NULL AND (slug = $1 OR slug LIKE $2 ESCAPE '\')`,
 		path, likePatternForDescendants(path),
 	)
 	if err != nil {

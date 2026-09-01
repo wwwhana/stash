@@ -468,6 +468,31 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		}}}, nil
 	})
 
+	mcpServer.AddTool(mcp.NewTool("delete_namespace",
+		mcp.WithDescription(render("delete_namespace_description")),
+		mcp.WithString("slug", mcp.Description(render("delete_namespace_slug")), mcp.Required()),
+	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		raw := request.GetString("slug", "")
+		if strings.Trim(strings.TrimSpace(raw), "/") == "" {
+			return nil, brain.ErrCannotDeleteRootNamespace
+		}
+		slug, err := resolveSingleNamespace(ctx, raw)
+		if err != nil {
+			return nil, err
+		}
+		if err := bc.Brain.DeleteNamespace(ctx, slug); err != nil {
+			return nil, err
+		}
+		displaySlug, ok := logicalNamespaceSlug(ctx, slug)
+		if !ok {
+			return nil, fmt.Errorf("unauthorized: verified identity is required")
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{
+			Type: "text",
+			Text: fmt.Sprintf("{\"ok\": true, \"slug\": \"%s\"}", displaySlug),
+		}}}, nil
+	})
+
 	mcpServer.AddTool(mcp.NewTool("query_facts",
 		mcp.WithDescription(render("query_facts_description")),
 		mcp.WithString("namespaces", mcp.Description(render("namespaces_param"))),

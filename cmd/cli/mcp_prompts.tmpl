@@ -32,6 +32,13 @@ Short human-readable namespace name.
 Specific description that helps future agents choose this namespace.
 {{end}}
 
+{{define "delete_namespace_description"}}
+Soft-delete a namespace and all descendants. Data is kept; reusing the path creates a new namespace.
+{{end}}
+{{define "delete_namespace_slug"}}
+Exact namespace path to hide. The root path cannot be deleted.
+{{end}}
+
 {{define "remember_description"}}
 Store one durable raw observation. If indexed=false, it is saved and automatic indexing is pending; do not resend it.
 {{end}}

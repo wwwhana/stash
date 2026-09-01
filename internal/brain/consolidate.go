@@ -71,7 +71,7 @@ func (b *Brain) ConsolidateByID(ctx context.Context, nsID int64) (ConsolidationR
 	}
 
 	var namespaceSlug string
-	if err := b.pool.QueryRow(ctx, "SELECT slug FROM namespaces WHERE id = $1", nsID).Scan(&namespaceSlug); err != nil {
+	if err := b.pool.QueryRow(ctx, "SELECT slug FROM namespaces WHERE id = $1 AND deleted_at IS NULL", nsID).Scan(&namespaceSlug); err != nil {
 		if err == pgx.ErrNoRows {
 			return ConsolidationResult{}, ErrNamespaceNotFound
 		}

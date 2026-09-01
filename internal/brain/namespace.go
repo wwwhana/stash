@@ -26,7 +26,7 @@ func (b *Brain) CreateNamespace(ctx context.Context, slug, name, description str
 	if len(segments) == 0 {
 		var id int64
 		err := tx.QueryRow(ctx,
-			"INSERT INTO namespaces (slug, name) VALUES ('/', '/') ON CONFLICT (slug) DO UPDATE SET updated_at = now() RETURNING id",
+			"INSERT INTO namespaces (slug, name) VALUES ('/', '/') ON CONFLICT (slug) WHERE deleted_at IS NULL DO UPDATE SET updated_at = now() RETURNING id",
 		).Scan(&id)
 		if err != nil {
 			return 0, fmt.Errorf("create root namespace: %w", err)
@@ -43,7 +43,7 @@ func (b *Brain) CreateNamespace(ctx context.Context, slug, name, description str
 		if i < len(segments)-1 {
 			var id int64
 			if err := tx.QueryRow(ctx,
-				"INSERT INTO namespaces (slug, name) VALUES ($1, $1) ON CONFLICT (slug) DO UPDATE SET updated_at = now() RETURNING id",
+				"INSERT INTO namespaces (slug, name) VALUES ($1, $1) ON CONFLICT (slug) WHERE deleted_at IS NULL DO UPDATE SET updated_at = now() RETURNING id",
 				currentPath,
 			).Scan(&id); err != nil {
 				return 0, fmt.Errorf("create parent namespace %s: %w", currentPath, err)
@@ -53,7 +53,7 @@ func (b *Brain) CreateNamespace(ctx context.Context, slug, name, description str
 
 	var id int64
 	err = tx.QueryRow(ctx,
-		"INSERT INTO namespaces (slug, name, description) VALUES ($1, $2, $3) ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description, updated_at = now() RETURNING id",
+		"INSERT INTO namespaces (slug, name, description) VALUES ($1, $2, $3) ON CONFLICT (slug) WHERE deleted_at IS NULL DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description, updated_at = now() RETURNING id",
 		slug, name, description,
 	).Scan(&id)
 	if err != nil {
@@ -65,11 +65,49 @@ func (b *Brain) CreateNamespace(ctx context.Context, slug, name, description str
 	return id, nil
 }
 
+// DeleteNamespace hides a namespace and all of its descendants without removing their data.
+func (b *Brain) DeleteNamespace(ctx context.Context, slug string) error {
+	if err := validatePath(slug); err != nil {
+		return err
+	}
+	if slug == "" || slug == "/" {
+		return ErrCannotDeleteRootNamespace
+	}
+
+	tx, err := b.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin delete namespace: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	tag, err := tx.Exec(ctx,
+		`UPDATE namespaces
+		 SET deleted_at = now(), updated_at = now()
+		 WHERE deleted_at IS NULL
+		   AND (slug = $1 OR slug LIKE $2 ESCAPE '\')
+		   AND EXISTS (
+			 SELECT 1 FROM namespaces target
+			 WHERE target.slug = $1 AND target.deleted_at IS NULL
+		   )`,
+		slug, likePatternForDescendants(slug),
+	)
+	if err != nil {
+		return fmt.Errorf("delete namespace: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNamespaceNotFound
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit delete namespace: %w", err)
+	}
+	return nil
+}
+
 // GetNamespace returns a namespace by slug.
 func (b *Brain) GetNamespace(ctx context.Context, slug string) (*models.Namespace, error) {
 	var ns models.Namespace
 	err := b.pool.QueryRow(ctx,
-		"SELECT id, slug, name, description, created_at, updated_at FROM namespaces WHERE slug = $1",
+		"SELECT id, slug, name, description, created_at, updated_at FROM namespaces WHERE slug = $1 AND deleted_at IS NULL",
 		slug,
 	).Scan(&ns.ID, &ns.Slug, &ns.Name, &ns.Description, &ns.CreatedAt, &ns.UpdatedAt)
 	if err != nil {
@@ -89,7 +127,7 @@ func (b *Brain) ListNamespaces(ctx context.Context, slugs []string, page Paginat
 
 	if len(slugs) == 0 {
 		rows, err := b.pool.Query(ctx,
-			"SELECT id, slug, name, description, created_at, updated_at FROM namespaces ORDER BY slug LIMIT $1 OFFSET $2",
+			"SELECT id, slug, name, description, created_at, updated_at FROM namespaces WHERE deleted_at IS NULL ORDER BY slug LIMIT $1 OFFSET $2",
 			page.Limit, page.Offset,
 		)
 		if err != nil {
@@ -114,7 +152,7 @@ func (b *Brain) ListNamespaces(ctx context.Context, slugs []string, page Paginat
 	}
 
 	rows, err := b.pool.Query(ctx,
-		"SELECT id, slug, name, description, created_at, updated_at FROM namespaces WHERE id = ANY($1) ORDER BY slug LIMIT $2 OFFSET $3",
+		"SELECT id, slug, name, description, created_at, updated_at FROM namespaces WHERE deleted_at IS NULL AND id = ANY($1) ORDER BY slug LIMIT $2 OFFSET $3",
 		ids, page.Limit, page.Offset,
 	)
 	if err != nil {

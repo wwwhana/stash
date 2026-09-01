@@ -458,7 +458,7 @@ func upsertWorkspaceWorktreeTx(ctx context.Context, tx pgx.Tx, repository *model
 func workspaceResolutionTx(ctx context.Context, tx pgx.Tx, repository *models.WorkspaceRepository, worktree *models.Worktree) (*models.WorkspaceResolution, error) {
 	var namespace models.Namespace
 	if err := tx.QueryRow(ctx,
-		`SELECT id, slug, name, description, created_at, updated_at FROM namespaces WHERE id = $1`,
+		`SELECT id, slug, name, description, created_at, updated_at FROM namespaces WHERE id = $1 AND deleted_at IS NULL`,
 		repository.NamespaceID,
 	).Scan(&namespace.ID, &namespace.Slug, &namespace.Name, &namespace.Description, &namespace.CreatedAt, &namespace.UpdatedAt); err != nil {
 		return nil, fmt.Errorf("read workspace namespace: %w", err)
