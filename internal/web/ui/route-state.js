@@ -34,6 +34,7 @@
         maintenance: '임베딩 관리'
     });
     const pathRoutes = new Map(Object.entries(routePaths).map(([route, path]) => [path, route]));
+    const compatibilityPaths = new Set(['/ui/monitor-vue', '/ui/monitor-alpine']);
     const kinds = ['goal', 'work', 'memory', 'resource'];
     const relations = ['part_of', 'blocks', 'relates_to'];
 
@@ -55,12 +56,12 @@
     function readRoute(value) {
         const url = value instanceof URL ? value : new URL(String(value || '/'), 'http://stash.local');
         const path = normalizedPath(url.pathname);
-        const route = pathRoutes.get(path) || 'goal-map';
+        const route = pathRoutes.get(path) || (compatibilityPaths.has(path) ? 'monitor' : 'goal-map');
         const hidden = new Set(text(url.searchParams.get('hide')).split(',').map(item => item.trim()).filter(item => kinds.includes(item)));
         const hiddenRelations = new Set(text(url.searchParams.get('hide_relation')).split(',').map(item => item.trim()).filter(item => relations.includes(item)));
         return {
             route,
-            matched: path === '/' || pathRoutes.has(path),
+            matched: path === '/' || pathRoutes.has(path) || compatibilityPaths.has(path),
             namespace: text(url.searchParams.get('namespace')),
             project: text(url.searchParams.get('project')),
             query: text(url.searchParams.get('q')),
@@ -70,6 +71,7 @@
             kinds: Object.fromEntries(kinds.map(kind => [kind, !hidden.has(kind)])),
             relations: Object.fromEntries(relations.map(relation => [relation, !hiddenRelations.has(relation)])),
             focus: text(url.searchParams.get('focus')),
+            detail: text(url.searchParams.get('detail')) === '1',
             issueType: text(url.searchParams.get('type')),
             label: text(url.searchParams.get('label')),
             offset: positiveInteger(url.searchParams.get('offset')),
@@ -82,6 +84,11 @@
         if (normalized) params.set(key, normalized);
     }
 
+    function setNamespace(params, value) {
+        const normalized = text(value);
+        if (normalized && normalized !== '/') params.set('namespace', normalized);
+    }
+
     function setOffset(params, value) {
         const offset = positiveInteger(value);
         if (offset) params.set('offset', String(offset));
@@ -92,44 +99,55 @@
         const value = state && typeof state === 'object' ? state : {};
         const params = new URLSearchParams();
         if (selected === 'goal-map') {
-            setText(params, 'namespace', value.namespace);
+            setNamespace(params, value.namespace);
             setText(params, 'q', value.query);
             setText(params, 'status', value.status);
             setText(params, 'agent', value.agent);
             setText(params, 'memory', value.memoryType);
             const hidden = kinds.filter(kind => value.kinds && value.kinds[kind] === false);
             if (hidden.length) params.set('hide', hidden.join(','));
+            setText(params, 'focus', value.focus);
+            if (value.detail) params.set('detail', '1');
         } else if (selected === 'graph') {
             setText(params, 'project', value.project);
-            setText(params, 'namespace', value.namespace);
+            setNamespace(params, value.namespace);
             setText(params, 'q', value.query);
             setText(params, 'status', value.status);
             setText(params, 'agent', value.agent);
             const hidden = relations.filter(relation => value.relations && value.relations[relation] === false);
             if (hidden.length) params.set('hide_relation', hidden.join(','));
             setText(params, 'focus', value.focus);
+            if (value.detail) params.set('detail', '1');
         } else if (selected === 'plan') {
             setText(params, 'project', value.project);
+            if (!value.project) setNamespace(params, value.namespace);
+            setText(params, 'focus', value.focus);
+            if (value.detail) params.set('detail', '1');
         } else if (selected === 'monitor') {
             setText(params, 'project', value.project);
             setText(params, 'q', value.query);
             setText(params, 'status', value.status);
             setText(params, 'agent', value.agent);
             setText(params, 'focus', value.focus);
+            if (value.detail) params.set('detail', '1');
         } else if (selected === 'board') {
             setText(params, 'project', value.project);
-            setText(params, 'namespace', value.namespace);
+            setNamespace(params, value.namespace);
             setText(params, 'q', value.query);
             setText(params, 'type', value.issueType);
             setText(params, 'label', value.label);
             setOffset(params, value.offset);
+            setText(params, 'focus', value.focus);
+            if (value.detail) params.set('detail', '1');
         } else if (selected === 'worktrees') {
             setOffset(params, value.offset);
         } else if (['query_facts', 'list_hypotheses', 'list_goals'].includes(selected)) {
-            setText(params, 'namespace', value.namespace);
+            setNamespace(params, value.namespace);
             setText(params, 'q', value.query);
             setText(params, 'status', value.status);
             setOffset(params, value.offset);
+            setText(params, 'focus', value.focus);
+            if (value.detail) params.set('detail', '1');
         } else if (selected === 'list_namespaces') {
             setOffset(params, value.offset);
         }

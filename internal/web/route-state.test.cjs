@@ -25,7 +25,7 @@ test('work graph address restores namespace and filters', () => {
         route: 'graph', matched: true, namespace: '/projects/agent-atlas-demo/ingest', project: '/projects/agent-atlas-demo',
         query: 'Confluence', status: 'doing', agent: 'codex', memoryType: '',
         kinds: { goal: true, work: true, memory: true, resource: true },
-        relations: { part_of: true, blocks: false, relates_to: false }, focus: '42',
+        relations: { part_of: true, blocks: false, relates_to: false }, focus: '42', detail: false,
         issueType: '', label: '', offset: 0, issueID: 0
     });
 });
@@ -45,6 +45,7 @@ test('goal map address restores hidden node kinds', () => {
 
 test('project plan and issue drawer keep only their own query state', () => {
     assert.equal(buildRoute('plan', { project: '/projects/demo', namespace: '/self', query: 'ignored' }), '/ui/plan?project=%2Fprojects%2Fdemo');
+    assert.equal(buildRoute('plan', { namespace: '/self', query: 'ignored' }), '/ui/plan?namespace=%2Fself');
     assert.equal(buildRoute('board', { project: '/projects/demo', namespace: '/projects/demo/api', query: '로그인', issueType: 'bug', label: 'urgent', offset: 50, issueID: 17 }), '/ui/issues?project=%2Fprojects%2Fdemo&namespace=%2Fprojects%2Fdemo%2Fapi&q=%EB%A1%9C%EA%B7%B8%EC%9D%B8&type=bug&label=urgent&offset=50&issue=17');
     assert.equal(buildRoute('graph', { namespace: '/projects/demo', issueID: 17 }), '/ui/work-graph?namespace=%2Fprojects%2Fdemo&issue=17');
 });

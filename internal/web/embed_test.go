@@ -16,8 +16,8 @@ func TestUIPageRoutesServeTheWorkspace(t *testing.T) {
 			if response.Code != http.StatusOK {
 				t.Fatalf("GET %s status = %d, want %d", path, response.Code, http.StatusOK)
 			}
-			if !strings.Contains(response.Body.String(), `x-data="stashConsole()"`) {
-				t.Fatalf("GET %s did not serve the workspace", path)
+			if !strings.Contains(response.Body.String(), `data-stash-vue-console`) {
+				t.Fatalf("GET %s did not serve the Vue workspace", path)
 			}
 		})
 	}
@@ -31,13 +31,13 @@ func TestVueMonitorRouteServesItsOwnEntryPoint(t *testing.T) {
 			t.Fatalf("GET %s status = %d, want %d", path, response.Code, http.StatusOK)
 		}
 		body := response.Body.String()
-		for _, marker := range []string{"data-stash-vue-monitor", "/vue-monitor.css", "/vue-monitor.js"} {
+		for _, marker := range []string{"data-stash-vue-console", "/vue-console.css", "/vue-monitor.js", "/vue-console.js"} {
 			if !strings.Contains(body, marker) {
 				t.Fatalf("Vue monitor entry point %s is missing %q", path, marker)
 			}
 		}
 		if strings.Contains(body, `x-data="stashConsole()"`) {
-			t.Fatalf("Vue monitor route %s unexpectedly served the Alpine workspace", path)
+			t.Fatalf("Vue route %s unexpectedly served the Alpine workspace", path)
 		}
 	}
 }
@@ -66,6 +66,8 @@ func TestUIAssetsAndUnknownPathsKeepFileServerBehavior(t *testing.T) {
 		"/issue-execution-view-model.js":  "StashIssueExecutionViewModel",
 		"/console-app.js":                 "StashConsoleApp",
 		"/vue-monitor.js":                 "stash-vue-monitor",
+		"/vue-console.js":                 "data-stash-vue-console",
+		"/vue-console.css":                "--app-bg",
 		"/vue-monitor.css":                "--vue-bg",
 	}
 	for path, marker := range assets {

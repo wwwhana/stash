@@ -13,22 +13,22 @@ import (
 var uiFS embed.FS
 
 var uiPageFiles = map[string]string{
-	"/":                  "index.html",
-	"/index.html":        "index.html",
-	"/ui/goal-map":       "index.html",
-	"/ui/plan":           "index.html",
-	"/ui/monitor":        "vue-monitor.html",
-	"/ui/monitor-vue":    "vue-monitor.html",
-	"/ui/monitor-alpine": "index.html",
-	"/ui/issues":         "index.html",
-	"/ui/work-graph":     "index.html",
-	"/ui/git":            "index.html",
-	"/ui/namespaces":     "index.html",
-	"/ui/facts":          "index.html",
-	"/ui/hypotheses":     "index.html",
-	"/ui/goals":          "index.html",
-	"/ui/agent-guide":    "index.html",
-	"/ui/maintenance":    "index.html",
+	"/":                  "vue-console.html",
+	"/index.html":        "vue-console.html",
+	"/ui/goal-map":       "vue-console.html",
+	"/ui/plan":           "vue-console.html",
+	"/ui/monitor":        "vue-console.html",
+	"/ui/monitor-vue":    "vue-console.html",
+	"/ui/monitor-alpine": "vue-console.html",
+	"/ui/issues":         "vue-console.html",
+	"/ui/work-graph":     "vue-console.html",
+	"/ui/git":            "vue-console.html",
+	"/ui/namespaces":     "vue-console.html",
+	"/ui/facts":          "vue-console.html",
+	"/ui/hypotheses":     "vue-console.html",
+	"/ui/goals":          "vue-console.html",
+	"/ui/agent-guide":    "vue-console.html",
+	"/ui/maintenance":    "vue-console.html",
 }
 
 // GetUIHandler returns the HTTP handler for the embedded UI files.
