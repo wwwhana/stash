@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
+	jose "github.com/go-jose/go-jose/v4"
 	"golang.org/x/oauth2"
 )
 
@@ -57,13 +58,49 @@ type Provider struct {
 	oidcProvider          *oidc.Provider
 	oauth2Config          oauth2.Config
 	verifier              *oidc.IDTokenVerifier
+	hmacVerifier          *oidc.IDTokenVerifier
 	accessVerifier        *oidc.IDTokenVerifier
+	hmacAccessVerifier    *oidc.IDTokenVerifier
 	introspectionEndpoint string
 	mu                    sync.Mutex
 	clients               map[string]oauthClient
 	pending               map[string]authorizationRequest
 	codes                 map[string]authorizationCode
 	refreshTokens         map[string]refreshToken
+}
+
+// hmacKeySet adapts a configured OIDC client secret to go-oidc's KeySet
+// interface. go-oidc intentionally leaves HS256 out of provider discovery;
+// Authentik uses it when its provider has no asymmetric signing key.
+type hmacKeySet struct {
+	key []byte
+}
+
+func (s hmacKeySet) VerifySignature(_ context.Context, rawJWT string) ([]byte, error) {
+	jws, err := jose.ParseSigned(rawJWT, []jose.SignatureAlgorithm{jose.HS256})
+	if err != nil {
+		return nil, err
+	}
+	return jws.Verify(s.key)
+}
+
+func newHMACVerifier(issuer, clientID, secret string, skipClientIDCheck bool) *oidc.IDTokenVerifier {
+	issuer = strings.TrimSpace(issuer)
+	if issuer == "" || strings.TrimSpace(secret) == "" {
+		return nil
+	}
+	config := &oidc.Config{
+		SupportedSigningAlgs: []string{string(jose.HS256)},
+		SkipClientIDCheck:    skipClientIDCheck,
+	}
+	if !skipClientIDCheck {
+		clientID = strings.TrimSpace(clientID)
+		if clientID == "" {
+			return nil
+		}
+		config.ClientID = clientID
+	}
+	return oidc.NewVerifier(issuer, hmacKeySet{key: []byte(secret)}, config)
 }
 
 type oauthClient struct {
@@ -177,6 +214,13 @@ func Init(ctx context.Context, cfg Config) (*Provider, error) {
 	// mandatory; accepting any valid token from the issuer would let a token
 	// issued for another application call this MCP server.
 	accessVerifier := provider.Verifier(&oidc.Config{SkipClientIDCheck: true})
+	// Authentik can issue HS256 ID/access tokens when its provider has no
+	// asymmetric signing key. go-oidc intentionally excludes symmetric
+	// algorithms from discovery, so verify HS256 separately with the
+	// confidential client's secret. This remains bound to the configured issuer
+	// and audience through go-oidc's normal claim checks.
+	hmacVerifier := newHMACVerifier(cfg.Issuer, cfg.ClientID, cfg.ClientSecret, false)
+	hmacAccessVerifier := newHMACVerifier(cfg.Issuer, "", cfg.ClientSecret, true)
 	introspectionEndpoint := discoverIntrospectionEndpoint(ctx, cfg.Issuer)
 	clients := make(map[string]oauthClient)
 	// A configured MCP client is a public client by default. Its redirect URI
@@ -191,7 +235,9 @@ func Init(ctx context.Context, cfg Config) (*Provider, error) {
 		oidcProvider:          provider,
 		oauth2Config:          oauth2Config,
 		verifier:              verifier,
+		hmacVerifier:          hmacVerifier,
 		accessVerifier:        accessVerifier,
+		hmacAccessVerifier:    hmacAccessVerifier,
 		introspectionEndpoint: introspectionEndpoint,
 		clients:               clients,
 		pending:               make(map[string]authorizationRequest),
@@ -460,8 +506,12 @@ func (p *Provider) completeOIDCLogin(r *http.Request, providedState string, w ht
 		return "", time.Time{}, &authHTTPError{http.StatusBadGateway, "identity token is missing"}
 	}
 
-	idToken, err := p.verifier.Verify(r.Context(), rawIDToken)
+	idToken, err := p.verifyIdentityToken(r.Context(), rawIDToken)
 	if err != nil {
+		// Keep the browser response generic, but retain the verifier reason in
+		// server logs so provider configuration failures are diagnosable without
+		// exposing the token.
+		log.Printf("OIDC identity token verification failed: %v", err)
 		return "", time.Time{}, &authHTTPError{http.StatusUnauthorized, "identity token is invalid"}
 	}
 	if idToken.Nonce == "" || len(idToken.Nonce) != len(nonceCookie.Value) || subtle.ConstantTimeCompare([]byte(idToken.Nonce), []byte(nonceCookie.Value)) != 1 {
@@ -477,6 +527,23 @@ func (p *Provider) completeOIDCLogin(r *http.Request, providedState string, w ht
 		return "", time.Time{}, &authHTTPError{http.StatusUnauthorized, "identity token is expired"}
 	}
 	return subject, expiresAt, nil
+}
+
+// verifyIdentityToken accepts the asymmetric algorithms supported by go-oidc
+// and, when a confidential client secret is configured, the HS256 form used by
+// providers such as Authentik when no signing key is selected. The HMAC path
+// is deliberately separate so an asymmetric token can never be verified with
+// the client secret.
+func (p *Provider) verifyIdentityToken(ctx context.Context, raw string) (*oidc.IDToken, error) {
+	if p.hmacVerifier != nil {
+		if token, err := p.hmacVerifier.Verify(ctx, raw); err == nil {
+			return token, nil
+		}
+	}
+	if p.verifier == nil {
+		return nil, errors.New("OIDC identity-token verifier is unavailable")
+	}
+	return p.verifier.Verify(ctx, raw)
 }
 
 func loginStateMatches(r *http.Request, providedState string) bool {
@@ -853,7 +920,7 @@ func (p *Provider) verifyOIDCAccessTokenContext(ctx context.Context, rawToken st
 	if p.accessVerifier == nil {
 		return "", errors.New("OIDC access-token verifier is unavailable")
 	}
-	accessToken, err := p.accessVerifier.Verify(ctx, rawToken)
+	accessToken, err := p.verifyAccessToken(ctx, rawToken)
 	if err != nil {
 		if subject, introspectionErr := p.introspectAccessToken(ctx, rawToken); introspectionErr == nil {
 			return subject, nil
@@ -864,6 +931,18 @@ func (p *Provider) verifyOIDCAccessTokenContext(ctx context.Context, rawToken st
 		return "", fmt.Errorf("OIDC access token has unexpected audience %q", accessToken.Audience)
 	}
 	return subjectFromToken(accessToken)
+}
+
+func (p *Provider) verifyAccessToken(ctx context.Context, rawToken string) (*oidc.IDToken, error) {
+	if p.hmacAccessVerifier != nil {
+		if token, err := p.hmacAccessVerifier.Verify(ctx, rawToken); err == nil {
+			return token, nil
+		}
+	}
+	if p.accessVerifier == nil {
+		return nil, errors.New("OIDC access-token verifier is unavailable")
+	}
+	return p.accessVerifier.Verify(ctx, rawToken)
 }
 
 func discoverIntrospectionEndpoint(ctx context.Context, issuer string) string {

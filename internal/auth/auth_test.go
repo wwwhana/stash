@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
+	jose "github.com/go-jose/go-jose/v4"
+	"github.com/go-jose/go-jose/v4/jwt"
 	"golang.org/x/oauth2"
 )
 
@@ -145,6 +147,47 @@ func TestOAuthAccessTokenCarriesResourceAndExpires(t *testing.T) {
 	}
 	if _, err := parseOAuthAccessToken(token, "test-secret", "https://other.example.com/mcp"); err == nil {
 		t.Fatal("OAuth token for another resource was accepted")
+	}
+}
+
+func TestHMACOIDCVerifierAcceptsAuthentikStyleIDToken(t *testing.T) {
+	issuer := "https://auth.example.com/application/o/stash/"
+	clientID := "stash-browser"
+	secret := strings.Repeat("s", 32)
+	now := time.Now().UTC().Truncate(time.Second)
+	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.HS256, Key: []byte(secret)}, nil)
+	if err != nil {
+		t.Fatalf("create HMAC signer: %v", err)
+	}
+	rawToken, err := jwt.Signed(signer).
+		Claims(jwt.Claims{
+			Issuer:   issuer,
+			Subject:  "subject-1",
+			Audience: jwt.Audience{clientID},
+			Expiry:   jwt.NewNumericDate(now.Add(time.Hour)),
+			IssuedAt: jwt.NewNumericDate(now),
+		}).
+		Claims(map[string]interface{}{"nonce": "nonce-1"}).
+		Serialize()
+	if err != nil {
+		t.Fatalf("sign HMAC ID token: %v", err)
+	}
+
+	verifier := newHMACVerifier(issuer, clientID, secret, false)
+	if verifier == nil {
+		t.Fatal("HMAC verifier was not created")
+	}
+	idToken, err := verifier.Verify(context.Background(), rawToken)
+	if err != nil {
+		t.Fatalf("verify HMAC ID token: %v", err)
+	}
+	if idToken.Subject != "subject-1" || idToken.Nonce != "nonce-1" {
+		t.Fatalf("verified token = subject %q, nonce %q", idToken.Subject, idToken.Nonce)
+	}
+
+	wrongSecretVerifier := newHMACVerifier(issuer, clientID, strings.Repeat("x", 32), false)
+	if _, err := wrongSecretVerifier.Verify(context.Background(), rawToken); err == nil {
+		t.Fatal("HMAC token verified with the wrong client secret")
 	}
 }
 
