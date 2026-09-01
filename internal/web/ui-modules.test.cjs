@@ -110,6 +110,27 @@ test('each screen factory owns its state and actions', () => {
     assert.equal(typeof execution.finishWork, 'function');
 });
 
+test('the work plan only offers active goals for new assignments', () => {
+    const plan = createWorkPlanViewModel();
+    plan.plan = {
+        goal_tree: {
+            root_goal_id: 1,
+            goals: [
+                { id: 1, content: '현재 목표', depth: 0, status: 'active' },
+                { id: 2, content: '중단된 목표', depth: 1, status: 'abandoned' },
+                { id: 3, content: '하위 목표', depth: 1, status: 'active' }
+            ]
+        },
+        components: [], decisions: [], warnings: [], validation: null
+    };
+
+    assert.deepEqual(plan.planAssignableGoals().map(goal => goal.id), [1, 3]);
+    assert.deepEqual(plan.planAssignableGoals('2').map(goal => goal.id), [2, 1, 3]);
+    assert.equal(plan.planGoalIsActive(1), true);
+    assert.equal(plan.planGoalIsActive(2), false);
+    assert.match(plan.planGoalOptionLabel({ id: 2, content: '중단된 목표', status: 'abandoned' }), /선택 불가/);
+});
+
 test('the console composes modules into one Alpine view-model without shared state', () => {
     const first = createConsoleViewModel();
     const second = createConsoleViewModel();

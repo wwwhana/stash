@@ -14,7 +14,11 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-var ErrProjectGoalNotSet = fmt.Errorf("brain: project goal is not set")
+var (
+	ErrProjectGoalNotSet   = fmt.Errorf("brain: project goal is not set")
+	ErrProjectGoalInactive = fmt.Errorf("brain: project goal is not active")
+	ErrWorkGoalInvalid     = fmt.Errorf("brain: work item goal is invalid")
+)
 
 const goalMapMemoryContentLimit = 256
 const goalMapRootCandidateLimit = 20
@@ -63,33 +67,68 @@ func (b *Brain) SetProjectGoalRoot(ctx context.Context, namespaceID, goalID int6
 	return b.GetProjectGoalTree(ctx, namespaceID)
 }
 
-// ProjectGoalRootID returns nil when a project has not selected a shared root.
-func (b *Brain) ProjectGoalRootID(ctx context.Context, namespaceID int64) (*int64, error) {
-	var goalID int64
-	err := b.pool.QueryRow(ctx,
-		`SELECT root.goal_id
+type projectGoalRootRecord struct {
+	ID        int64
+	Status    string
+	DeletedAt *time.Time
+}
+
+// readProjectGoalRoot reads the configured root even when its goal was later
+// completed or soft-deleted. Callers that start work must reject that stale
+// configuration explicitly instead of letting the database trigger fail later.
+func readProjectGoalRoot(ctx context.Context, queryer workItemRowWriter, namespaceID int64) (*projectGoalRootRecord, error) {
+	var root projectGoalRootRecord
+	err := queryer.QueryRow(ctx,
+		`SELECT root.goal_id, goal.status, goal.deleted_at
 		 FROM project_goal_roots root
 		 JOIN goals goal ON goal.id = root.goal_id AND goal.namespace_id = root.namespace_id
-		 WHERE root.namespace_id = $1 AND goal.deleted_at IS NULL`,
+		 WHERE root.namespace_id = $1`,
 		namespaceID,
-	).Scan(&goalID)
+	).Scan(&root.ID, &root.Status, &root.DeletedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read project goal: %w", err)
 	}
-	return &goalID, nil
+	return &root, nil
+}
+
+// ProjectGoalRootID returns nil when a project has not selected a configured
+// root. A completed root remains visible to history and the goal map, so its
+// ID is still returned; execution paths use readProjectGoalRoot to check its
+// status before binding or starting work.
+func (b *Brain) ProjectGoalRootID(ctx context.Context, namespaceID int64) (*int64, error) {
+	root, err := readProjectGoalRoot(ctx, b.pool, namespaceID)
+	if err != nil {
+		return nil, err
+	}
+	if root == nil || root.DeletedAt != nil {
+		return nil, nil
+	}
+	return &root.ID, nil
 }
 
 func (b *Brain) resolveProjectGoalForWork(ctx context.Context, namespaceID int64, requested, fallback *int64) (*int64, error) {
+	return b.resolveProjectGoalForWorkWith(ctx, b.pool, namespaceID, requested, fallback)
+}
+
+func (b *Brain) resolveProjectGoalForWorkTx(ctx context.Context, tx pgx.Tx, namespaceID int64, requested, fallback *int64) (*int64, error) {
+	return b.resolveProjectGoalForWorkWith(ctx, tx, namespaceID, requested, fallback)
+}
+
+func (b *Brain) resolveProjectGoalForWorkWith(ctx context.Context, queryer workItemRowWriter, namespaceID int64, requested, fallback *int64) (*int64, error) {
 	goalID := requested
 	if goalID == nil {
 		goalID = fallback
 	}
-	rootID, err := b.ProjectGoalRootID(ctx, namespaceID)
+	root, err := readProjectGoalRoot(ctx, queryer, namespaceID)
 	if err != nil {
 		return nil, err
+	}
+	var rootID *int64
+	if root != nil {
+		rootID = &root.ID
 	}
 	if goalID == nil {
 		goalID = rootID
@@ -97,19 +136,22 @@ func (b *Brain) resolveProjectGoalForWork(ctx context.Context, namespaceID int64
 	if goalID == nil {
 		return nil, nil
 	}
-	goal, err := b.GetGoal(ctx, *goalID)
-	if err != nil {
-		return nil, err
+	var goal models.Goal
+	if err := scanGoal(&goal, queryer.QueryRow(ctx, `SELECT `+goalColumns+` FROM goals WHERE id = $1 AND deleted_at IS NULL`, *goalID)); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrGoalNotFound
+		}
+		return nil, fmt.Errorf("read work goal: %w", err)
 	}
 	if goal.NamespaceID != namespaceID {
-		return nil, fmt.Errorf("brain: work goal must share the project namespace")
+		return nil, fmt.Errorf("%w: work goal must share the project namespace", ErrWorkGoalInvalid)
 	}
 	if goal.Status != "active" {
-		return nil, fmt.Errorf("brain: work goal must be active")
+		return nil, fmt.Errorf("%w: work goal %d is %s", ErrGoalNotActive, goal.ID, goal.Status)
 	}
 	if rootID != nil {
 		var belongs bool
-		if err := b.pool.QueryRow(ctx,
+		if err := queryer.QueryRow(ctx,
 			`WITH RECURSIVE ancestors AS (
 			    SELECT id, parent_id FROM goals WHERE id = $1 AND namespace_id = $2 AND deleted_at IS NULL
 			    UNION ALL
@@ -123,7 +165,7 @@ func (b *Brain) resolveProjectGoalForWork(ctx context.Context, namespaceID int64
 			return nil, fmt.Errorf("check project goal lineage: %w", err)
 		}
 		if !belongs {
-			return nil, fmt.Errorf("brain: work goal must belong to the shared project goal tree")
+			return nil, fmt.Errorf("%w: work goal must belong to the shared project goal tree", ErrWorkGoalInvalid)
 		}
 	}
 	resolved := *goalID

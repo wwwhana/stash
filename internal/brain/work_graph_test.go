@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -43,6 +45,24 @@ func TestWorkGraphInputValidation(t *testing.T) {
 	}
 	if len(labels) != 2 || labels[0] != "bug" || labels[1] != "ui" {
 		t.Fatalf("labels = %#v, want deduplicated labels", labels)
+	}
+}
+
+func TestNormalizeWorkGoalDBError(t *testing.T) {
+	err := normalizeWorkGoalDBError(&pgconn.PgError{
+		Code:    "23514",
+		Message: "work goal must be active and share the work namespace",
+	})
+	if !errors.Is(err, ErrWorkGoalInvalid) {
+		t.Fatalf("goal trigger error = %v, want %v", err, ErrWorkGoalInvalid)
+	}
+	if got := err.Error(); !strings.Contains(got, "work goal must be active") {
+		t.Fatalf("normalized error lost the database reason: %v", got)
+	}
+
+	other := normalizeWorkGoalDBError(&pgconn.PgError{Code: "23514", Message: "unrelated constraint"})
+	if errors.Is(other, ErrWorkGoalInvalid) {
+		t.Fatalf("unrelated constraint was classified as a work-goal error: %v", other)
 	}
 }
 

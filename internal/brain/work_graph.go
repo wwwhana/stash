@@ -11,6 +11,7 @@ import (
 
 	"github.com/alash3al/stash/internal/models"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 var (
@@ -90,6 +91,21 @@ func validateWorkItemType(issueType string) error {
 		return fmt.Errorf("brain: invalid work item type %q", issueType)
 	}
 	return nil
+}
+
+// normalizeWorkGoalDBError turns the final database guard into a stable
+// domain error. Validation happens before a write, but a goal can be
+// abandoned or moved by another request between those two statements.
+func normalizeWorkGoalDBError(err error) error {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
+		return err
+	}
+	message := strings.ToLower(pgErr.Message)
+	if !strings.Contains(message, "work goal") && !strings.Contains(message, "active work must belong") {
+		return err
+	}
+	return fmt.Errorf("%w: %s", ErrWorkGoalInvalid, pgErr.Message)
 }
 
 func normalizeWorkItemLabels(labels []string) ([]string, error) {
@@ -203,11 +219,11 @@ func scanWorktreeRows(rows pgx.Rows) ([]models.Worktree, error) {
 	return worktrees, nil
 }
 
-func validateWorkReferences(ctx context.Context, b *Brain, namespaceID int64, goalID, parentID *int64) error {
+func validateWorkReferences(ctx context.Context, queryer workItemRowWriter, namespaceID int64, goalID, parentID *int64) error {
 	if goalID != nil {
 		var goalNamespace int64
 		var status string
-		err := b.pool.QueryRow(ctx,
+		err := queryer.QueryRow(ctx,
 			`SELECT namespace_id, status FROM goals WHERE id = $1 AND deleted_at IS NULL`, *goalID,
 		).Scan(&goalNamespace, &status)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -226,7 +242,7 @@ func validateWorkReferences(ctx context.Context, b *Brain, namespaceID int64, go
 	if parentID != nil {
 		var parentNamespace int64
 		var parentStatus string
-		err := b.pool.QueryRow(ctx,
+		err := queryer.QueryRow(ctx,
 			`SELECT namespace_id, status FROM work_items WHERE id = $1 AND deleted_at IS NULL`, *parentID,
 		).Scan(&parentNamespace, &parentStatus)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -299,11 +315,11 @@ func (b *Brain) insertWorkItem(ctx context.Context, writer workItemRowWriter, na
 	if err != nil {
 		return nil, err
 	}
-	if err := validateWorkReferences(ctx, b, namespaceID, input.GoalID, input.ParentID); err != nil {
+	if err := validateWorkReferences(ctx, writer, namespaceID, input.GoalID, input.ParentID); err != nil {
 		return nil, err
 	}
 
-	return scanWorkItem(writer.QueryRow(ctx,
+	item, err := scanWorkItem(writer.QueryRow(ctx,
 		`WITH next_id AS (
 			SELECT nextval(pg_get_serial_sequence('work_items', 'id')) AS id
 		)
@@ -316,6 +332,10 @@ func (b *Brain) insertWorkItem(ctx context.Context, writer workItemRowWriter, na
 		namespaceID, input.GoalID, input.ParentID, input.IssueType, input.Labels, input.Reporter,
 		input.Title, input.Description, input.Status, input.Priority, input.Position, input.Owner, input.DueAt,
 	))
+	if err != nil {
+		return nil, normalizeWorkGoalDBError(err)
+	}
+	return item, nil
 }
 
 // CreateWorkItem creates an operational task under an optional goal or work item.
@@ -348,16 +368,16 @@ func (b *Brain) createWorkItemWithCapabilities(ctx context.Context, namespaceID 
 		}
 		inheritedGoalID = parent.GoalID
 	}
-	resolvedGoalID, err := b.resolveProjectGoalForWork(ctx, namespaceID, input.GoalID, inheritedGoalID)
-	if err != nil {
-		return nil, err
-	}
-	input.GoalID = resolvedGoalID
 	tx, err := b.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin work item creation: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	resolvedGoalID, err := b.resolveProjectGoalForWorkTx(ctx, tx, namespaceID, input.GoalID, inheritedGoalID)
+	if err != nil {
+		return nil, err
+	}
+	input.GoalID = resolvedGoalID
 	item, err := b.insertWorkItem(ctx, tx, namespaceID, input)
 	if err != nil {
 		return nil, err
@@ -541,7 +561,38 @@ func (b *Brain) updateWorkItem(ctx context.Context, writer workItemRowWriter, id
 		return nil, ErrWorkItemNotFound
 	}
 	if err != nil {
-		return nil, fmt.Errorf("update work item: %w", err)
+		return nil, fmt.Errorf("update work item: %w", normalizeWorkGoalDBError(err))
+	}
+	return item, nil
+}
+
+// updateWorkItemWithGoal updates a plan item and its goal in one statement.
+// The goal-map trigger also runs when status changes, so changing the goal in
+// a later statement cannot repair a legacy item that already points to an
+// inactive or out-of-scope goal.
+func (b *Brain) updateWorkItemWithGoal(ctx context.Context, writer workItemRowWriter, id int64, goalID *int64, input WorkItemInput) (*models.WorkItem, error) {
+	input, err := normalizeWorkItemInput(input)
+	if err != nil {
+		return nil, err
+	}
+
+	item, err := scanWorkItem(writer.QueryRow(ctx,
+		`UPDATE work_items
+		 SET goal_id = $2, issue_type = $3, labels = $4, reporter = $5, title = $6, description = $7, status = $8, priority = $9, position = $10,
+		     owner = $11, due_at = $12,
+		     started_at = CASE WHEN $8 = 'doing' THEN COALESCE(started_at, now()) ELSE started_at END,
+		     completed_at = CASE WHEN $8 = 'done' THEN COALESCE(completed_at, now()) ELSE NULL END,
+		     updated_at = now()
+		 WHERE id = $1 AND deleted_at IS NULL
+		 RETURNING `+workItemColumns,
+		id, goalID, input.IssueType, input.Labels, input.Reporter, input.Title, input.Description,
+		input.Status, input.Priority, input.Position, input.Owner, input.DueAt,
+	))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrWorkItemNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("update work item with goal: %w", normalizeWorkGoalDBError(err))
 	}
 	return item, nil
 }

@@ -135,30 +135,48 @@
                 return component ? component.issue_key + ' · ' + component.title : '구성 요소를 선택하세요';
             },
 
-				planGoals() {
-					return this.plan && this.plan.goal_tree && Array.isArray(this.plan.goal_tree.goals) ? this.plan.goal_tree.goals : [];
-				},
+			planGoals() {
+				return this.plan && this.plan.goal_tree && Array.isArray(this.plan.goal_tree.goals) ? this.plan.goal_tree.goals : [];
+			},
 
-				planRootGoal() {
-					const rootID = this.plan && this.plan.goal_tree && this.plan.goal_tree.root_goal_id;
-					return this.planGoals().find(goal => Number(goal.id) === Number(rootID)) || null;
-				},
+			planAssignableGoals(selectedID = '') {
+				const goals = this.planGoals();
+				const active = goals.filter(goal => String(goal && goal.status || '') === 'active');
+				const selected = goals.find(goal => Number(goal && goal.id) === Number(selectedID));
+				if (selected && selected.status !== 'active') return [selected, ...active];
+				return active;
+			},
 
-				planGoalLabel(goal) {
-					const depth = Math.max(0, Number(goal && goal.depth) || 0);
-					return (depth ? '↳ '.repeat(depth) : '') + String(goal && goal.content || '목표');
-				},
+			planGoalIsActive(goalID) {
+				if (!Number(goalID)) return true;
+				const goal = this.planGoals().find(candidate => Number(candidate && candidate.id) === Number(goalID));
+				return !!goal && goal.status === 'active';
+			},
 
-				planGoalShortLabel(goalID) {
-					const goal = this.planGoals().find(candidate => Number(candidate.id) === Number(goalID));
-					if (!goal) return '#' + goalID;
-					const content = String(goal.content || '목표');
-					return content.length > 32 ? content.slice(0, 31) + '…' : content;
-				},
+			planRootGoal() {
+				const rootID = this.plan && this.plan.goal_tree && this.plan.goal_tree.root_goal_id;
+				return this.planGoals().find(goal => Number(goal.id) === Number(rootID)) || null;
+			},
 
-				planProgressPercent(value) {
-					return Math.round(Math.max(0, Math.min(1, Number(value) || 0)) * 100) + '%';
-				},
+			planGoalLabel(goal) {
+				const depth = Math.max(0, Number(goal && goal.depth) || 0);
+				return (depth ? '↳ '.repeat(depth) : '') + String(goal && goal.content || '목표');
+			},
+
+			planGoalOptionLabel(goal) {
+				return this.planGoalLabel(goal) + (goal && goal.status !== 'active' ? ' · 선택 불가' : '');
+			},
+
+			planGoalShortLabel(goalID) {
+				const goal = this.planGoals().find(candidate => Number(candidate.id) === Number(goalID));
+				if (!goal) return '#' + goalID;
+				const content = String(goal.content || '목표');
+				return content.length > 32 ? content.slice(0, 31) + '…' : content;
+			},
+
+			planProgressPercent(value) {
+				return Math.round(Math.max(0, Math.min(1, Number(value) || 0)) * 100) + '%';
+			},
 
             planTaskCount(status) {
                 return this.plan.components.reduce((count, component) => count + (Array.isArray(component.tasks) ? component.tasks.filter(task => task.status === status).length : 0), 0);
@@ -175,12 +193,15 @@
                     no_components: '구성 요소를 먼저 만드세요.',
                     component_without_paths: `${component ? component.title : '구성 요소'}에 맡는 범위가 없습니다.`,
                     open_task_without_provenance: `${task ? task.title : '작업'}의 출처를 기록하세요.`,
-	                        active_task_without_starter: `${task ? task.title : '작업'}의 시작 작업자가 없습니다.`,
-						no_project_goal: '공통 목표를 먼저 정하세요.',
-						component_without_goal: `${component ? component.title : '구성 요소'}를 목표에 연결하세요.`,
-						component_goal_outside_tree: `${component ? component.title : '구성 요소'}의 연결 목표를 확인하세요.`,
-						task_without_goal: `${task ? task.title : '작업'}을 목표에 연결하세요.`,
-						task_goal_outside_tree: `${task ? task.title : '작업'}의 연결 목표를 확인하세요.`
+					active_task_without_starter: `${task ? task.title : '작업'}의 시작 작업자가 없습니다.`,
+					no_project_goal: '공통 목표를 먼저 정하세요.',
+					project_goal_inactive: '공통 목표가 활성 상태가 아니어서 새 작업을 시작할 수 없습니다.',
+					component_without_goal: `${component ? component.title : '구성 요소'}를 목표에 연결하세요.`,
+					component_goal_outside_tree: `${component ? component.title : '구성 요소'}의 연결 목표를 확인하세요.`,
+					component_goal_inactive: `${component ? component.title : '구성 요소'}의 연결 목표가 활성 상태가 아닙니다.`,
+					task_without_goal: `${task ? task.title : '작업'}을 목표에 연결하세요.`,
+					task_goal_outside_tree: `${task ? task.title : '작업'}의 연결 목표를 확인하세요.`,
+					task_goal_inactive: `${task ? task.title : '작업'}의 연결 목표가 활성 상태가 아닙니다.`
                 }[warning.code] || '계획 내용을 확인하세요.';
             },
 
@@ -247,11 +268,15 @@
 	                    this.planComponentForm = emptyComponentForm();
 	                },
 
-	                async savePlanComponent() {
-	                    const form = this.planComponentForm;
-	                    const componentID = Number(form.componentId);
-	                    const goalID = Number(form.goalId) || 0;
-	                    await this.runPlanMutation(async () => {
+				async savePlanComponent() {
+					const form = this.planComponentForm;
+					const componentID = Number(form.componentId);
+					const goalID = Number(form.goalId) || 0;
+					if (goalID && !this.planGoalIsActive(goalID)) {
+						this.setNotice('활성 목표를 선택하세요.', 'error', 0);
+						return;
+					}
+					await this.runPlanMutation(async () => {
 	                        if (componentID) {
 	                            const args = {
 	                                component_id: componentID, title: form.title, description: form.description,
@@ -289,11 +314,15 @@
 	                    this.planTaskForm = emptyTaskForm();
 	                },
 
-	                async savePlanTask() {
+				async savePlanTask() {
 	                    const form = this.planTaskForm;
 	                    const taskID = Number(form.taskId);
-	                    const componentID = Number(form.componentId);
-	                    const goalID = Number(form.goalId) || 0;
+					const componentID = Number(form.componentId);
+					const goalID = Number(form.goalId) || 0;
+					if (goalID && !this.planGoalIsActive(goalID)) {
+						this.setNotice('활성 목표를 선택하세요.', 'error', 0);
+						return;
+					}
 	                    if (!componentID) {
 	                        this.setNotice('작업을 넣을 구성 요소를 선택하세요.', 'error', 0);
 	                        return;

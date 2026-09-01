@@ -298,16 +298,15 @@ func (b *Brain) CreateWorkPlanComponent(ctx context.Context, namespaceID int64, 
 	if input.Status == "" {
 		input.Status = "ready"
 	}
-	goalID, err := b.resolveProjectGoalForWork(ctx, namespaceID, input.GoalID, nil)
-	if err != nil {
-		return nil, err
-	}
-
 	tx, err := b.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin create work plan component: %w", err)
 	}
 	defer tx.Rollback(ctx)
+	goalID, err := b.resolveProjectGoalForWorkTx(ctx, tx, namespaceID, input.GoalID, nil)
+	if err != nil {
+		return nil, err
+	}
 
 	item, err := b.insertWorkItem(ctx, tx, namespaceID, WorkItemInput{
 		GoalID: goalID, IssueType: "component", Labels: input.Labels, Reporter: input.Reporter,
@@ -350,12 +349,9 @@ func (b *Brain) UpdateWorkPlanComponent(ctx context.Context, componentID int64, 
 	if err := ensureNoActiveWorkPlanAttempt(ctx, tx, componentID, true); err != nil {
 		return nil, err
 	}
-	goalID := current.Item.GoalID
-	if input.GoalID != nil {
-		goalID, err = b.resolveProjectGoalForWork(ctx, current.Item.NamespaceID, input.GoalID, nil)
-		if err != nil {
-			return nil, err
-		}
+	goalID, err := b.resolveProjectGoalForWorkTx(ctx, tx, current.Item.NamespaceID, input.GoalID, current.Item.GoalID)
+	if err != nil {
+		return nil, err
 	}
 	title := current.Item.Title
 	if input.Title != nil {
@@ -379,16 +375,13 @@ func (b *Brain) UpdateWorkPlanComponent(ctx context.Context, componentID int64, 
 			return nil, err
 		}
 	}
-	_, err = b.updateWorkItem(ctx, tx, componentID, WorkItemInput{
+	_, err = b.updateWorkItemWithGoal(ctx, tx, componentID, goalID, WorkItemInput{
 		IssueType: current.Item.IssueType, Labels: current.Item.Labels, Reporter: current.Item.Reporter,
 		Title: title, Description: description, Status: current.Item.Status,
 		Priority: current.Item.Priority, Position: current.Item.Position, Owner: current.Item.Owner, DueAt: current.Item.DueAt,
 	})
 	if err != nil {
 		return nil, err
-	}
-	if _, err := tx.Exec(ctx, `UPDATE work_items SET goal_id = $2, updated_at = now() WHERE id = $1`, componentID, goalID); err != nil {
-		return nil, fmt.Errorf("update work plan component goal: %w", err)
 	}
 	if _, err := tx.Exec(ctx,
 		`UPDATE work_plan_items SET technical_details = $2, owned_paths = $3, updated_at = now() WHERE work_item_id = $1`,
@@ -429,7 +422,7 @@ func (b *Brain) CreateWorkPlanTask(ctx context.Context, namespaceID int64, input
 	if component.Metadata.Kind != workPlanComponentKind || component.Item.NamespaceID != namespaceID {
 		return nil, ErrWorkPlanComponentNotFound
 	}
-	goalID, err := b.resolveProjectGoalForWork(ctx, namespaceID, input.GoalID, component.Item.GoalID)
+	goalID, err := b.resolveProjectGoalForWorkTx(ctx, tx, namespaceID, input.GoalID, component.Item.GoalID)
 	if err != nil {
 		return nil, err
 	}
@@ -474,12 +467,9 @@ func (b *Brain) UpdateWorkPlanTask(ctx context.Context, taskID int64, input Work
 	if err := ensureNoActiveWorkPlanAttempt(ctx, tx, taskID, false); err != nil {
 		return nil, err
 	}
-	goalID := current.Item.GoalID
-	if input.GoalID != nil {
-		goalID, err = b.resolveProjectGoalForWork(ctx, current.Item.NamespaceID, input.GoalID, nil)
-		if err != nil {
-			return nil, err
-		}
+	goalID, err := b.resolveProjectGoalForWorkTx(ctx, tx, current.Item.NamespaceID, input.GoalID, current.Item.GoalID)
+	if err != nil {
+		return nil, err
 	}
 	title := current.Item.Title
 	if input.Title != nil {
@@ -503,16 +493,13 @@ func (b *Brain) UpdateWorkPlanTask(ctx context.Context, taskID int64, input Work
 			return nil, err
 		}
 	}
-	_, err = b.updateWorkItem(ctx, tx, taskID, WorkItemInput{
+	_, err = b.updateWorkItemWithGoal(ctx, tx, taskID, goalID, WorkItemInput{
 		ParentID: current.Item.ParentID, IssueType: current.Item.IssueType, Labels: current.Item.Labels, Reporter: current.Item.Reporter,
 		Title: title, Description: description, Status: current.Item.Status,
 		Priority: current.Item.Priority, Position: current.Item.Position, Owner: current.Item.Owner, DueAt: current.Item.DueAt,
 	})
 	if err != nil {
 		return nil, err
-	}
-	if _, err := tx.Exec(ctx, `UPDATE work_items SET goal_id = $2, updated_at = now() WHERE id = $1`, taskID, goalID); err != nil {
-		return nil, fmt.Errorf("update work plan task goal: %w", err)
 	}
 	if _, err := tx.Exec(ctx,
 		`UPDATE work_plan_items SET technical_details = $2, provenance = $3, updated_at = now() WHERE work_item_id = $1`,
@@ -1267,18 +1254,64 @@ func (b *Brain) GetWorkPlan(ctx context.Context, namespaceID int64) (*models.Wor
 	if len(plan.Components) == 0 {
 		plan.Warnings = append(plan.Warnings, models.WorkPlanWarning{Code: "no_components"})
 	}
-	goalSet := make(map[int64]struct{}, len(plan.GoalTree.Goals))
+	goalByID := make(map[int64]models.GoalProgress, len(plan.GoalTree.Goals))
 	for _, goal := range plan.GoalTree.Goals {
-		goalSet[goal.ID] = struct{}{}
+		goalByID[goal.ID] = goal
+	}
+	assignedGoalIDs := make(map[int64]struct{})
+	for _, component := range plan.Components {
+		if component.GoalID != nil {
+			assignedGoalIDs[*component.GoalID] = struct{}{}
+		}
+		for _, task := range component.Tasks {
+			if task.GoalID != nil {
+				assignedGoalIDs[*task.GoalID] = struct{}{}
+			}
+		}
+	}
+	goalStatusByID := make(map[int64]string, len(assignedGoalIDs))
+	if len(assignedGoalIDs) > 0 {
+		goalIDs := make([]int64, 0, len(assignedGoalIDs))
+		for goalID := range assignedGoalIDs {
+			goalIDs = append(goalIDs, goalID)
+		}
+		rows, err := b.pool.Query(ctx,
+			`SELECT id, status FROM goals WHERE namespace_id = $1 AND id = ANY($2) AND deleted_at IS NULL`,
+			namespaceID, goalIDs,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("read work plan goal states: %w", err)
+		}
+		for rows.Next() {
+			var goalID int64
+			var status string
+			if err := rows.Scan(&goalID, &status); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("scan work plan goal state: %w", err)
+			}
+			goalStatusByID[goalID] = status
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("read work plan goal states: %w", err)
+		}
+		rows.Close()
 	}
 	if plan.GoalTree.RootGoalID == nil {
 		plan.Warnings = append(plan.Warnings, models.WorkPlanWarning{Code: "no_project_goal"})
+	} else if root, ok := goalByID[*plan.GoalTree.RootGoalID]; ok && root.Status != "active" {
+		plan.Warnings = append(plan.Warnings, models.WorkPlanWarning{Code: "project_goal_inactive"})
 	}
 	for _, component := range plan.Components {
 		if component.GoalID == nil {
 			plan.Warnings = append(plan.Warnings, models.WorkPlanWarning{Code: "component_without_goal", ComponentID: component.ID})
-		} else if _, ok := goalSet[*component.GoalID]; !ok {
+		} else if goal, ok := goalByID[*component.GoalID]; !ok {
 			plan.Warnings = append(plan.Warnings, models.WorkPlanWarning{Code: "component_goal_outside_tree", ComponentID: component.ID})
+			if status, exists := goalStatusByID[*component.GoalID]; exists && status != "active" {
+				plan.Warnings = append(plan.Warnings, models.WorkPlanWarning{Code: "component_goal_inactive", ComponentID: component.ID})
+			}
+		} else if goal.Status != "active" {
+			plan.Warnings = append(plan.Warnings, models.WorkPlanWarning{Code: "component_goal_inactive", ComponentID: component.ID})
 		}
 		if len(component.OwnedPaths) == 0 {
 			plan.Warnings = append(plan.Warnings, models.WorkPlanWarning{Code: "component_without_paths", ComponentID: component.ID})
@@ -1286,8 +1319,13 @@ func (b *Brain) GetWorkPlan(ctx context.Context, namespaceID int64) (*models.Wor
 		for _, task := range component.Tasks {
 			if task.GoalID == nil {
 				plan.Warnings = append(plan.Warnings, models.WorkPlanWarning{Code: "task_without_goal", TaskID: task.ID})
-			} else if _, ok := goalSet[*task.GoalID]; !ok {
+			} else if goal, ok := goalByID[*task.GoalID]; !ok {
 				plan.Warnings = append(plan.Warnings, models.WorkPlanWarning{Code: "task_goal_outside_tree", TaskID: task.ID})
+				if status, exists := goalStatusByID[*task.GoalID]; exists && status != "active" {
+					plan.Warnings = append(plan.Warnings, models.WorkPlanWarning{Code: "task_goal_inactive", TaskID: task.ID})
+				}
+			} else if goal.Status != "active" {
+				plan.Warnings = append(plan.Warnings, models.WorkPlanWarning{Code: "task_goal_inactive", TaskID: task.ID})
 			}
 			if task.Status != "done" && task.Status != "canceled" && task.Provenance == "" {
 				plan.Warnings = append(plan.Warnings, models.WorkPlanWarning{Code: "open_task_without_provenance", TaskID: task.ID})

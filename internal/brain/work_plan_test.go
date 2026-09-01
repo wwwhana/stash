@@ -88,6 +88,152 @@ func TestWorkPlanMutationsRejectActiveDescendantAttempt(t *testing.T) {
 	}
 }
 
+func TestWorkPlanGoalUpdateRepairsInactiveLegacyAssignment(t *testing.T) {
+	b, ctx, namespaceID := newWorkExecutionTestBrain(t)
+
+	legacyGoal, err := b.CreateGoal(ctx, namespaceID, "이전 목표", nil, 1)
+	if err != nil {
+		t.Fatalf("CreateGoal legacy: %v", err)
+	}
+	component, err := b.CreateWorkPlanComponent(ctx, namespaceID, WorkPlanComponentInput{
+		GoalID: &legacyGoal.ID, Title: "구성 요소", Description: "기존 목표를 가리키는 구성 요소", Status: "ready",
+	})
+	if err != nil {
+		t.Fatalf("CreateWorkPlanComponent: %v", err)
+	}
+	task, err := b.CreateWorkPlanTask(ctx, namespaceID, WorkPlanTaskInput{
+		ComponentID: component.ID, Title: "실행 작업", Description: "기존 목표를 가리키는 작업",
+	})
+	if err != nil {
+		t.Fatalf("CreateWorkPlanTask: %v", err)
+	}
+
+	newGoal, err := b.CreateGoal(ctx, namespaceID, "현재 목표", nil, 2)
+	if err != nil {
+		t.Fatalf("CreateGoal current: %v", err)
+	}
+	if _, err := b.SetProjectGoalRoot(ctx, namespaceID, newGoal.ID, "test"); err != nil {
+		t.Fatalf("SetProjectGoalRoot: %v", err)
+	}
+	if _, err := b.AbandonGoal(ctx, legacyGoal.ID, "계획을 새 목표로 옮김"); err != nil {
+		t.Fatalf("AbandonGoal legacy: %v", err)
+	}
+	legacyPlan, err := b.GetWorkPlan(ctx, namespaceID)
+	if err != nil {
+		t.Fatalf("GetWorkPlan with legacy goal: %v", err)
+	}
+	legacyWarnings := map[string]bool{}
+	for _, warning := range legacyPlan.Warnings {
+		legacyWarnings[warning.Code] = true
+	}
+	if !legacyWarnings["component_goal_outside_tree"] || !legacyWarnings["component_goal_inactive"] ||
+		!legacyWarnings["task_goal_outside_tree"] || !legacyWarnings["task_goal_inactive"] {
+		t.Fatalf("legacy goal warnings = %#v", legacyPlan.Warnings)
+	}
+
+	updatedComponent, err := b.UpdateWorkPlanComponent(ctx, component.ID, WorkPlanComponentUpdate{GoalID: &newGoal.ID})
+	if err != nil {
+		t.Fatalf("UpdateWorkPlanComponent should repair the legacy goal: %v", err)
+	}
+	if updatedComponent.GoalID == nil || *updatedComponent.GoalID != newGoal.ID {
+		t.Fatalf("component goal = %#v, want %d", updatedComponent.GoalID, newGoal.ID)
+	}
+
+	updatedTask, err := b.UpdateWorkPlanTask(ctx, task.ID, WorkPlanTaskUpdate{GoalID: &newGoal.ID})
+	if err != nil {
+		t.Fatalf("UpdateWorkPlanTask should repair the legacy goal: %v", err)
+	}
+	if updatedTask.GoalID == nil || *updatedTask.GoalID != newGoal.ID {
+		t.Fatalf("task goal = %#v, want %d", updatedTask.GoalID, newGoal.ID)
+	}
+}
+
+func TestWorkPlanReportsInactiveGoalAssignments(t *testing.T) {
+	b, ctx, namespaceID := newWorkExecutionTestBrain(t)
+	root, err := b.CreateGoal(ctx, namespaceID, "현재 목표", nil, 1)
+	if err != nil {
+		t.Fatalf("CreateGoal root: %v", err)
+	}
+	child, err := b.CreateGoal(ctx, namespaceID, "중단된 하위 목표", &root.ID, 1)
+	if err != nil {
+		t.Fatalf("CreateGoal child: %v", err)
+	}
+	if _, err := b.SetProjectGoalRoot(ctx, namespaceID, root.ID, "test"); err != nil {
+		t.Fatalf("SetProjectGoalRoot: %v", err)
+	}
+	component, err := b.CreateWorkPlanComponent(ctx, namespaceID, WorkPlanComponentInput{
+		GoalID: &child.ID, Title: "구성 요소", Description: "비활성 목표 연결 확인", Status: "ready",
+	})
+	if err != nil {
+		t.Fatalf("CreateWorkPlanComponent: %v", err)
+	}
+	if _, err := b.CreateWorkPlanTask(ctx, namespaceID, WorkPlanTaskInput{
+		ComponentID: component.ID, Title: "실행 작업", Description: "비활성 목표 연결 확인",
+	}); err != nil {
+		t.Fatalf("CreateWorkPlanTask: %v", err)
+	}
+	if _, err := b.AbandonGoal(ctx, child.ID, "계획에서 제외"); err != nil {
+		t.Fatalf("AbandonGoal child: %v", err)
+	}
+
+	plan, err := b.GetWorkPlan(ctx, namespaceID)
+	if err != nil {
+		t.Fatalf("GetWorkPlan: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, warning := range plan.Warnings {
+		seen[warning.Code] = true
+	}
+	if !seen["component_goal_inactive"] || !seen["task_goal_inactive"] {
+		t.Fatalf("inactive goal warnings = %#v", plan.Warnings)
+	}
+}
+
+func TestPrepareWorkRejectsInactiveSharedRoot(t *testing.T) {
+	b, ctx, namespaceID := newWorkExecutionTestBrain(t)
+	root, err := b.CreateGoal(ctx, namespaceID, "종료된 프로젝트", nil, 1)
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	if _, err := b.SetProjectGoalRoot(ctx, namespaceID, root.ID, "test"); err != nil {
+		t.Fatalf("SetProjectGoalRoot: %v", err)
+	}
+	item, err := b.CreateWorkItem(ctx, namespaceID, &root.ID, nil, "실행 작업", "공유 목표 상태를 확인한다", "ready", 1, 0, "", nil)
+	if err != nil {
+		t.Fatalf("CreateWorkItem: %v", err)
+	}
+	if _, err := b.AbandonGoal(ctx, root.ID, "프로젝트를 닫음"); err != nil {
+		t.Fatalf("AbandonGoal root: %v", err)
+	}
+	_, err = b.PrepareWork(ctx, item.ID, "활성 목표를 다시 선택한다", []CompletionConditionInput{
+		testCompletionCondition("목표가 다시 활성화된다"),
+	}, fmt.Sprintf("prepare-inactive-root-%d", item.ID))
+	if !errors.Is(err, ErrProjectGoalInactive) {
+		t.Fatalf("PrepareWork error = %v, want %v", err, ErrProjectGoalInactive)
+	}
+}
+
+func TestPrepareWorkRejectsInactiveGoalWithoutSharedRoot(t *testing.T) {
+	b, ctx, namespaceID := newWorkExecutionTestBrain(t)
+	goal, err := b.CreateGoal(ctx, namespaceID, "중단된 목표", nil, 1)
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	item, err := b.CreateWorkItem(ctx, namespaceID, &goal.ID, nil, "실행 작업", "목표 상태를 확인한다", "ready", 1, 0, "", nil)
+	if err != nil {
+		t.Fatalf("CreateWorkItem: %v", err)
+	}
+	if _, err := b.AbandonGoal(ctx, goal.ID, "작업 취소"); err != nil {
+		t.Fatalf("AbandonGoal: %v", err)
+	}
+	_, err = b.PrepareWork(ctx, item.ID, "활성 목표를 다시 선택한다", []CompletionConditionInput{
+		testCompletionCondition("목표가 활성 상태다"),
+	}, fmt.Sprintf("prepare-inactive-goal-%d", item.ID))
+	if !errors.Is(err, ErrWorkGoalInvalid) {
+		t.Fatalf("PrepareWork error = %v, want %v", err, ErrWorkGoalInvalid)
+	}
+}
+
 func TestWorkPlanMetadataValidation(t *testing.T) {
 	paths, err := normalizeWorkPlanPaths([]string{" src/audio/** ", "config.py", "src/audio/**", ""})
 	if err != nil {

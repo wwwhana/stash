@@ -643,14 +643,40 @@ func lockWorkGraphForAttempt(ctx context.Context, tx pgx.Tx, attemptID int64) (i
 // the work-item lock before invoking it.
 func ensureWorkGoalAlignmentTx(ctx context.Context, tx pgx.Tx, namespaceID, workItemID int64) (*int64, error) {
 	var goalID, rootID *int64
+	var rootStatus *string
+	var rootDeletedAt *time.Time
 	if err := tx.QueryRow(ctx,
-		`SELECT item.goal_id, root.goal_id
+		`SELECT item.goal_id, root.goal_id, root_goal.status, root_goal.deleted_at
 		 FROM work_items item
 		 LEFT JOIN project_goal_roots root ON root.namespace_id = item.namespace_id
+		 LEFT JOIN goals root_goal ON root_goal.id = root.goal_id AND root_goal.namespace_id = root.namespace_id
 		 WHERE item.id = $1 AND item.namespace_id = $2 AND item.deleted_at IS NULL`,
 		workItemID, namespaceID,
-	).Scan(&goalID, &rootID); err != nil {
+	).Scan(&goalID, &rootID, &rootStatus, &rootDeletedAt); err != nil {
 		return nil, fmt.Errorf("read work goal alignment: %w", err)
+	}
+	if rootID != nil && (rootStatus == nil || rootDeletedAt != nil || *rootStatus != "active") {
+		status := "없음"
+		if rootStatus != nil {
+			status = *rootStatus
+		}
+		return nil, fmt.Errorf("%w: shared project goal %d is %s", ErrProjectGoalInactive, *rootID, status)
+	}
+	if goalID != nil {
+		var goalStatus string
+		var goalDeletedAt *time.Time
+		if err := tx.QueryRow(ctx,
+			`SELECT status, deleted_at FROM goals WHERE id = $1 AND namespace_id = $2`,
+			*goalID, namespaceID,
+		).Scan(&goalStatus, &goalDeletedAt); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, fmt.Errorf("%w: work goal %d was not found", ErrWorkGoalInvalid, *goalID)
+			}
+			return nil, fmt.Errorf("read work goal status: %w", err)
+		}
+		if goalDeletedAt != nil || goalStatus != "active" {
+			return nil, fmt.Errorf("%w: work goal %d is %s", ErrWorkGoalInvalid, *goalID, goalStatus)
+		}
 	}
 	if rootID == nil {
 		return goalID, nil
@@ -660,7 +686,7 @@ func ensureWorkGoalAlignmentTx(ctx context.Context, tx pgx.Tx, namespaceID, work
 			`UPDATE work_items SET goal_id = $2, updated_at = now()
 			 WHERE id = $1 RETURNING goal_id`, workItemID, *rootID,
 		).Scan(&goalID); err != nil {
-			return nil, fmt.Errorf("bind work to shared project goal: %w", err)
+			return nil, fmt.Errorf("bind work to shared project goal: %w", normalizeWorkGoalDBError(err))
 		}
 		return goalID, nil
 	}
@@ -683,7 +709,7 @@ func ensureWorkGoalAlignmentTx(ctx context.Context, tx pgx.Tx, namespaceID, work
 		return nil, fmt.Errorf("check work goal alignment: %w", err)
 	}
 	if !aligned {
-		return nil, fmt.Errorf("brain: work goal must belong to the active shared project goal tree")
+		return nil, fmt.Errorf("%w: work goal must belong to the active shared project goal tree", ErrWorkGoalInvalid)
 	}
 	return goalID, nil
 }
