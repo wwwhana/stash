@@ -76,8 +76,14 @@ type hmacKeySet struct {
 	key []byte
 }
 
+var hmacSigningAlgorithms = []jose.SignatureAlgorithm{
+	jose.HS256,
+	jose.HS384,
+	jose.HS512,
+}
+
 func (s hmacKeySet) VerifySignature(_ context.Context, rawJWT string) ([]byte, error) {
-	jws, err := jose.ParseSigned(rawJWT, []jose.SignatureAlgorithm{jose.HS256})
+	jws, err := jose.ParseSigned(rawJWT, hmacSigningAlgorithms)
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +96,7 @@ func newHMACVerifier(issuer, clientID, secret string, skipClientIDCheck bool) *o
 		return nil
 	}
 	config := &oidc.Config{
-		SupportedSigningAlgs: []string{string(jose.HS256)},
+		SupportedSigningAlgs: []string{string(jose.HS256), string(jose.HS384), string(jose.HS512)},
 		SkipClientIDCheck:    skipClientIDCheck,
 	}
 	if !skipClientIDCheck {
