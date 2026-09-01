@@ -854,9 +854,15 @@
                         </button>
                         <div x-show="tokenOpen" x-cloak @click.outside="tokenOpen = false" id="stash-token-popover" class="stash-token-popover">
                             <div x-show="authRequired()">
-                                <label for="stash-token">API 토큰</label>
+                                <div class="stash-token-heading"><label for="stash-token">API 토큰</label><button type="button" class="stash-token-issue" data-token-issue @click="issueApiToken()" :disabled="tokenIssueLoading" x-text="tokenIssueLoading ? '발급 중…' : '토큰 발급'"></button></div>
                                 <input id="stash-token" type="password" x-model="token" @change="normalizeToken" placeholder="선택 입력" class="stash-token-input" autocomplete="off">
-                                <p>이 브라우저 탭에서만 사용합니다.</p>
+                                <div x-show="issuedToken" x-cloak class="stash-token-issued">
+                                    <input type="text" readonly x-model="issuedToken" aria-label="발급된 API 토큰" autocomplete="off">
+                                    <button type="button" class="stash-token-copy" @click="copyIssuedToken()" x-text="tokenCopyStatus"></button>
+                                </div>
+                                <p x-show="issuedToken" x-text="issuedTokenExpiryLabel()"></p>
+                                <p>로그인한 사용자 권한으로 MCP와 메트릭을 호출합니다.</p>
+                                <p x-show="tokenIssueError" x-text="tokenIssueError" class="stash-token-error"></p>
                             </div>
                             <div x-show="adminConfigured || isAdmin || adminToken">
                                 <label for="stash-admin-token">관리자 토큰</label>

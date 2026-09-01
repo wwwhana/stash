@@ -313,6 +313,51 @@ textarea::placeholder {
     background: var(--stash-field) !important;
 }
 
+.stash-token-heading,
+.stash-token-issued {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.stash-token-heading label {
+    flex: 1;
+    margin-bottom: 0;
+}
+
+.stash-token-issue,
+.stash-token-copy {
+    min-height: 28px;
+    padding: 4px 8px;
+    border: 1px solid var(--stash-line);
+    border-radius: 7px;
+    color: var(--stash-ink);
+    background: var(--stash-surface-muted);
+    font-size: 10px;
+    font-weight: 800;
+}
+
+.stash-token-issue:hover:not(:disabled),
+.stash-token-copy:hover:not(:disabled) {
+    border-color: var(--stash-accent);
+    color: var(--stash-accent-strong);
+}
+
+.stash-token-issued {
+    margin-top: 8px;
+}
+
+.stash-token-issued input {
+    min-width: 0;
+    flex: 1;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 10px;
+}
+
+.stash-token-error {
+    color: var(--stash-danger) !important;
+}
+
 .stash-auth-screen {
     background: radial-gradient(circle at 50% 0%, var(--stash-accent-soft) 0, var(--stash-canvas) 48%, var(--stash-surface-muted) 100%) !important;
 }

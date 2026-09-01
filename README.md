@@ -114,6 +114,12 @@ HTTP MCP requests must send `Authorization: Bearer <access-token>`. The
 browser session cookie is only for the embedded console; it is not the
 standard client credential.
 
+After signing in, the console's **Access settings** can issue a Stash API
+Bearer token for MCP or metrics clients. The token lifetime follows
+`STASH_AUTH_TOKEN_TTL` (30 days by default); it is shown once and is not stored
+by the browser. For long-running scrapes, rotate it before expiry or protect
+`/metrics` with an internal network or mTLS proxy.
+
 ### 3. agy (Antigravity)
 
 Configure via `~/.gemini/config/mcp_config.json`:

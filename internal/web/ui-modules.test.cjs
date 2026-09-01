@@ -208,6 +208,56 @@ test('the token control is hidden when neither API nor administrator access is c
     assert.equal(vm.tokenControlVisible(), true);
 });
 
+test('access settings issue an API token and expose its copy action', async () => {
+    const html = fs.readFileSync(require.resolve('./ui/index.html'), 'utf8');
+    assert.match(html, /data-token-issue/);
+    assert.match(html, /copyIssuedToken\(\)/);
+
+    const vm = createConsoleViewModel();
+    const previousFetch = global.fetch;
+    const notices = [];
+    global.fetch = async (path, options) => {
+        assert.equal(path, '/auth/token');
+        assert.equal(options.method, 'POST');
+        assert.equal(options.credentials, 'same-origin');
+        return {
+            ok: true,
+            status: 200,
+            async json() { return { token: 'stash_api_issued', expires_in: 3600 }; }
+        };
+    };
+    Object.assign(vm, { setNotice(text) { notices.push(text); } });
+    try {
+        await vm.issueApiToken();
+    } finally {
+        global.fetch = previousFetch;
+    }
+
+    assert.equal(vm.issuedToken, 'stash_api_issued');
+    assert.equal(vm.token, 'stash_api_issued');
+    assert.match(vm.issuedTokenExpiryLabel(), /만료/);
+    assert.equal(typeof vm.copyIssuedToken, 'function');
+    assert.deepEqual(notices, ['API 토큰을 발급했습니다.']);
+});
+
+test('token issuance surfaces an authorization error', async () => {
+    const vm = createConsoleViewModel();
+    const previousFetch = global.fetch;
+    global.fetch = async () => ({
+        ok: false,
+        status: 401,
+        async json() { return { error: 'unauthorized' }; }
+    });
+    Object.assign(vm, { setNotice() {} });
+    try {
+        await vm.issueApiToken();
+    } finally {
+        global.fetch = previousFetch;
+    }
+    assert.equal(vm.issuedToken, '');
+    assert.equal(vm.tokenIssueError, 'unauthorized');
+});
+
 test('ViewModel composition rejects duplicate keys and names both owners', () => {
     assert.throws(
         () => composeViewModels([

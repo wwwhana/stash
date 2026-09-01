@@ -110,6 +110,69 @@
                 this.token = this.token.trim();
             },
 
+            async issueApiToken() {
+                if (this.tokenIssueLoading) return;
+                this.tokenIssueLoading = true;
+                this.tokenIssueError = '';
+                this.issuedToken = '';
+                this.issuedTokenExpiresIn = 0;
+                this.issuedTokenIssuedAt = 0;
+                try {
+                    const res = await fetch('/auth/token', {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        headers: { Accept: 'application/json' }
+                    });
+                    let body = null;
+                    try { body = await res.json(); } catch (_) { /* keep the status error */ }
+                    if (!res.ok) {
+                        throw new Error(body && body.error ? body.error : `HTTP ${res.status}`);
+                    }
+                    const token = String(body && body.token || '').trim();
+                    if (!token) throw new Error('발급된 토큰이 없습니다.');
+                    this.issuedToken = token;
+                    this.issuedTokenExpiresIn = Math.max(0, Number(body.expires_in) || 0);
+                    this.issuedTokenIssuedAt = Date.now();
+                    this.token = token;
+                    this.tokenCopyStatus = '복사';
+                    this.setNotice('API 토큰을 발급했습니다.');
+                } catch (e) {
+                    this.tokenIssueError = e.message || '토큰을 발급하지 못했습니다.';
+                    this.setNotice(this.tokenIssueError, 'error', 0);
+                } finally {
+                    this.tokenIssueLoading = false;
+                }
+            },
+
+            issuedTokenExpiryLabel() {
+                if (!this.issuedToken || !this.issuedTokenExpiresIn || !this.issuedTokenIssuedAt) return '';
+                const expiresAt = new Date(this.issuedTokenIssuedAt + this.issuedTokenExpiresIn * 1000);
+                return `만료 ${expiresAt.toLocaleString()}`;
+            },
+
+            async copyIssuedToken() {
+                if (!this.issuedToken) return;
+                try {
+                    if (navigator.clipboard && window.isSecureContext) {
+                        await navigator.clipboard.writeText(this.issuedToken);
+                    } else {
+                        const input = document.createElement('textarea');
+                        input.value = this.issuedToken;
+                        input.style.position = 'fixed';
+                        input.style.opacity = '0';
+                        document.body.appendChild(input);
+                        input.select();
+                        const copied = document.execCommand('copy');
+                        input.remove();
+                        if (!copied) throw new Error('copy command was rejected');
+                    }
+                    this.tokenCopyStatus = '복사됨';
+                    window.setTimeout(() => { this.tokenCopyStatus = '복사'; }, 1600);
+                } catch (_) {
+                    this.tokenCopyStatus = '복사 실패';
+                }
+            },
+
             normalizeAdminToken() {
                 this.adminToken = this.adminToken.trim();
             },

@@ -85,6 +85,40 @@ func TestTokenEndpointRequiresPost(t *testing.T) {
 	}
 }
 
+func TestHandleGenerateTokenReportsBearerExpiry(t *testing.T) {
+	p := &Provider{config: Config{APISecret: "test-secret", APITokenTTL: 2 * time.Hour}}
+	session, err := generateSessionToken("subject-1", "test-secret", time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("generate session: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/auth/token", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session})
+	rec := httptest.NewRecorder()
+	p.HandleGenerateToken(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Token     string `json:"token"`
+		TokenType string `json:"token_type"`
+		ExpiresIn int64  `json:"expires_in"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Token == "" || body.TokenType != "Bearer" || body.ExpiresIn != int64((2*time.Hour)/time.Second) {
+		t.Fatalf("unexpected token response: %#v", body)
+	}
+	if user, err := p.VerifyRequest(httptest.NewRequest(http.MethodGet, "/", nil)); err == nil || user != "" {
+		t.Fatalf("missing credential unexpectedly verified: %q, %v", user, err)
+	}
+	verify := httptest.NewRequest(http.MethodGet, "/", nil)
+	verify.Header.Set("Authorization", "Bearer "+body.Token)
+	if user, err := p.VerifyRequest(verify); err != nil || user != "subject-1" {
+		t.Fatalf("issued token did not verify: %q, %v", user, err)
+	}
+}
+
 func TestHandleStatusReportsConfiguredAuthMode(t *testing.T) {
 	for _, test := range []struct {
 		name string

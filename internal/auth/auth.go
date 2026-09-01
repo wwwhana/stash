@@ -1203,12 +1203,20 @@ func (p *Provider) HandleGenerateToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := generateStashToken(user, p.config.APISecret, p.config.APITokenTTL)
+	ttl := p.config.APITokenTTL
+	if ttl <= 0 {
+		ttl = defaultTokenTTL
+	}
+	token, err := generateStashToken(user, p.config.APISecret, ttl)
 	if err != nil {
 		http.Error(w, `{"error":"token generation is unavailable"}`, http.StatusServiceUnavailable)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]string{"token": token})
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"token":      token,
+		"token_type": "Bearer",
+		"expires_in": int64(ttl / time.Second),
+	})
 }
 
 // HandleOAuthToken implements the authorization_code and refresh_token grants
