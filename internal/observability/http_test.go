@@ -74,6 +74,24 @@ func TestInstrumentHTTPSuppressesAccessLogAboveDebugLevel(t *testing.T) {
 	}
 }
 
+func TestConsolidationMetricsDoNotExposeNamespaceLabels(t *testing.T) {
+	RecordConsolidation(Observation{Namespace: "/sso/private/customer", EventsProcessed: 1})
+	metrics, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatalf("gather metrics: %v", err)
+	}
+	for _, family := range metrics {
+		if !strings.HasPrefix(family.GetName(), "consolidation_") {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			if len(metric.GetLabel()) != 0 {
+				t.Fatalf("%s still exposes labels: %v", family.GetName(), metric.GetLabel())
+			}
+		}
+	}
+}
+
 func TestInstrumentHTTPLogsAPIAccessAtInfoAndPropagatesRequestID(t *testing.T) {
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo}))

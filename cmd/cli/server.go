@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/alash3al/stash/internal/auth"
 	"github.com/alash3al/stash/internal/bootstrap"
 	"github.com/alash3al/stash/internal/brain"
 	"github.com/prometheus/client_golang/prometheus"
@@ -78,7 +79,14 @@ func recordEmbeddingRetryMetrics(result brain.EmbeddingRetryResult) {
 // registerOperationalRoutes adds process-level status and metrics endpoints to
 // the same listener that serves MCP, OAuth, and the web console.
 func registerOperationalRoutes(mux *http.ServeMux, bc *bootstrap.Context) {
-	mux.Handle("/metrics", promhttp.Handler())
+	// Metrics share the MCP listener. Keep the health probes public for the
+	// load balancer, but require the same credential as MCP before exposing
+	// process and workload details.
+	var provider *auth.Provider
+	if bc != nil {
+		provider = bc.Auth
+	}
+	mux.Handle("/metrics", authenticatedHTTP(provider, promhttp.Handler()))
 	mux.HandleFunc("/healthz", serviceStatusHandler(bc, "ok", false))
 	mux.HandleFunc("/readyz", serviceStatusHandler(bc, "ready", true))
 }

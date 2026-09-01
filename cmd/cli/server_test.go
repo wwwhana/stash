@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alash3al/stash/internal/auth"
 	"github.com/alash3al/stash/internal/bootstrap"
 	"github.com/alash3al/stash/internal/observability"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -63,6 +64,20 @@ func TestOperationalRoutesAreRegistered(t *testing.T) {
 				t.Fatalf("GET %s body = %q", path, rr.Body.String())
 			}
 		})
+	}
+}
+
+func TestOperationalMetricsRequireHTTPAuthentication(t *testing.T) {
+	mux := http.NewServeMux()
+	registerOperationalRoutes(mux, &bootstrap.Context{Auth: &auth.Provider{}})
+
+	metrics := httptest.NewRecorder()
+	mux.ServeHTTP(metrics, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if metrics.Code != http.StatusUnauthorized {
+		t.Fatalf("GET /metrics status = %d, want %d", metrics.Code, http.StatusUnauthorized)
+	}
+	if !strings.Contains(metrics.Header().Get("WWW-Authenticate"), "Bearer") {
+		t.Fatalf("GET /metrics did not advertise bearer authentication: %q", metrics.Header().Get("WWW-Authenticate"))
 	}
 }
 

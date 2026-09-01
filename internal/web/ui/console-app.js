@@ -114,6 +114,14 @@
                 this.adminToken = this.adminToken.trim();
             },
 
+            markAuthenticationExpired() {
+                this.sessionId = '';
+                this.auth = { ...(this.auth || {}), authenticated: false, user: '' };
+                this.authError = '로그인이 만료되었습니다. 다시 로그인하세요.';
+                this.authChecked = true;
+                this.authLoading = false;
+            },
+
             setNotice(text, type = 'success', timeout = 3200) {
                 if (this.noticeTimer) window.clearTimeout(this.noticeTimer);
                 this.notice = { text, type };

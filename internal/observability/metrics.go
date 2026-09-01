@@ -14,56 +14,56 @@ var (
 		prometheus.CounterOpts{
 			Name: "consolidation_events_processed_total",
 			Help: "Total number of events processed by consolidation",
-		}, []string{"namespace"},
+		}, []string{},
 	)
 	factsCreated = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "consolidation_facts_created_total",
 			Help: "Total number of facts created during consolidation",
-		}, []string{"namespace"},
+		}, []string{},
 	)
 	factsDeduplicated = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "consolidation_facts_deduplicated_total",
 			Help: "Total number of facts skipped due to semantic deduplication",
-		}, []string{"namespace"},
+		}, []string{},
 	)
 	relationshipsCreated = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "consolidation_relationships_created_total",
 			Help: "Total number of relationships extracted",
-		}, []string{"namespace"},
+		}, []string{},
 	)
 	llmCalls = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "consolidation_llm_calls_total",
 			Help: "Total number of LLM calls made during consolidation",
-		}, []string{"namespace"},
+		}, []string{},
 	)
 	clustersFound = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "consolidation_clusters_found_total",
 			Help: "Total number of clusters evaluated",
-		}, []string{"namespace"},
+		}, []string{},
 	)
 	eventsRead = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "consolidation_events_read_total",
 			Help: "Total number of events read during consolidation",
-		}, []string{"namespace"},
+		}, []string{},
 	)
 	duration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "consolidation_duration_seconds",
 			Help:    "Duration of consolidation runs",
 			Buckets: prometheus.DefBuckets,
-		}, []string{"namespace"},
+		}, []string{},
 	)
 	errorsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "consolidation_errors_total",
 			Help: "Number of errors encountered during consolidation",
-		}, []string{"namespace"},
+		}, []string{},
 	)
 	httpRequests = promauto.NewCounterVec(
 		prometheus.CounterOpts{
@@ -146,18 +146,17 @@ type Observation struct {
 
 // RecordConsolidation exports the provided observation to Prometheus.
 func RecordConsolidation(obs Observation) {
-	if obs.Namespace == "" {
-		obs.Namespace = "default"
-	}
-	eventsProcessed.WithLabelValues(obs.Namespace).Add(float64(obs.EventsProcessed))
-	eventsRead.WithLabelValues(obs.Namespace).Add(float64(obs.EventsRead))
-	clustersFound.WithLabelValues(obs.Namespace).Add(float64(obs.ClustersFound))
-	factsCreated.WithLabelValues(obs.Namespace).Add(float64(obs.FactsCreated))
-	factsDeduplicated.WithLabelValues(obs.Namespace).Add(float64(obs.FactsDeduplicated))
-	relationshipsCreated.WithLabelValues(obs.Namespace).Add(float64(obs.RelationshipsFound))
-	llmCalls.WithLabelValues(obs.Namespace).Add(float64(obs.LLMCalls))
-	duration.WithLabelValues(obs.Namespace).Observe(obs.Duration.Seconds())
-	errorsTotal.WithLabelValues(obs.Namespace).Add(float64(obs.Errors))
+	// Namespace paths may contain private project or user data. Aggregate these
+	// process metrics globally; detailed scope information stays in MCP output.
+	eventsProcessed.WithLabelValues().Add(float64(obs.EventsProcessed))
+	eventsRead.WithLabelValues().Add(float64(obs.EventsRead))
+	clustersFound.WithLabelValues().Add(float64(obs.ClustersFound))
+	factsCreated.WithLabelValues().Add(float64(obs.FactsCreated))
+	factsDeduplicated.WithLabelValues().Add(float64(obs.FactsDeduplicated))
+	relationshipsCreated.WithLabelValues().Add(float64(obs.RelationshipsFound))
+	llmCalls.WithLabelValues().Add(float64(obs.LLMCalls))
+	duration.WithLabelValues().Observe(obs.Duration.Seconds())
+	errorsTotal.WithLabelValues().Add(float64(obs.Errors))
 }
 
 // RecordHTTP records one completed HTTP request. Route values should be stable

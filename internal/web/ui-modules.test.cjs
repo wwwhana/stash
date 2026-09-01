@@ -88,6 +88,25 @@ test('the common API module owns HTTP and MCP transport helpers', () => {
     }
 });
 
+test('a rejected MCP request clears the stale session and expires the console auth state', async () => {
+    const api = createApiClient();
+    let expired = 0;
+    Object.assign(api, {
+        sessionId: 'stale-session',
+        initializeSession: async () => {},
+        sendMCPRequest: async () => {
+            const error = new Error('HTTP 401');
+            error.status = 401;
+            throw error;
+        },
+        markAuthenticationExpired() { expired += 1; }
+    });
+
+    await assert.rejects(api.invokeTool('list_namespaces', {}), error => error.status === 401);
+    assert.equal(api.sessionId, '');
+    assert.equal(expired, 1);
+});
+
 test('each screen factory owns its state and actions', () => {
     const route = createRouteViewModel();
     const scope = createMapScopeViewModel();
@@ -145,6 +164,7 @@ test('the console composes modules into one Alpine view-model without shared sta
     assert.equal(typeof first.loadGoalMap, 'function');
     assert.equal(typeof first.loadWorkPlan, 'function');
     assert.equal(typeof first.finishWork, 'function');
+    assert.equal(typeof first.markAuthenticationExpired, 'function');
     assert.notStrictEqual(first.graph, second.graph);
     first.graphProjectSlug = '/projects/first';
     assert.equal(second.graphProjectSlug, '');

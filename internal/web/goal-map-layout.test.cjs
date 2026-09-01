@@ -150,6 +150,17 @@ test('goal map UI keeps resource and monitoring state in its own view-model', ()
     assert.match(html, /@media \(max-width: 680px\)[\s\S]*?\.stash-goal-map__summary \{ flex-wrap: wrap; \}/);
 });
 
+test('goal map colors use the shared theme palette', () => {
+    const html = fs.readFileSync(require.resolve('./ui/index.html'), 'utf8');
+    const styles = html.match(/\.stash-goal-map \{[\s\S]*?\.stash-goal-map__unassigned button \{[^}]+\}/)?.[0] || '';
+    assert.match(styles, /var\(--stash-surface\)/);
+    assert.match(styles, /var\(--stash-ink\)/);
+    assert.doesNotMatch(styles, /(?:background|color|border-color):\s*#(?:fff|ffffff)\b/i);
+
+    const graphStyles = fs.readFileSync(require.resolve('./ui/work-graph-board.css'), 'utf8');
+    assert.doesNotMatch(graphStyles, /^:root\s*\{/m);
+});
+
 test('the work plan keeps project scope separate from map and memory scope', () => {
     const html = fs.readFileSync(require.resolve('./ui/index.html'), 'utf8');
     const viewModel = fs.readFileSync(require.resolve('./ui/work-plan-view-model.js'), 'utf8');

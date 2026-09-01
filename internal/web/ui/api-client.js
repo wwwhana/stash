@@ -36,6 +36,12 @@
                 try {
                     return await run();
                 } catch (e) {
+                    if (e.status === 401) {
+                        this.sessionId = '';
+                        if (typeof this.markAuthenticationExpired === 'function') {
+                            this.markAuthenticationExpired();
+                        }
+                    }
                     // A server restart invalidates the previous session ID.
                     if (e.status === 404 && this.sessionId) {
                         this.sessionId = '';
@@ -108,7 +114,8 @@
                 const res = await fetch('/mcp', {
                     method: 'POST',
                     headers,
-                    body: JSON.stringify(body)
+                    body: JSON.stringify(body),
+                    credentials: 'same-origin'
                 });
                 if (!res.ok) {
                     const error = new Error(`HTTP 오류 ${res.status}: ${res.statusText}`);
