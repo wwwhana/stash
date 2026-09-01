@@ -46,7 +46,8 @@ services:
       STASH_MCP_TOOL_TIMEOUT: ${STASH_MCP_TOOL_TIMEOUT:-2m}
       STASH_LOG_LEVEL: ${STASH_LOG_LEVEL:-info}
       STASH_LOG_FORMAT: ${STASH_LOG_FORMAT:-text}
-      # none is safe for the bundled local sample; use oauth for a remote MCP.
+      # none is safe for the bundled local sample; use token for a remote MCP
+      # without OIDC, or oauth when the browser also needs OIDC login.
       STASH_AUTH_MODE: ${STASH_AUTH_MODE:-none}
       STASH_AUTH_ISSUER: ${STASH_AUTH_ISSUER:-}
       STASH_AUTH_CLIENT_ID: ${STASH_AUTH_CLIENT_ID:-}

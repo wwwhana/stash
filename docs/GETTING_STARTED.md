@@ -112,16 +112,23 @@ If tools fail, check `.env`:
 | `STASH_REASONER_RESERVED_TOKENS` | Tokens kept for instructions and the JSON answer (default `4096`) |
 | `STASH_MCP_MAX_RESPONSE_BYTES` | Maximum JSON bytes in one MCP tool result (default `32768`); large pages return `next_offset` |
 | `STASH_MCP_TOOL_TIMEOUT` | Maximum time for one MCP tool call (default `2m`) |
+| `STASH_AUTH_MODE` | `none`, `token`, `oauth`, or `stdio` |
+| `STASH_AUTH_API_SECRET` | Secret used to sign Stash API tokens |
+| `STASH_AUTH_TOKEN_TTL` | Lifetime of issued API tokens (default `720h`) |
 
 ### HTTP MCP authentication
 
-Use `STASH_AUTH_MODE=oauth` for a remote Streamable HTTP or SSE server. Set
-`STASH_AUTH_ISSUER` to the OIDC provider's issuer, configure the browser client
-(`STASH_AUTH_CLIENT_ID`, `STASH_AUTH_CLIENT_SECRET`, and
-`STASH_AUTH_REDIRECT_URL`), and set `STASH_AUTH_MCP_RESOURCE_URL` to the public
-`/mcp` URL. Stash exposes the protected-resource and authorization-server
-metadata, then performs Authorization Code + PKCE and issues a resource-bound
-Bearer token. `/oauth/register` accepts native public-client registrations.
+Use `STASH_AUTH_MODE=token` and `STASH_AUTH_API_SECRET` for a remote
+Streamable HTTP or SSE server. Issue a token without OIDC or database access:
+
+```bash
+stash mcp token --subject agent-1
+```
+
+Send the result as `Authorization: Bearer <stash_api_token>`. MCP verifies this
+Stash token directly and does not start OIDC discovery. `STASH_AUTH_MODE=oauth`
+is still available when the browser console needs OIDC login; MCP requests use
+the Stash token there as well. `STASH_AUTH_TOKEN_TTL` controls token lifetime.
 
 For a local CLI process, use `STASH_AUTH_MODE=stdio`; STDIO does not use MCP
 OAuth discovery. `STASH_AUTH_MODE=none` disables HTTP authentication and is

@@ -22,7 +22,15 @@ type workspaceFacts struct {
 }
 
 func commandNeedsBootstrap(args []string) bool {
-	return len(args) < 3 || args[1] != "workspace" || args[2] != "facts"
+	if len(args) >= 3 && args[1] == "workspace" && args[2] == "facts" {
+		return false
+	}
+	// Token issuance only needs the configured signing secret. Avoid opening
+	// PostgreSQL or contacting an OIDC provider for this local operation.
+	if len(args) >= 3 && args[1] == "mcp" && args[2] == "token" {
+		return false
+	}
+	return true
 }
 
 func optionalGitOutput(ctx context.Context, dir string, args ...string) (string, error) {

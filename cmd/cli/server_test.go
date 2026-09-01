@@ -106,6 +106,37 @@ func TestStashHTTPHandlerAllowsDisabledAuthentication(t *testing.T) {
 	}
 }
 
+func TestStashHTTPHandlerUsesNativeMCPToken(t *testing.T) {
+	provider, err := auth.Init(context.Background(), auth.Config{Mode: "token", APISecret: "test-secret"})
+	if err != nil {
+		t.Fatalf("init token auth: %v", err)
+	}
+	token, err := auth.GenerateAPIToken("agent-1", "test-secret", time.Hour)
+	if err != nil {
+		t.Fatalf("generate token: %v", err)
+	}
+	handler := newStashHTTPHandler(&bootstrap.Context{Auth: provider})
+	request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}`))
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json, text/event-stream")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"result"`) {
+		t.Fatalf("native MCP request status = %d, body = %s", response.Code, response.Body.String())
+	}
+
+	request = httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}`))
+	request.Header.Set("Authorization", "Bearer upstream-oidc-token")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json, text/event-stream")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized || response.Header().Get("WWW-Authenticate") != `Bearer realm="stash"` {
+		t.Fatalf("OIDC MCP request status = %d, challenge = %q", response.Code, response.Header().Get("WWW-Authenticate"))
+	}
+}
+
 func TestObserveMCPToolStopsStalledHandler(t *testing.T) {
 	middleware := observeMCPTool(nil, 20*time.Millisecond)
 	handler := middleware(func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {

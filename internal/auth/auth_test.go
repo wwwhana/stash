@@ -119,6 +119,45 @@ func TestHandleGenerateTokenReportsBearerExpiry(t *testing.T) {
 	}
 }
 
+func TestVerifyMCPRequestAcceptsOnlyStashToken(t *testing.T) {
+	p := &Provider{config: Config{APISecret: "test-secret"}}
+	apiToken, err := generateStashToken("subject-1", "test-secret", time.Hour)
+	if err != nil {
+		t.Fatalf("generate API token: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	req.Header.Set("Authorization", "Bearer "+apiToken)
+	if got, err := p.VerifyMCPRequest(req); err != nil || got != "subject-1" {
+		t.Fatalf("native MCP token = %q, %v", got, err)
+	}
+
+	oidc := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	oidc.Header.Set("Authorization", "Bearer upstream-oidc-token")
+	if got, err := p.VerifyMCPRequest(oidc); err == nil || got != "" || !strings.Contains(err.Error(), "MCP API token required") {
+		t.Fatalf("OIDC token was accepted or returned the wrong error: %q, %v", got, err)
+	}
+
+	session, err := generateSessionToken("subject-1", "test-secret", time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("generate session: %v", err)
+	}
+	cookie := httptest.NewRequest(http.MethodGet, "/mcp", nil)
+	cookie.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session})
+	if got, err := p.VerifyMCPRequest(cookie); err != nil || got != "subject-1" {
+		t.Fatalf("browser session = %q, %v", got, err)
+	}
+}
+
+func TestGenerateAPITokenDoesNotRequireOIDC(t *testing.T) {
+	token, err := GenerateAPIToken("agent-1", "test-secret", time.Hour)
+	if err != nil {
+		t.Fatalf("generate API token: %v", err)
+	}
+	if got, err := parseStashToken(token, "test-secret"); err != nil || got != "agent-1" {
+		t.Fatalf("generated API token = %q, %v", got, err)
+	}
+}
+
 func TestHandleStatusReportsConfiguredAuthMode(t *testing.T) {
 	for _, test := range []struct {
 		name string
@@ -605,6 +644,25 @@ func TestStdioModeDoesNotExposeHTTPAuthentication(t *testing.T) {
 	}
 }
 
+func TestTokenModeDoesNotContactOIDC(t *testing.T) {
+	p, err := Init(context.Background(), Config{Mode: "token", APISecret: "test-secret", APITokenTTL: time.Hour})
+	if err != nil {
+		t.Fatalf("init token auth: %v", err)
+	}
+	if p == nil || p.Mode() != "token" || !p.HTTPAuthEnabled() {
+		t.Fatalf("token provider = %#v, HTTPAuthEnabled = %v", p, p.HTTPAuthEnabled())
+	}
+	token, err := GenerateAPIToken("agent-1", "test-secret", time.Hour)
+	if err != nil {
+		t.Fatalf("generate token: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	if got, err := p.VerifyMCPRequest(req); err != nil || got != "agent-1" {
+		t.Fatalf("token mode request = %q, %v", got, err)
+	}
+}
+
 func TestBearerTokenAcceptsHTTPWhitespace(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("Authorization", "\tBearer   token-value  ")
@@ -687,12 +745,12 @@ func TestProtectedResourceMetadataHonorsConfiguredResourceURL(t *testing.T) {
 	}
 }
 
-func TestMCPUnauthorizedAdvertisesPathMetadata(t *testing.T) {
+func TestMCPUnauthorizedRequiresStashToken(t *testing.T) {
 	p := &Provider{}
 	req := httptest.NewRequest(http.MethodPost, "https://stash.example.com/mcp", nil)
 	rec := httptest.NewRecorder()
 	p.MCPUnauthorized(rec, req)
-	if got := rec.Header().Get("WWW-Authenticate"); got != `Bearer resource_metadata="https://stash.example.com/.well-known/oauth-protected-resource/mcp"` {
+	if got := rec.Header().Get("WWW-Authenticate"); got != `Bearer realm="stash"` {
 		t.Fatalf("WWW-Authenticate = %q", got)
 	}
 	if rec.Code != http.StatusUnauthorized {
@@ -700,13 +758,13 @@ func TestMCPUnauthorizedAdvertisesPathMetadata(t *testing.T) {
 	}
 }
 
-func TestMCPUnauthorizedUsesConfiguredResourceHost(t *testing.T) {
+func TestMCPUnauthorizedDoesNotAdvertiseOIDCMetadata(t *testing.T) {
 	p := &Provider{config: Config{MCPResourceURL: "https://public.example.com/mcp"}}
 	req := httptest.NewRequest(http.MethodPost, "http://internal:8080/mcp", nil)
 	rec := httptest.NewRecorder()
 	p.MCPUnauthorized(rec, req)
 
-	if got, want := rec.Header().Get("WWW-Authenticate"), `Bearer resource_metadata="https://public.example.com/.well-known/oauth-protected-resource/mcp"`; got != want {
+	if got, want := rec.Header().Get("WWW-Authenticate"), `Bearer realm="stash"`; got != want {
 		t.Fatalf("WWW-Authenticate = %q, want %q", got, want)
 	}
 }

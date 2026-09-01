@@ -151,9 +151,9 @@ func (c *Config) applyAuthAliases() {
 // database startup or the first MCP call.
 func (c *Config) Validate() error {
 	switch strings.ToLower(strings.TrimSpace(c.AuthMode)) {
-	case "", "none", "oauth", "oidc", "stdio":
+	case "", "none", "oauth", "oidc", "token", "stdio":
 	default:
-		return fmt.Errorf("STASH_AUTH_MODE must be one of none, oauth, oidc, or stdio")
+		return fmt.Errorf("STASH_AUTH_MODE must be one of none, oauth, oidc, token, or stdio")
 	}
 	if raw := strings.TrimSpace(c.AuthOAuthCookieSecureRaw); raw != "" {
 		if _, err := strconv.ParseBool(raw); err != nil {

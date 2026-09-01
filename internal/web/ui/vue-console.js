@@ -94,12 +94,13 @@
 
     <section v-if="authPanelOpen" class="stash-token-panel">
       <h3>접근 설정</h3>
-      <p v-if="auth.auth_mode !== 'none' && !auth.authenticated">로그인 후 API를 사용할 수 있습니다.</p>
+      <p v-if="auth.auth_mode === 'token' && !auth.authenticated">stash mcp token으로 발급한 토큰을 입력하세요.</p>
+      <p v-else-if="auth.auth_mode !== 'none' && !auth.authenticated">로그인 후 API를 사용할 수 있습니다.</p>
       <p v-else>세션은 브라우저 쿠키로 유지됩니다.</p>
       <div class="stash-token-row"><input v-model="apiTokenInput" type="password" placeholder="API 토큰(선택)"><button type="button" class="stash-button is-primary" @click="useApiToken">적용</button></div>
       <div class="stash-token-issued" v-if="issuedToken"><code>{{ issuedToken }}</code><button type="button" class="stash-button" @click="copyIssuedToken">토큰 복사</button></div>
-      <button type="button" class="stash-button" :disabled="tokenLoading" @click="issueToken">새 토큰 발급</button>
-      <a v-if="auth.auth_mode !== 'none' && !auth.authenticated" class="stash-button" href="/auth/login">로그인</a>
+      <button v-if="auth.authenticated" type="button" class="stash-button" :disabled="tokenLoading" @click="issueToken">새 토큰 발급</button>
+      <a v-if="canLogin && !auth.authenticated" class="stash-button" href="/auth/login">로그인</a>
       <div v-if="tokenError" class="stash-error">{{ tokenError }}</div>
     </section>
 
@@ -108,7 +109,7 @@
         <div><p class="stash-kicker">루트 객체</p><h2>{{ rootName }}</h2><p>{{ rootSlug }} · 목표와 작업, 근거를 한 범위에서 봅니다.</p></div>
         <div class="stash-counts" aria-label="루트 요약"><div class="stash-count"><strong>{{ rootCounts.goal }}</strong><span>목표</span></div><div class="stash-count"><strong>{{ rootCounts.work }}</strong><span>작업</span></div><div class="stash-count"><strong>{{ rootCounts.memory }}</strong><span>기억</span></div><div class="stash-count"><strong>{{ rootCounts.resource }}</strong><span>자료</span></div></div>
       </div>
-      <div v-if="error" class="stash-error" role="alert">{{ error }} <a v-if="auth.auth_mode !== 'none' && !auth.authenticated" href="/auth/login">로그인</a></div>
+      <div v-if="error" class="stash-error" role="alert">{{ error }} <a v-if="canLogin && !auth.authenticated" href="/auth/login">로그인</a></div>
       <div v-if="loading" class="stash-loading">불러오는 중…</div>
       <div v-else class="stash-content-grid" :class="{'is-detail': route.detail}">
         <section>
@@ -218,6 +219,7 @@
             },
             rootLabel() { return `${this.rootName} · ${this.rootSlug}`; },
             themePreference() { return document.documentElement.dataset.stashThemePreference || 'system'; },
+            canLogin() { return ['oauth', 'oidc'].includes(text(this.auth && this.auth.auth_mode)); },
             rootGoal() {
                 const tree = this.map.goal_tree || {};
                 return (tree.goals || []).find(goal => number(goal.id) === number(tree.root_goal_id)) || null;
@@ -389,7 +391,7 @@
                 this.namespaces = itemsOf(result).map(item => { const slug = text(item.slug || item.path); const name = text(item.name || item.title); return { ...item, slug: slug || '/', name, label: name && name !== slug ? `${name} · ${slug}` : slug || '/' }; }).filter(item => item.slug);
             },
             async bootstrap() {
-                try { const response = await fetch('/auth/status', { credentials: 'same-origin', headers: { Accept: 'application/json' } }); if (response.ok) this.auth = await response.json(); } catch (_) { /* 인증 상태 없이 화면을 계속 표시 */ }
+                try { const headers = { Accept: 'application/json' }; if (api.token) headers.Authorization = 'Bearer ' + api.token; const response = await fetch('/auth/status', { credentials: 'same-origin', headers }); if (response.ok) this.auth = await response.json(); } catch (_) { /* 인증 상태 없이 화면을 계속 표시 */ }
                 try { await this.fetchNamespaces(); } catch (error) { this.error = text(error && error.message) || '네임스페이스 목록을 불러오지 못했습니다.'; }
                 const requested = text(this.route.project || this.route.namespace);
                 if (requested && this.rootOptions.some(item => item.slug === requested)) this.rootSlug = requested;

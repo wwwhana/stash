@@ -88,37 +88,36 @@ With the bundled `STASH_AUTH_MODE=none` local setting, no MCP login is needed. Y
 }
 ```
 
-For a remote, OAuth-protected MCP server, use Streamable HTTP:
+For a remote MCP server, use a Stash API token with Streamable HTTP:
 
 ```bash
-codex mcp add stash --url https://stash.example.com/mcp --oauth-client-id stash-codex
-codex mcp login stash
+export STASH_MCP_TOKEN="$(stash mcp token --subject codex)"
+codex mcp add stash --url https://stash.example.com/mcp --bearer-token-env-var STASH_MCP_TOKEN
 ```
 
-Set `STASH_AUTH_MODE=oauth`, the OIDC issuer, browser client settings, and
-`STASH_AUTH_MCP_RESOURCE_URL` to the public `/mcp` URL. Stash publishes the
-MCP Protected Resource Metadata and brokers Authorization Code + PKCE through
-the configured OIDC provider. Dynamic public-client registration is available
-at `/oauth/register`; manually registered clients may use the same endpoints.
+Set `STASH_AUTH_MODE=token` and `STASH_AUTH_API_SECRET`, then use `stash mcp token --subject <agent>` to issue
+the bearer token. MCP verifies this Stash-signed token directly; it does not
+use an OIDC access token or OAuth discovery. OIDC settings remain optional for
+the browser console login and its token-issue button.
 
 Authentication profiles:
 
 - `none`: no HTTP authentication. Use only for an isolated local instance.
-- `oauth` (or the legacy alias `oidc`): OAuth 2.1 Bearer access tokens for
-  Streamable HTTP and SSE, with Protected Resource Metadata, PKCE, refresh
-  token rotation, and optional dynamic client registration.
+- `oauth` (or the legacy alias `oidc`): OIDC for the browser session. HTTP MCP
+  and SSE requests still require a Stash API bearer token.
+- `token`: OIDC-free HTTP authentication using only Stash API bearer tokens.
 - `stdio`: no MCP OAuth discovery. The local process is trusted, or it can
   validate `STASH_AUTH_STDIO_TOKEN` before using an isolated namespace.
 
-HTTP MCP requests must send `Authorization: Bearer <access-token>`. The
+HTTP MCP requests must send `Authorization: Bearer <stash_api_token>`. The
 browser session cookie is only for the embedded console; it is not the
 standard client credential.
 
-After signing in, the console's **Access settings** can issue a Stash API
-Bearer token for MCP or metrics clients. The token lifetime follows
-`STASH_AUTH_TOKEN_TTL` (30 days by default); it is shown once and is not stored
-by the browser. For long-running scrapes, rotate it before expiry or protect
-`/metrics` with an internal network or mTLS proxy.
+The console's **Access settings** can issue a Stash API token after browser
+login. For a server without OIDC, run `stash mcp token --subject <agent>` with
+`STASH_AUTH_API_SECRET`; the command does not open the database or contact an
+OIDC provider. The token lifetime follows `STASH_AUTH_TOKEN_TTL` (30 days by
+default) and can be renewed with the same command.
 
 ### 3. agy (Antigravity)
 

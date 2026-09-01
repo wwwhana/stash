@@ -66,7 +66,7 @@ func TestAuthenticationModeValidation(t *testing.T) {
 		DecayFactor: .5, ExpiryThreshold: .1,
 		HypothesisAutoConfirmThreshold: .9, HypothesisAutoRejectThreshold: .9,
 	}
-	for _, mode := range []string{"none", "oauth", "oidc", "stdio"} {
+	for _, mode := range []string{"none", "oauth", "oidc", "token", "stdio"} {
 		cfg := *base
 		cfg.AuthMode = mode
 		if err := cfg.Validate(); err != nil {

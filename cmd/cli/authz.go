@@ -44,7 +44,7 @@ func authenticatedHTTP(provider *auth.Provider, next http.Handler) http.Handler 
 			return
 		}
 
-		user, err := provider.VerifyRequest(r)
+		user, err := provider.VerifyMCPRequest(r)
 		if err != nil || user == "" {
 			observability.RecordAuthCheck(r.URL.Path, "rejected")
 			provider.MCPUnauthorized(w, r)

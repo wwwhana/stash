@@ -170,6 +170,22 @@ func Init(ctx context.Context, cfg Config) (*Provider, error) {
 			refreshTokens: make(map[string]refreshToken),
 		}, nil
 	}
+	if mode == "token" {
+		if strings.TrimSpace(cfg.APISecret) == "" {
+			return nil, errors.New("token mode requires STASH_AUTH_API_SECRET")
+		}
+		if cfg.APITokenTTL <= 0 {
+			cfg.APITokenTTL = defaultTokenTTL
+		}
+		log.Println("Auth mode: token (Stash API tokens; OIDC is not used)")
+		return &Provider{
+			config:        cfg,
+			clients:       make(map[string]oauthClient),
+			pending:       make(map[string]authorizationRequest),
+			codes:         make(map[string]authorizationCode),
+			refreshTokens: make(map[string]refreshToken),
+		}, nil
+	}
 	if mode != "oauth" {
 		return nil, fmt.Errorf("unsupported auth mode: %q", cfg.Mode)
 	}
@@ -178,6 +194,9 @@ func Init(ctx context.Context, cfg Config) (*Provider, error) {
 	}
 	if cfg.MCPClientID == "" && strings.TrimSpace(cfg.MCPResourceURL) == "" {
 		return nil, errors.New("OAuth mode requires STASH_AUTH_MCP_CLIENT_ID or STASH_AUTH_MCP_RESOURCE_URL")
+	}
+	if strings.TrimSpace(cfg.APISecret) == "" {
+		return nil, errors.New("HTTP MCP authentication requires STASH_AUTH_API_SECRET")
 	}
 	// The browser login is optional: an MCP resource server can operate without
 	// keeping a second confidential OAuth client. A client ID/secret pair may be
@@ -901,23 +920,30 @@ func (p *Provider) localIssuerURL(r *http.Request) string {
 	return strings.TrimRight(base, "/")
 }
 
-// MCPUnauthorized writes the RFC 6750 challenge that points an OAuth client
-// to the protected-resource metadata for the endpoint it requested.
+// MCPUnauthorized asks the client for a Stash API token. MCP no longer points
+// unauthenticated agents at OIDC discovery, because an OIDC access token is
+// not the credential accepted by VerifyMCPRequest.
 func (p *Provider) MCPUnauthorized(w http.ResponseWriter, r *http.Request) {
-	metadataURL := p.protectedResourceMetadataURL(r)
-	if metadataURL == "" {
-		w.Header().Set("WWW-Authenticate", `Bearer realm="stash"`)
-	} else {
-		w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="`+metadataURL+`"`)
-	}
+	w.Header().Set("WWW-Authenticate", `Bearer realm="stash"`)
 	http.Error(w, "authentication required", http.StatusUnauthorized)
 }
 
 // VerifyRequest validates a signed Stash session/API token or an OIDC access
-// token sent as a bearer credential. OIDC ID tokens are deliberately not
-// accepted here: they are meant for the OAuth client, not this resource server.
-// It returns the stable OIDC subject, never a mutable email claim.
+// token sent as a bearer credential. It is used by the browser and maintenance
+// routes, where the OIDC session remains the login boundary.
 func (p *Provider) VerifyRequest(r *http.Request) (string, error) {
+	return p.verifyRequest(r, false)
+}
+
+// VerifyMCPRequest validates the credential used by MCP transports. MCP does
+// not consume an expiring OIDC access token: agents use a Stash API token that
+// is signed with STASH_AUTH_API_SECRET. A browser session cookie is retained
+// only for the embedded console, which already runs on the same origin.
+func (p *Provider) VerifyMCPRequest(r *http.Request) (string, error) {
+	return p.verifyRequest(r, true)
+}
+
+func (p *Provider) verifyRequest(r *http.Request, mcp bool) (string, error) {
 	if p == nil {
 		return "", errors.New("authentication is disabled")
 	}
@@ -937,13 +963,22 @@ func (p *Provider) VerifyRequest(r *http.Request) (string, error) {
 	}
 
 	if strings.HasPrefix(rawToken, sessionTokenPrefix) {
+		if mcp && bearer {
+			return "", errors.New("MCP API token required")
+		}
 		return parseSessionToken(rawToken, p.config.APISecret)
 	}
 	if strings.HasPrefix(rawToken, oauthTokenPrefix) {
+		if mcp {
+			return "", errors.New("MCP API token required")
+		}
 		return parseOAuthAccessToken(rawToken, p.config.APISecret, p.configuredResourceURL(r))
 	}
 	if strings.HasPrefix(rawToken, apiTokenPrefix) {
 		return parseStashToken(rawToken, p.config.APISecret)
+	}
+	if mcp {
+		return "", errors.New("MCP API token required")
 	}
 	if !bearer {
 		return "", errors.New("unsupported session credential")
@@ -1590,6 +1625,12 @@ func randomToken(size int) (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+// GenerateAPIToken creates a Stash bearer token without contacting an OIDC
+// provider. The caller must keep the returned value private.
+func GenerateAPIToken(user, secret string, ttl time.Duration) (string, error) {
+	return generateStashToken(user, secret, ttl)
 }
 
 func generateStashToken(user, secret string, ttl time.Duration) (string, error) {

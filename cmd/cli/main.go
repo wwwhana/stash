@@ -557,6 +557,15 @@ func main() {
 				Usage: "MCP server for agent integration",
 				Commands: []*cli.Command{
 					{
+						Name:   "token",
+						Usage:  "Issue a Stash API token without OIDC or database access",
+						Action: mcpTokenCmd,
+						Flags: []cli.Flag{
+							&cli.StringFlag{Name: "subject", Usage: "Stable agent or user identity"},
+							&cli.DurationFlag{Name: "ttl", Value: 720 * time.Hour, Usage: "Token lifetime"},
+						},
+					},
+					{
 						Name:   "serve",
 						Usage:  "Start the HTTP server (MCP on /mcp, SSE on /sse, web console, metrics, and health checks)",
 						Action: mcpServeCmd,

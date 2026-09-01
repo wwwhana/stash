@@ -1232,6 +1232,45 @@ func mcpExecuteCmd(ctx context.Context, cmd *cli.Command) error {
 	return err
 }
 
+func mcpTokenCmd(_ context.Context, cmd *cli.Command) error {
+	secret := strings.TrimSpace(os.Getenv("STASH_AUTH_API_SECRET"))
+	if secret == "" {
+		secret = strings.TrimSpace(os.Getenv("STASH_AUTH_OAUTH_API_SECRET"))
+	}
+	if secret == "" {
+		return fmt.Errorf("STASH_AUTH_API_SECRET must be set")
+	}
+	subject := strings.TrimSpace(cmd.String("subject"))
+	if subject == "" {
+		subject = strings.TrimSpace(os.Getenv("STASH_AGENT_ID"))
+	}
+	if subject == "" {
+		return fmt.Errorf("--subject or STASH_AGENT_ID must be set")
+	}
+	ttl := cmd.Duration("ttl")
+	if !cmd.IsSet("ttl") {
+		rawTTL := strings.TrimSpace(os.Getenv("STASH_AUTH_TOKEN_TTL"))
+		if rawTTL == "" {
+			rawTTL = strings.TrimSpace(os.Getenv("STASH_AUTH_OAUTH_TOKEN_TTL"))
+		}
+		if rawTTL != "" {
+			parsed, err := time.ParseDuration(rawTTL)
+			if err != nil {
+				return fmt.Errorf("STASH_AUTH_TOKEN_TTL is invalid: %w", err)
+			}
+			ttl = parsed
+		}
+	}
+	token, err := auth.GenerateAPIToken(subject, secret, ttl)
+	if err != nil {
+		return fmt.Errorf("generate MCP token: %w", err)
+	}
+	// This is an explicit credential-generation command; do not log it from
+	// the server or include it in any durable work record.
+	fmt.Println(token)
+	return nil
+}
+
 func runEmbeddingRetryTicker(ctx context.Context, bc *bootstrap.Context) {
 	if bc == nil || bc.Config == nil || bc.Brain == nil {
 		return
