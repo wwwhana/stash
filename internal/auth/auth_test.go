@@ -119,8 +119,11 @@ func TestHandleGenerateTokenReportsBearerExpiry(t *testing.T) {
 	}
 }
 
-func TestVerifyMCPRequestAcceptsOnlyStashToken(t *testing.T) {
-	p := &Provider{config: Config{APISecret: "test-secret"}}
+func TestVerifyMCPRequestAcceptsStashAndOAuthTokens(t *testing.T) {
+	p := &Provider{config: Config{
+		APISecret:      "test-secret",
+		MCPResourceURL: "https://stash.example.com/mcp",
+	}}
 	apiToken, err := generateStashToken("subject-1", "test-secret", time.Hour)
 	if err != nil {
 		t.Fatalf("generate API token: %v", err)
@@ -131,9 +134,29 @@ func TestVerifyMCPRequestAcceptsOnlyStashToken(t *testing.T) {
 		t.Fatalf("native MCP token = %q, %v", got, err)
 	}
 
+	oauthToken, err := generateOAuthAccessToken("subject-1", "test-secret", "https://stash.example.com/mcp", "openid", time.Hour)
+	if err != nil {
+		t.Fatalf("generate OAuth token: %v", err)
+	}
+	oauth := httptest.NewRequest(http.MethodPost, "https://stash.example.com/mcp", nil)
+	oauth.Header.Set("Authorization", "Bearer "+oauthToken)
+	if got, err := p.VerifyMCPRequest(oauth); err != nil || got != "subject-1" {
+		t.Fatalf("OAuth MCP token = %q, %v", got, err)
+	}
+
+	wrongResource, err := generateOAuthAccessToken("subject-1", "test-secret", "https://other.example.com/mcp", "openid", time.Hour)
+	if err != nil {
+		t.Fatalf("generate wrong-resource OAuth token: %v", err)
+	}
+	wrong := httptest.NewRequest(http.MethodPost, "https://stash.example.com/mcp", nil)
+	wrong.Header.Set("Authorization", "Bearer "+wrongResource)
+	if got, err := p.VerifyMCPRequest(wrong); err == nil || got != "" || !strings.Contains(err.Error(), "unexpected resource") {
+		t.Fatalf("wrong-resource OAuth token was accepted: %q, %v", got, err)
+	}
+
 	oidc := httptest.NewRequest(http.MethodPost, "/mcp", nil)
 	oidc.Header.Set("Authorization", "Bearer upstream-oidc-token")
-	if got, err := p.VerifyMCPRequest(oidc); err == nil || got != "" || !strings.Contains(err.Error(), "MCP API token required") {
+	if got, err := p.VerifyMCPRequest(oidc); err == nil || got != "" || !strings.Contains(err.Error(), "MCP OAuth or API token required") {
 		t.Fatalf("OIDC token was accepted or returned the wrong error: %q, %v", got, err)
 	}
 
@@ -575,6 +598,9 @@ func TestOAuthDynamicClientRegistrationAndPKCETokenExchange(t *testing.T) {
 	if got, err := p.VerifyRequest(verifyReq); err != nil || got != "subject-1" {
 		t.Fatalf("VerifyRequest = %q, %v", got, err)
 	}
+	if got, err := p.VerifyMCPRequest(verifyReq); err != nil || got != "subject-1" {
+		t.Fatalf("VerifyMCPRequest = %q, %v", got, err)
+	}
 
 	// Authorization codes are single-use.
 	replayReq := httptest.NewRequest(http.MethodPost, "https://stash.example.com/oauth/token", strings.NewReader(form.Encode()))
@@ -745,26 +771,16 @@ func TestProtectedResourceMetadataHonorsConfiguredResourceURL(t *testing.T) {
 	}
 }
 
-func TestMCPUnauthorizedRequiresStashToken(t *testing.T) {
-	p := &Provider{}
-	req := httptest.NewRequest(http.MethodPost, "https://stash.example.com/mcp", nil)
-	rec := httptest.NewRecorder()
-	p.MCPUnauthorized(rec, req)
-	if got := rec.Header().Get("WWW-Authenticate"); got != `Bearer realm="stash"` {
-		t.Fatalf("WWW-Authenticate = %q", got)
-	}
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
-	}
-}
-
-func TestMCPUnauthorizedDoesNotAdvertiseOIDCMetadata(t *testing.T) {
+func TestMCPUnauthorizedAdvertisesProtectedResourceMetadata(t *testing.T) {
 	p := &Provider{config: Config{MCPResourceURL: "https://public.example.com/mcp"}}
 	req := httptest.NewRequest(http.MethodPost, "http://internal:8080/mcp", nil)
 	rec := httptest.NewRecorder()
 	p.MCPUnauthorized(rec, req)
 
-	if got, want := rec.Header().Get("WWW-Authenticate"), `Bearer realm="stash"`; got != want {
+	if got, want := rec.Header().Get("WWW-Authenticate"), `Bearer resource_metadata="https://public.example.com/.well-known/oauth-protected-resource/mcp"`; got != want {
 		t.Fatalf("WWW-Authenticate = %q, want %q", got, want)
+	}
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
 	}
 }

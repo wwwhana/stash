@@ -88,30 +88,35 @@ With the bundled `STASH_AUTH_MODE=none` local setting, no MCP login is needed. Y
 }
 ```
 
-For a remote MCP server, use a Stash API token with Streamable HTTP:
+For a remote MCP server, use Streamable HTTP. With the `oauth` profile, the
+MCP client follows OAuth Authorization Code login and receives a Stash access
+token bound to the MCP resource:
+
+```bash
+codex mcp add stash --url https://stash.example.com/mcp
+```
+
+For unattended clients, set `STASH_AUTH_MODE=token` and
+`STASH_AUTH_API_SECRET`, then issue a native bearer token:
 
 ```bash
 export STASH_MCP_TOKEN="$(stash mcp token --subject codex)"
 codex mcp add stash --url https://stash.example.com/mcp --bearer-token-env-var STASH_MCP_TOKEN
 ```
 
-Set `STASH_AUTH_MODE=token` and `STASH_AUTH_API_SECRET`, then use `stash mcp token --subject <agent>` to issue
-the bearer token. MCP verifies this Stash-signed token directly; it does not
-use an OIDC access token or OAuth discovery. OIDC settings remain optional for
-the browser console login and its token-issue button.
-
 Authentication profiles:
 
 - `none`: no HTTP authentication. Use only for an isolated local instance.
-- `oauth` (or the legacy alias `oidc`): OIDC for the browser session. HTTP MCP
-  and SSE requests still require a Stash API bearer token.
+- `oauth` (or the legacy alias `oidc`): OIDC login plus the MCP OAuth
+  Authorization Code flow. MCP and SSE accept the resource-bound Stash OAuth
+  access token and native Stash API bearer tokens.
 - `token`: OIDC-free HTTP authentication using only Stash API bearer tokens.
 - `stdio`: no MCP OAuth discovery. The local process is trusted, or it can
   validate `STASH_AUTH_STDIO_TOKEN` before using an isolated namespace.
 
-HTTP MCP requests must send `Authorization: Bearer <stash_api_token>`. The
-browser session cookie is only for the embedded console; it is not the
-standard client credential.
+HTTP MCP requests must send `Authorization: Bearer <stash_oauth_token>` or
+`Authorization: Bearer <stash_api_token>`. The browser session cookie is only
+for the embedded console; it is not the standard client credential.
 
 The console's **Access settings** can issue a Stash API token after browser
 login. For a server without OIDC, run `stash mcp token --subject <agent>` with

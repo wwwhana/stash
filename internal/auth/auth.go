@@ -920,11 +920,20 @@ func (p *Provider) localIssuerURL(r *http.Request) string {
 	return strings.TrimRight(base, "/")
 }
 
-// MCPUnauthorized asks the client for a Stash API token. MCP no longer points
-// unauthenticated agents at OIDC discovery, because an OIDC access token is
-// not the credential accepted by VerifyMCPRequest.
+// MCPUnauthorized writes the RFC 6750 challenge that points an OAuth client
+// to the protected-resource metadata for the endpoint it requested.
 func (p *Provider) MCPUnauthorized(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("WWW-Authenticate", `Bearer realm="stash"`)
+	if !p.oauthMode() {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="stash"`)
+		http.Error(w, "authentication required", http.StatusUnauthorized)
+		return
+	}
+	metadataURL := p.protectedResourceMetadataURL(r)
+	if metadataURL == "" {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="stash"`)
+	} else {
+		w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="`+metadataURL+`"`)
+	}
 	http.Error(w, "authentication required", http.StatusUnauthorized)
 }
 
@@ -935,10 +944,10 @@ func (p *Provider) VerifyRequest(r *http.Request) (string, error) {
 	return p.verifyRequest(r, false)
 }
 
-// VerifyMCPRequest validates the credential used by MCP transports. MCP does
-// not consume an expiring OIDC access token: agents use a Stash API token that
-// is signed with STASH_AUTH_API_SECRET. A browser session cookie is retained
-// only for the embedded console, which already runs on the same origin.
+// VerifyMCPRequest validates the credential used by MCP transports. It accepts
+// either a Stash API token or a Stash OAuth access token whose resource and
+// signature are checked locally. A browser session cookie is retained only for
+// the embedded console, which already runs on the same origin.
 func (p *Provider) VerifyMCPRequest(r *http.Request) (string, error) {
 	return p.verifyRequest(r, true)
 }
@@ -964,21 +973,18 @@ func (p *Provider) verifyRequest(r *http.Request, mcp bool) (string, error) {
 
 	if strings.HasPrefix(rawToken, sessionTokenPrefix) {
 		if mcp && bearer {
-			return "", errors.New("MCP API token required")
+			return "", errors.New("MCP OAuth or API token required")
 		}
 		return parseSessionToken(rawToken, p.config.APISecret)
 	}
 	if strings.HasPrefix(rawToken, oauthTokenPrefix) {
-		if mcp {
-			return "", errors.New("MCP API token required")
-		}
 		return parseOAuthAccessToken(rawToken, p.config.APISecret, p.configuredResourceURL(r))
 	}
 	if strings.HasPrefix(rawToken, apiTokenPrefix) {
 		return parseStashToken(rawToken, p.config.APISecret)
 	}
 	if mcp {
-		return "", errors.New("MCP API token required")
+		return "", errors.New("MCP OAuth or API token required")
 	}
 	if !bearer {
 		return "", errors.New("unsupported session credential")

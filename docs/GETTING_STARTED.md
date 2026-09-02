@@ -125,17 +125,22 @@ If tools fail, check `.env`:
 
 ### HTTP MCP authentication
 
-Use `STASH_AUTH_MODE=token` and `STASH_AUTH_API_SECRET` for a remote
-Streamable HTTP or SSE server. Issue a token without OIDC or database access:
+Use `STASH_AUTH_MODE=oauth` with the browser OAuth settings for a remote
+Streamable HTTP or SSE server. The MCP client follows the OAuth Authorization
+Code flow, exchanges the code at `/oauth/token`, and sends the returned
+resource-bound Stash access token to `/mcp`.
+
+For unattended clients, use `STASH_AUTH_MODE=token` and
+`STASH_AUTH_API_SECRET` to issue a token without OIDC or database access:
 
 ```bash
 stash mcp token --subject agent-1
 ```
 
-Send the result as `Authorization: Bearer <stash_api_token>`. MCP verifies this
-Stash token directly and does not start OIDC discovery. `STASH_AUTH_MODE=oauth`
-is still available when the browser console needs OIDC login; MCP requests use
-the Stash token there as well. `STASH_AUTH_TOKEN_TTL` controls token lifetime.
+Send the result as `Authorization: Bearer <stash_api_token>`. In `oauth` mode,
+MCP also accepts the OAuth access token returned by the code exchange after
+checking its signature, expiry, and resource. `STASH_AUTH_TOKEN_TTL` controls
+token lifetime.
 
 For a local CLI process, use `STASH_AUTH_MODE=stdio`; STDIO does not use MCP
 OAuth discovery. `STASH_AUTH_MODE=none` disables HTTP authentication and is

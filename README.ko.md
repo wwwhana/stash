@@ -82,28 +82,38 @@ codex mcp add stash-local --url http://127.0.0.1:8080/mcp
 }
 ```
 
-원격 MCP 서버는 Stash가 발급한 API 토큰으로 보호합니다:
+원격 MCP 서버는 Streamable HTTP로 연결합니다. `oauth` 프로필에서는 MCP
+클라이언트가 OAuth 인증 코드 방식으로 로그인한 뒤 MCP 리소스에 묶인 Stash
+접근 토큰을 받습니다.
+
+```bash
+codex mcp add stash --url https://stash.example.com/mcp
+```
+
+자동화 클라이언트는 OIDC 없이 Stash API 토큰을 사용할 수 있습니다:
+
 ```bash
 export STASH_MCP_TOKEN="$(stash mcp token --subject codex)"
 codex mcp add stash --url https://stash.example.com/mcp --bearer-token-env-var STASH_MCP_TOKEN
 ```
 
-`STASH_AUTH_MODE=token`과 `STASH_AUTH_API_SECRET`을 설정한 뒤
-`stash mcp token --subject <에이전트>`로 토큰을 발급합니다. MCP는 이 토큰만
-검증하며 OIDC 토큰이나 OAuth 탐색을 사용하지 않습니다. OIDC 설정은 브라우저
-로그인과 화면의 토큰 발급 버튼을 함께 쓸 때만 필요합니다.
+자동화용 API 토큰을 발급하려면 `STASH_AUTH_MODE=token`과
+`STASH_AUTH_API_SECRET`을 설정하세요. `oauth` 프로필의 MCP와 SSE는
+리소스가 확인된 Stash OAuth 접근 토큰과 Stash API 토큰을 모두 받습니다.
 
 인증 프로필은 네 가지입니다.
 
 - `none`: HTTP 인증 없음. 격리된 로컬 실행에서만 사용합니다.
-- `oauth` (기존 `oidc`도 호환): 브라우저 로그인에 OIDC를 사용합니다. HTTP
-  MCP와 SSE는 계속 Stash API Bearer 토큰을 받습니다.
+- `oauth` (기존 `oidc`도 호환): 브라우저 OIDC 로그인과 MCP OAuth 인증 코드
+  방식을 함께 사용합니다. MCP와 SSE는 리소스가 확인된 Stash OAuth 접근
+  토큰과 Stash API Bearer 토큰을 받습니다.
 - `token`: OIDC 없이 Stash API Bearer 토큰만 사용하는 HTTP 방식입니다.
 - `stdio`: MCP OAuth 탐색을 사용하지 않습니다. 로컬 프로세스를 신뢰하거나
   `STASH_AUTH_STDIO_TOKEN`으로 사용자 범위를 확인할 수 있습니다.
 
-HTTP MCP 요청은 `Authorization: Bearer <stash_api_token>` 헤더를 보내야 합니다.
-화면에 로그인할 때 쓰는 세션 쿠키는 표준 MCP 클라이언트 인증 수단이 아닙니다.
+HTTP MCP 요청은 `Authorization: Bearer <stash_oauth_token>` 또는
+`Authorization: Bearer <stash_api_token>` 헤더를 보내야 합니다. 화면에
+로그인할 때 쓰는 세션 쿠키는 표준 MCP 클라이언트 인증 수단이 아닙니다.
 
 화면의 **접근 설정**에서도 로그인 뒤 Stash API 토큰을 발급할 수 있습니다.
 OIDC를 쓰지 않는 서버는 `STASH_AUTH_API_SECRET`이 있는 환경에서
