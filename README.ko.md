@@ -224,6 +224,10 @@ codex plugin add stash-work-plan@stash-tools
 ```
 
 Claude에서는 `/stash-work-plan:stash-work-plan`, Codex에서는 `$stash-work-plan`으로 실행합니다.
+두 플러그인은 같은 `hooks/hooks.json`을 사용합니다. 작업권을 잡은 뒤
+`finish_work` 또는 `handoff_work`를 기록해야 두 클라이언트에서 정상적으로 응답을
+끝낼 수 있습니다. 설치 후 Codex는 `/hooks`에서 새 훅을 검토하고 신뢰하고,
+Claude Code는 `/hooks`에서 훅이 등록됐는지 확인하세요.
 
 Streamable HTTP `/mcp`에서는 SEP-2640 초안의 `io.modelcontextprotocol/skills` 확장으로 내장 `stash-work` 규칙도 제공합니다. 초안을 지원하는 클라이언트는 `skills/list`로 찾을 수 있고, 아직 지원하지 않는 클라이언트는 위 Codex·Claude 플러그인을 사용하면 됩니다. 실제 사용자 정의 메서드를 받을 수 있는 `/mcp`에서만 이 확장을 알립니다.
 

@@ -236,6 +236,10 @@ codex plugin add stash-work-plan@stash-tools
 ```
 
 Claude exposes the plugin skill as `/stash-work-plan:stash-work-plan`; Codex exposes it as `$stash-work-plan`.
+Both plugins use the same `hooks/hooks.json`: after claiming work, a successful
+`finish_work` or `handoff_work` is required before either client can normally
+stop the turn. Review and trust the changed hook in Codex's `/hooks`; verify
+that it is listed in Claude Code's `/hooks`.
 
 The Streamable HTTP endpoint also serves the built-in `stash-work` instructions through the experimental `io.modelcontextprotocol/skills` extension described by draft SEP-2640. Clients that implement the draft can discover it with `skills/list`; other clients can keep using the Codex or Claude plugin above. The extension is advertised only on `/mcp`, where its custom methods are reachable.
 

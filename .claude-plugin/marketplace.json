@@ -13,7 +13,6 @@
       "displayName": "Stash Work Plan",
       "source": "./plugins/stash-work-plan",
       "description": "Resume and coordinate shared work through Stash; Git and external connectors are optional.",
-      "version": "0.3.0",
       "author": {
         "name": "wwwhana",
         "url": "https://github.com/wwwhana"

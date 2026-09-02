@@ -12,6 +12,21 @@ Configure the client with the Streamable HTTP endpoint:
 http://localhost:8080/mcp
 ```
 
+### Claude Code and Codex stop hook
+
+Both plugin manifests use the same stop hook to protect an active lease. After a
+successful `claim_work`, `start_work`, or `claim_workspace`, Claude Code and
+Codex must record a successful `finish_work` or `handoff_work` before the turn
+can stop. A failed terminal call does not clear the protection.
+
+Install the plugin, enable the `stash` MCP server, then open `/hooks` in Codex
+and trust the changed plugin hook. In Claude Code, install the plugin and use
+`/hooks` to confirm that the plugin hook is listed. The hook keeps only a
+per-session active marker in the client plugin data directory; it never stores
+lease tokens or decides whether the work itself is complete. User interrupts,
+API failures, and session close are outside the stop-hook path, so Stash lease
+expiry and resume remain the recovery path for those cases.
+
 ## Session start
 
 Call `resume_project` with three pieces of routing information:

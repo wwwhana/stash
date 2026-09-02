@@ -1,6 +1,6 @@
 {
   "name": "stash-work-plan",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Resume and coordinate shared component-oriented work through Stash; Git and external connectors are optional.",
   "author": {
     "name": "wwwhana",
@@ -10,5 +10,6 @@
   "repository": "https://github.com/wwwhana/stash",
   "license": "Apache-2.0",
   "keywords": ["stash", "mcp", "planning", "agents", "goals"],
+  "hooks": "./hooks/hooks.json",
   "skills": "./skills/"
 }
