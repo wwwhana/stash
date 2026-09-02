@@ -26,6 +26,13 @@ Quick server check:
 curl -sS http://localhost:8080/healthz
 ```
 
+Open `http://localhost:8080/docs` for the Swagger UI, or fetch the same-origin
+OpenAPI document directly:
+
+```bash
+curl -sS http://localhost:8080/openapi.json
+```
+
 ## 2. Connect your MCP client
 
 Point a Streamable HTTP client at `http://localhost:8080/mcp`. The older `/sse` endpoint remains available for clients that only support MCP over SSE.

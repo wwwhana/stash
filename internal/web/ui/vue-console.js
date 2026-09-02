@@ -37,6 +37,39 @@
         root_candidates: [], work_items: [], unassigned_work: [], resources: [], memories: [], edges: []
     });
     const emptyPlan = () => ({ goal_tree: { root_goal_id: null, goals: [] }, components: [], decisions: [], warnings: [], validation: null });
+    const arrayOf = value => Array.isArray(value) ? value : [];
+    const objectOf = value => value && typeof value === 'object' ? value : {};
+    const normalizeGoalTree = value => {
+        const tree = objectOf(value);
+        return { ...tree, root_goal_id: tree.root_goal_id ?? null, goals: arrayOf(tree.goals).filter(item => item && typeof item === 'object') };
+    };
+    const normalizeMap = value => {
+        const map = objectOf(value);
+        return {
+            ...emptyMap(), ...map,
+            goal_tree: normalizeGoalTree(map.goal_tree),
+            root_candidates: arrayOf(map.root_candidates),
+            work_items: arrayOf(map.work_items).filter(item => item && typeof item === 'object'),
+            unassigned_work: arrayOf(map.unassigned_work).filter(item => item && typeof item === 'object'),
+            resources: arrayOf(map.resources).filter(item => item && typeof item === 'object'),
+            memories: arrayOf(map.memories).filter(item => item && typeof item === 'object'),
+            edges: arrayOf(map.edges).filter(item => item && typeof item === 'object')
+        };
+    };
+    const normalizeGraph = value => {
+        const graph = objectOf(value);
+        return { ...graph, nodes: arrayOf(graph.nodes).filter(item => item && typeof item === 'object'), edges: arrayOf(graph.edges).filter(item => item && typeof item === 'object') };
+    };
+    const normalizePlan = value => {
+        const plan = objectOf(value);
+        return {
+            ...emptyPlan(), ...plan,
+            goal_tree: normalizeGoalTree(plan.goal_tree),
+            components: arrayOf(plan.components).filter(item => item && typeof item === 'object').map(component => ({ ...component, tasks: arrayOf(component.tasks).filter(task => task && typeof task === 'object') })),
+            decisions: arrayOf(plan.decisions).filter(item => item && typeof item === 'object'),
+            warnings: arrayOf(plan.warnings).filter(item => item && typeof item === 'object')
+        };
+    };
     const unwrap = value => {
         const result = api.toolValue(value);
         return result && typeof result === 'object' ? result : {};
@@ -403,11 +436,11 @@
                     const namespace = this.rootSlug || '/';
                     this.map = emptyMap(); this.graph = { nodes: [], edges: [] }; this.plan = emptyPlan(); this.listKind = '';
                     if (this.route.route === 'goal-map' || this.route.route === 'monitor' || this.route.route === 'board') {
-                        this.map = unwrap(await api.invokeTool('get_goal_map', { namespace, include_done: true })) || emptyMap();
+                        this.map = normalizeMap(unwrap(await api.invokeTool('get_goal_map', { namespace, include_done: true })));
                     } else if (this.route.route === 'graph') {
-                        this.graph = unwrap(await api.invokeTool('get_work_graph', { project: isProject(namespace) ? namespace : undefined, namespaces: isProject(namespace) ? undefined : namespace, include_done: true, node_limit: 200, edge_limit: 400 })) || { nodes: [], edges: [] };
+                        this.graph = normalizeGraph(unwrap(await api.invokeTool('get_work_graph', { project: isProject(namespace) ? namespace : undefined, namespaces: isProject(namespace) ? undefined : namespace, include_done: true, node_limit: 200, edge_limit: 400 })));
                     } else if (this.route.route === 'plan') {
-                        this.plan = unwrap(await api.invokeTool('get_work_plan', { namespace })) || emptyPlan();
+                        this.plan = normalizePlan(unwrap(await api.invokeTool('get_work_plan', { namespace })));
                     } else if (this.route.route === 'worktrees') {
                         this.listKind = 'resource'; this.listItems = itemsOf(await api.invokeTool('list_worktrees', { namespaces: namespace, limit: 100, offset: this.route.offset }));
                     } else if (dataTools[this.route.route]) {

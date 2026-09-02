@@ -49,5 +49,6 @@ function applyTheme() {
 }
 
 applyTheme();
+window.StashVueRuntime = { createApp };
 const mount = document.querySelector('[data-stash-vue-monitor]');
 if (mount) createApp({ template, setup: createMonitorViewModel }).mount(mount);

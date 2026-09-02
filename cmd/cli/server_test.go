@@ -67,6 +67,21 @@ func TestOperationalRoutesAreRegistered(t *testing.T) {
 	}
 }
 
+func TestDocumentationRoutesAreRegistered(t *testing.T) {
+	mux := http.NewServeMux()
+	registerDocumentationRoutes(mux)
+
+	for _, path := range []string{"/openapi.json", "/docs", "/docs/", "/swagger", "/swagger/"} {
+		t.Run(path, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+			if response.Code != http.StatusOK {
+				t.Fatalf("GET %s status = %d, want %d", path, response.Code, http.StatusOK)
+			}
+		})
+	}
+}
+
 func TestOperationalMetricsRequireHTTPAuthentication(t *testing.T) {
 	mux := http.NewServeMux()
 	registerOperationalRoutes(mux, &bootstrap.Context{Auth: &auth.Provider{}})

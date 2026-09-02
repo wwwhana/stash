@@ -1127,7 +1127,7 @@ func serveMCPHTTP(ctx context.Context, bc *bootstrap.Context, options mcpHTTPOpt
 		}()
 	}
 
-	fmt.Printf("Starting Stash server on %s (MCP: /mcp, SSE: /sse, console: /, metrics: /metrics)\n", options.Addr)
+	fmt.Printf("Starting Stash server on %s (MCP: /mcp, SSE: /sse, docs: /docs, metrics: /metrics)\n", options.Addr)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -1194,6 +1194,7 @@ func newStashHTTPHandler(bc *bootstrap.Context) http.Handler {
 	mux.HandleFunc("/auth/logout", bc.Auth.HandleLogout)
 	mux.HandleFunc("/auth/status", bc.Auth.HandleStatus)
 	mux.HandleFunc("/auth/token", bc.Auth.HandleGenerateToken)
+	registerDocumentationRoutes(mux)
 	registerOperationalRoutes(mux, bc)
 	registerAdminRoutes(mux, bc)
 	mux.Handle("/", web.GetUIHandler())

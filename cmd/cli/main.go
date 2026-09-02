@@ -37,7 +37,7 @@ func main() {
 		Commands: []*cli.Command{
 			{
 				Name:  "serve",
-				Usage: "Start MCP, web console, metrics, health checks, and consolidation",
+				Usage: "Start MCP, web console, Swagger docs, metrics, health checks, and consolidation",
 				Flags: []cli.Flag{
 					&cli.StringFlag{Name: "host", Value: "0.0.0.0", Usage: "Server host"},
 					&cli.StringFlag{Name: "port", Value: "8080", Usage: "Server port"},
@@ -567,7 +567,7 @@ func main() {
 					},
 					{
 						Name:   "serve",
-						Usage:  "Start the HTTP server (MCP on /mcp, SSE on /sse, web console, metrics, and health checks)",
+						Usage:  "Start the HTTP server (MCP, SSE, web console, Swagger docs, metrics, and health checks)",
 						Action: mcpServeCmd,
 						Flags: []cli.Flag{
 							&cli.StringFlag{Name: "host", Value: "0.0.0.0"},

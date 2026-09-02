@@ -8,6 +8,7 @@ import (
 	"github.com/alash3al/stash/internal/auth"
 	"github.com/alash3al/stash/internal/bootstrap"
 	"github.com/alash3al/stash/internal/brain"
+	"github.com/alash3al/stash/internal/web"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -89,6 +90,14 @@ func registerOperationalRoutes(mux *http.ServeMux, bc *bootstrap.Context) {
 	mux.Handle("/metrics", authenticatedHTTP(provider, promhttp.Handler()))
 	mux.HandleFunc("/healthz", serviceStatusHandler(bc, "ok", false))
 	mux.HandleFunc("/readyz", serviceStatusHandler(bc, "ready", true))
+}
+
+func registerDocumentationRoutes(mux *http.ServeMux) {
+	mux.Handle("/openapi.json", web.OpenAPIHandler())
+	swagger := web.SwaggerUIHandler()
+	for _, path := range []string{"/docs", "/docs/", "/swagger", "/swagger/"} {
+		mux.Handle(path, swagger)
+	}
 }
 
 func serviceStatusHandler(bc *bootstrap.Context, body string, ready bool) http.HandlerFunc {
