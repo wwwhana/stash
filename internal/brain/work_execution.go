@@ -485,25 +485,30 @@ func insertWorkExecutionEvent(ctx context.Context, tx pgx.Tx, namespaceID, workI
 	return nil
 }
 
-func expireStaleWorkAttempts(ctx context.Context, tx pgx.Tx, namespaceID, workItemID int64) error {
+type expiredWorkAttempt struct {
+	id        int64
+	startedAt time.Time
+}
+
+func (b *Brain) expireStaleWorkAttempts(ctx context.Context, tx pgx.Tx, namespaceID, workItemID int64) error {
 	rows, err := tx.Query(ctx,
 		`UPDATE work_attempts
 		 SET status = 'expired', ended_at = clock_timestamp(), updated_at = now()
 		 WHERE work_item_id = $1 AND status = 'active' AND lease_expires_at <= clock_timestamp()
-		 RETURNING id`,
+		 RETURNING id, started_at`,
 		workItemID,
 	)
 	if err != nil {
 		return fmt.Errorf("expire stale work attempt: %w", err)
 	}
-	var expired []int64
+	expired := make([]expiredWorkAttempt, 0)
 	for rows.Next() {
-		var attemptID int64
-		if err := rows.Scan(&attemptID); err != nil {
+		var attempt expiredWorkAttempt
+		if err := rows.Scan(&attempt.id, &attempt.startedAt); err != nil {
 			rows.Close()
 			return fmt.Errorf("scan stale work attempt: %w", err)
 		}
-		expired = append(expired, attemptID)
+		expired = append(expired, attempt)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
@@ -517,17 +522,20 @@ func expireStaleWorkAttempts(ctx context.Context, tx pgx.Tx, namespaceID, workIt
 		`UPDATE work_attempt_lease_tokens
 		 SET revoked_at = clock_timestamp()
 		 WHERE attempt_id = ANY($1) AND revoked_at IS NULL`,
-		expired,
+		expiredWorkAttemptIDs(expired),
 	); err != nil {
 		return fmt.Errorf("revoke stale work lease tokens: %w", err)
 	}
 	if err := setAvailableWorkItemStatus(ctx, tx, namespaceID, workItemID); err != nil {
 		return err
 	}
-	for _, attemptID := range expired {
-		id := attemptID
+	for _, attempt := range expired {
+		if err := b.saveExpiredWorkOutcomeTx(ctx, tx, namespaceID, workItemID, attempt.id, attempt.startedAt); err != nil {
+			return err
+		}
+		id := attempt.id
 		if err := insertWorkExecutionEvent(ctx, tx, namespaceID, workItemID, &id, "work.attempt.expired", "attempt.expired", map[string]any{
-			"attempt_id": attemptID,
+			"attempt_id": attempt.id,
 		}); err != nil {
 			return err
 		}
@@ -535,10 +543,18 @@ func expireStaleWorkAttempts(ctx context.Context, tx pgx.Tx, namespaceID, workIt
 	return nil
 }
 
+func expiredWorkAttemptIDs(attempts []expiredWorkAttempt) []int64 {
+	ids := make([]int64, 0, len(attempts))
+	for _, attempt := range attempts {
+		ids = append(ids, attempt.id)
+	}
+	return ids
+}
+
 // expireStaleWorktreeAttempts releases expired leases left by other work
 // items in the same checkout. The graph advisory lock held by the caller
 // serializes the corresponding work-item state changes for this namespace.
-func expireStaleWorktreeAttempts(ctx context.Context, tx pgx.Tx, namespaceID, worktreeID, currentWorkItemID int64) error {
+func (b *Brain) expireStaleWorktreeAttempts(ctx context.Context, tx pgx.Tx, namespaceID, worktreeID, currentWorkItemID int64) error {
 	rows, err := tx.Query(ctx,
 		`UPDATE work_attempts attempt
 		 SET status = 'expired', ended_at = clock_timestamp(), updated_at = now()
@@ -546,7 +562,7 @@ func expireStaleWorktreeAttempts(ctx context.Context, tx pgx.Tx, namespaceID, wo
 		 WHERE attempt.worktree_id = $1 AND attempt.work_item_id <> $2
 		   AND attempt.status = 'active' AND attempt.lease_expires_at <= clock_timestamp()
 		   AND item.id = attempt.work_item_id AND item.namespace_id = $3 AND item.deleted_at IS NULL
-		 RETURNING attempt.id, attempt.work_item_id`,
+		 RETURNING attempt.id, attempt.work_item_id, attempt.started_at`,
 		worktreeID, currentWorkItemID, namespaceID,
 	)
 	if err != nil {
@@ -555,11 +571,12 @@ func expireStaleWorktreeAttempts(ctx context.Context, tx pgx.Tx, namespaceID, wo
 	type expiredAttempt struct {
 		attemptID  int64
 		workItemID int64
+		startedAt  time.Time
 	}
 	expired := make([]expiredAttempt, 0)
 	for rows.Next() {
 		var item expiredAttempt
-		if err := rows.Scan(&item.attemptID, &item.workItemID); err != nil {
+		if err := rows.Scan(&item.attemptID, &item.workItemID, &item.startedAt); err != nil {
 			rows.Close()
 			return fmt.Errorf("scan stale worktree attempt: %w", err)
 		}
@@ -582,6 +599,9 @@ func expireStaleWorktreeAttempts(ctx context.Context, tx pgx.Tx, namespaceID, wo
 			return err
 		}
 		attemptID := item.attemptID
+		if err := b.saveExpiredWorkOutcomeTx(ctx, tx, namespaceID, item.workItemID, item.attemptID, item.startedAt); err != nil {
+			return err
+		}
 		if err := insertWorkExecutionEvent(ctx, tx, namespaceID, item.workItemID, &attemptID, "work.attempt.expired", "attempt.expired", map[string]any{
 			"attempt_id":  item.attemptID,
 			"worktree_id": worktreeID,
@@ -890,7 +910,7 @@ func (b *Brain) PrepareWork(ctx context.Context, workItemID int64, nextAction st
 	if status == "done" || status == "canceled" {
 		return nil, ErrWorkAttemptTerminal
 	}
-	if err := expireStaleWorkAttempts(ctx, tx, namespaceID, workItemID); err != nil {
+	if err := b.expireStaleWorkAttempts(ctx, tx, namespaceID, workItemID); err != nil {
 		return nil, err
 	}
 	var active bool
@@ -1057,7 +1077,7 @@ func (b *Brain) startWorkAttemptForPrincipalTx(ctx context.Context, tx pgx.Tx, w
 			return nil, fmt.Errorf("read replayed work attempt: %w", err)
 		}
 		if !active {
-			if err := expireStaleWorkAttempts(ctx, tx, namespaceID, workItemID); err != nil {
+			if err := b.expireStaleWorkAttempts(ctx, tx, namespaceID, workItemID); err != nil {
 				return nil, err
 			}
 			return nil, ErrWorkAttemptLease
@@ -1089,7 +1109,7 @@ func (b *Brain) startWorkAttemptForPrincipalTx(ctx context.Context, tx pgx.Tx, w
 	if status == "done" || status == "canceled" {
 		return nil, ErrWorkAttemptTerminal
 	}
-	if err := expireStaleWorkAttempts(ctx, tx, namespaceID, workItemID); err != nil {
+	if err := b.expireStaleWorkAttempts(ctx, tx, namespaceID, workItemID); err != nil {
 		return nil, err
 	}
 	var active, prepared bool
@@ -1137,7 +1157,7 @@ func (b *Brain) startWorkAttemptForPrincipalTx(ctx context.Context, tx pgx.Tx, w
 		} else if worktreeNamespaceID != namespaceID {
 			return nil, fmt.Errorf("brain: work attempt worktree must share the work item namespace")
 		}
-		if err := expireStaleWorktreeAttempts(ctx, tx, namespaceID, *worktreeID, workItemID); err != nil {
+		if err := b.expireStaleWorktreeAttempts(ctx, tx, namespaceID, *worktreeID, workItemID); err != nil {
 			return nil, err
 		}
 		var worktreeActive bool
@@ -1731,6 +1751,13 @@ func (b *Brain) HandoffWorkAttemptForPrincipal(ctx context.Context, attemptID in
 	if err := setAvailableWorkItemStatus(ctx, tx, leased.NamespaceID, leased.Attempt.WorkItemID); err != nil {
 		return nil, err
 	}
+	automaticMemorySaved, err := b.saveAutomaticWorkOutcomeTx(
+		ctx, tx, leased.NamespaceID, leased.Attempt.WorkItemID, attemptID, leased.Attempt.StartedAt,
+		input.Summary, input.Result, checkpoint.NextAction, "handoff",
+	)
+	if err != nil {
+		return nil, err
+	}
 	if err := insertWorkExecutionEvent(ctx, tx, leased.NamespaceID, leased.Attempt.WorkItemID, &attemptID, "work.attempt.handed_off", workActionKeyDigest(actionKey), map[string]any{
 		"checkpoint_id": checkpoint.ID,
 		"next_action":   checkpoint.NextAction,
@@ -1742,6 +1769,9 @@ func (b *Brain) HandoffWorkAttemptForPrincipal(ctx context.Context, attemptID in
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit work handoff: %w", err)
+	}
+	if automaticMemorySaved {
+		b.WakeEmbeddingRetries()
 	}
 	return attempt, nil
 }
@@ -1897,6 +1927,13 @@ func (b *Brain) FinishWorkAttemptForPrincipal(ctx context.Context, attemptID int
 	); err != nil {
 		return nil, fmt.Errorf("record plan task completer: %w", err)
 	}
+	automaticMemorySaved, err := b.saveAutomaticWorkOutcomeTx(
+		ctx, tx, leased.NamespaceID, leased.Attempt.WorkItemID, attemptID, leased.Attempt.StartedAt,
+		input.Summary, input.Result, "", "finish",
+	)
+	if err != nil {
+		return nil, err
+	}
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO work_execution_states (work_item_id, current_next_action)
 		 VALUES ($1, '')
@@ -1915,6 +1952,9 @@ func (b *Brain) FinishWorkAttemptForPrincipal(ctx context.Context, attemptID int
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit work completion: %w", err)
+	}
+	if automaticMemorySaved {
+		b.WakeEmbeddingRetries()
 	}
 	return attempt, nil
 }
@@ -1996,7 +2036,7 @@ func (b *Brain) GetWorkResumeBundle(ctx context.Context, workItemID int64, recen
 	if namespaceID != graphNamespaceID {
 		return nil, fmt.Errorf("brain: work item namespace changed while resuming work")
 	}
-	if err := expireStaleWorkAttempts(ctx, tx, namespaceID, workItemID); err != nil {
+	if err := b.expireStaleWorkAttempts(ctx, tx, namespaceID, workItemID); err != nil {
 		return nil, err
 	}
 

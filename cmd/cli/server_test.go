@@ -104,6 +104,9 @@ func TestStashHTTPHandlerAllowsDisabledAuthentication(t *testing.T) {
 	if !strings.Contains(initialize.Body.String(), `"result"`) {
 		t.Fatalf("POST /mcp initialize body = %q", initialize.Body.String())
 	}
+	if !strings.Contains(initialize.Body.String(), `"instructions"`) || !strings.Contains(initialize.Body.String(), "resume_project") {
+		t.Fatalf("POST /mcp initialize did not include agent automation instructions: %q", initialize.Body.String())
+	}
 }
 
 func TestStashHTTPHandlerUsesNativeMCPToken(t *testing.T) {

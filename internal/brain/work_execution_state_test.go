@@ -176,6 +176,14 @@ func TestWorkExecutionStateMachinePostgres(t *testing.T) {
 				if completed.Status != "completed" {
 					t.Fatalf("completed attempt status = %q, want completed", completed.Status)
 				}
+				assertWorkExecutionRowCount(t, b, ctx, 1,
+					`SELECT count(*) FROM work_item_memory_links link
+					 JOIN work_events event ON event.work_item_id = link.work_item_id
+					  AND event.attempt_id = $2 AND event.event_type = 'work.memory.auto_saved'
+					  AND event.payload->>'episode_id' = link.memory_id::text
+					 WHERE link.work_item_id = $1 AND link.relation = 'result'`,
+					item.ID, second.Attempt.ID,
+				)
 
 				bundle, err := b.GetWorkResumeBundle(ctx, item.ID, 100)
 				if err != nil {
@@ -927,6 +935,10 @@ func TestWorkExecutionStateMachinePostgres(t *testing.T) {
 						t.Fatalf("changed handoff replay error = %v, want %v", err, ErrWorkActionConflict)
 					}
 					assertWorkExecutionRowCount(t, b, ctx, 1, `SELECT count(*) FROM work_checkpoints WHERE attempt_id = $1`, attempt.Attempt.ID)
+					assertWorkExecutionRowCount(t, b, ctx, 1,
+						`SELECT count(*) FROM work_events WHERE attempt_id = $1 AND event_type = 'work.memory.auto_saved'`,
+						attempt.Attempt.ID,
+					)
 					assertWorkActionReplay(t, b, ctx, item.ID, attempt.Attempt.ID, actionKey, "work.attempt.handed_off")
 				},
 			},
@@ -959,6 +971,27 @@ func TestWorkExecutionStateMachinePostgres(t *testing.T) {
 					}
 					assertWorkExecutionRowCount(t, b, ctx, 1, `SELECT count(*) FROM work_checkpoints WHERE attempt_id = $1`, attempt.Attempt.ID)
 					assertWorkActionReplay(t, b, ctx, item.ID, attempt.Attempt.ID, actionKey, "work.attempt.completed")
+				},
+			},
+			{
+				name: "explicit memory avoids automatic duplicate",
+				run: func(t *testing.T, b *Brain, ctx context.Context, namespaceID int64) {
+					item, _ := prepareWorkExecutionItem(t, b, ctx, namespaceID, "explicit memory")
+					attempt := startWorkExecutionAttempt(t, b, ctx, item.ID, "memory-agent")
+					b.embedder = failingWorkEmbedder{}
+					if _, err := b.RememberForWork(ctx, item.ID, "explicit decision", "decision", fmt.Sprintf("remember-%d", attempt.Attempt.ID)); err != nil {
+						t.Fatalf("RememberForWork: %v", err)
+					}
+					if _, err := b.HandoffWorkAttempt(ctx, attempt.Attempt.ID, attempt.LeaseToken, WorkCheckpointInput{
+						Summary: "paused", Result: "explicit memory exists", NextAction: "continue from the decision",
+					}, fmt.Sprintf("handoff-explicit-%d", attempt.Attempt.ID)); err != nil {
+						t.Fatalf("HandoffWorkAttempt: %v", err)
+					}
+					assertWorkExecutionRowCount(t, b, ctx, 1,
+						`SELECT count(*) FROM work_item_memory_links WHERE work_item_id = $1`, item.ID)
+					assertWorkExecutionRowCount(t, b, ctx, 0,
+						`SELECT count(*) FROM work_events WHERE attempt_id = $1 AND event_type = 'work.memory.auto_saved'`,
+						attempt.Attempt.ID)
 				},
 			},
 		}

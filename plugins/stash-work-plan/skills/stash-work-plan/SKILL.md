@@ -71,7 +71,7 @@ A `worktree_id` is optional connector metadata. Use a new action key for every l
 
 - Call `checkpoint_work` after each meaningful action. Record what was observed and exactly one concrete `next_action`.
 - Call `renew_work_lease` before a long action could cross the deadline.
-- Use `remember_work` for durable decisions, corrections, failure lessons, and outcome facts.
+- Use `remember_work` for durable decisions, corrections, failure lessons, and outcome facts. It does not prove completion. Stash also saves one bounded result memory automatically on a successful `finish_work` or `handoff_work`, and preserves the latest checkpoint when a lease expires.
 - Call `resume_project` again when project state may have changed.
 
 ## Prove and finish

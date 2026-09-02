@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -74,6 +75,19 @@ func TestWorkExecutionInputValidation(t *testing.T) {
 	}
 	if _, err := normalizeEvidenceIDs(nil); err == nil {
 		t.Fatal("condition verification without evidence was accepted")
+	}
+}
+
+func TestAutomaticWorkOutcomeTextIsBounded(t *testing.T) {
+	content := automaticWorkOutcomeText("요약", strings.Repeat("결과", automaticWorkOutcomeLimit), "다음 행동")
+	if len(content) > automaticWorkOutcomeLimit {
+		t.Fatalf("automatic outcome length = %d, want <= %d", len(content), automaticWorkOutcomeLimit)
+	}
+	if !utf8.ValidString(content) {
+		t.Fatal("automatic outcome is not valid UTF-8")
+	}
+	if !strings.HasPrefix(content, "Summary: 요약\nResult: ") || !strings.HasSuffix(content, "…") {
+		t.Fatalf("automatic outcome = %q", content)
 	}
 }
 

@@ -1193,7 +1193,7 @@ func registerWorkExecutionTools(mcpServer *server.MCPServer, bc *bootstrap.Conte
 	}))
 
 	mcpServer.AddTool(mcp.NewTool("remember_work",
-		mcp.WithDescription("Call when a durable decision, correction, failure lesson, or handoff fact from tracked work should remain searchable after the work events age out."),
+		mcp.WithDescription("Call when a durable decision, correction, failure lesson, or handoff fact from tracked work should remain searchable after the work events age out. Stash keeps one bounded result automatically when finish_work, handoff_work, or lease expiry has no linked memory."),
 		mcp.WithNumber("work_item_id", mcp.Description("Work item that produced this memory"), mcp.Required()),
 		mcp.WithString("content", mcp.Description("Self-contained durable information; omit routine narration and all lease tokens"), mcp.Required()),
 		mcp.WithString("relation", mcp.Description("How the memory relates to the work item"), mcp.DefaultString("result"), mcp.Enum("context", "constraint", "decision", "evidence", "failure", "result", "supersedes")),

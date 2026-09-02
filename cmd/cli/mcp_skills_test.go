@@ -69,6 +69,17 @@ func TestStashSkillsInitializeCapability(t *testing.T) {
 	assertResource(t, resources.Resources, stashWorkSkillURI, "stash-work", "text/markdown")
 }
 
+func TestNewMCPServerIncludesAgentAutomationInstructions(t *testing.T) {
+	mcpServer := newMCPServer(nil)
+	response := mcpServer.HandleMessage(t.Context(), json.RawMessage(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}`))
+	result := rpcResult[mcp.InitializeResult](t, response)
+	for _, want := range []string{"init", "resume_project", "claim_work", "checkpoint_work", "finish_work", "handoff_work"} {
+		if !strings.Contains(result.Instructions, want) {
+			t.Errorf("initialize instructions do not mention %q: %q", want, result.Instructions)
+		}
+	}
+}
+
 func TestStashSkillResourcesReadMatchManifest(t *testing.T) {
 	protocol, skill := testStashSkillsProtocol(t, defaultSkillPageSize, defaultDirectoryPageSize)
 	mcpServer := server.NewMCPServer("test", "test")

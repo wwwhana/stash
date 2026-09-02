@@ -53,7 +53,7 @@ Use a new action key for each logical mutation. Reuse it only to retry the exact
 
 - Call `checkpoint_work` after every meaningful action with a short summary, the observed result, and exactly one concrete `next_action`.
 - Call `renew_work_lease` before a long action could cross the lease deadline.
-- Use `remember_work` for durable decisions, corrections, failure lessons, and outcome facts. It does not prove completion.
+- Use `remember_work` for durable decisions, corrections, failure lessons, and outcome facts. It does not prove completion. If you omit it, Stash still keeps one bounded result memory automatically on a successful `finish_work` or `handoff_work`, and when a lease expires it preserves the latest checkpoint for the next agent.
 - Call `resume_project` again when project state may have changed.
 
 ## Prove and finish the result

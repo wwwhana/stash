@@ -153,6 +153,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 	mcpServer := server.NewMCPServer("stash", "0.2.8",
 		server.WithToolCapabilities(true),
 		server.WithDescription(render("server_description")),
+		server.WithInstructions(render("server_instructions")),
 		server.WithToolHandlerMiddleware(observeMCPTool(logger, toolTimeout)),
 	)
 

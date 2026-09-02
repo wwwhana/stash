@@ -6,6 +6,18 @@ Start each session with init. Before history-dependent work, use recall. Store d
 For tracked work, call resume_project with the exact namespace and your routing capabilities. Resume active work first or choose one of the few returned candidates, then call the default brief resume_work. Read the shared goal path, parent plan component, owned scopes, and next action. Reuse context_digest as known_context_digest, and fetch a linked resource only when it is needed for that action. The full get_goal_map and get_work_plan views are for owner monitoring, not routine worker input. Claim the item with claim_work, checkpoint every meaningful result, and use spawn_work when a child or prerequisite is discovered. Attach completion evidence, verify it, and call finish_work only after every required condition and blocker passes. Call handoff_work before ending unfinished work. Git workspace tools are optional connector helpers and are never a prerequisite.
 
 When remember returns indexed=false, the original text is already safe and will be indexed automatically; do not submit a duplicate. Paginated responses may return items, has_more, and next_offset; continue with offset=next_offset. If Stash fails twice, tell the user memory is unavailable instead of pretending it worked.
+
+If a tracked attempt ends through finish_work, handoff_work, or lease expiry without a linked memory, Stash keeps one bounded result automatically and queues its indexing.
+{{end}}
+
+{{define "server_instructions"}}
+Use Stash as the durable automation record for this agent.
+
+At the start of every session, call `init`, then `list_namespaces` and `resume_project` with the exact project namespace, a stable `agent_id`, and only the capabilities you have. Continue active work first; otherwise call `resume_work` for one returned candidate. Before any tracked local or external action, call `claim_work` with a fresh UUIDv4 `action_key`.
+
+During work, call `checkpoint_work` after each meaningful result with exactly one next action. Use `spawn_work` for child or prerequisite deliverables, `attach_work_resource` for bounded external references, and `remember_work` for durable decisions, constraints, failures, and results. Stash also saves a bounded final result automatically on `finish_work`, `handoff_work`, or lease expiry when no memory was linked during that attempt. Submit evidence and verify every required condition before `finish_work`; call `handoff_work` when work remains unfinished.
+
+For memory-only work, use `recall` before history-dependent decisions and `remember` for durable observations. Treat capabilities as routing hints, never as authorization. Keep lease tokens, action keys, credentials, and secrets out of memory, evidence, comments, and logs. Follow `next_offset` or `next_query` for paginated results, and reuse an action key only to retry the exact same uncertain mutation.
 {{end}}
 
 {{define "init_description"}}

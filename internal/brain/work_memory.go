@@ -2,11 +2,14 @@ package brain
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/alash3al/stash/internal/models"
+	"github.com/jackc/pgx/v5"
 	"github.com/pgvector/pgvector-go"
 )
 
@@ -15,6 +18,127 @@ import (
 type RememberForWorkResult struct {
 	RememberResult
 	Link models.WorkItemMemoryLink `json:"link"`
+}
+
+const automaticWorkOutcomeLimit = resumeMemoryContentLimit
+
+// automaticWorkOutcomeText keeps the server-side safety net small enough to
+// be useful in the next resume prompt. It records the final observation, not
+// the conversation that led to it.
+func automaticWorkOutcomeText(summary, result, nextAction string) string {
+	sections := make([]string, 0, 3)
+	if value := strings.TrimSpace(summary); value != "" {
+		sections = append(sections, "Summary: "+value)
+	}
+	if value := strings.TrimSpace(result); value != "" {
+		sections = append(sections, "Result: "+value)
+	}
+	if value := strings.TrimSpace(nextAction); value != "" {
+		sections = append(sections, "Next action: "+value)
+	}
+	content := strings.Join(sections, "\n")
+	if len(content) <= automaticWorkOutcomeLimit {
+		return content
+	}
+	end := automaticWorkOutcomeLimit - len("…")
+	for end > 0 && !utf8.ValidString(content[:end]) {
+		end--
+	}
+	if end <= 0 {
+		return ""
+	}
+	return content[:end] + "…"
+}
+
+func (b *Brain) workEmbeddingModel() string {
+	if b == nil || b.embedder == nil {
+		return ""
+	}
+	return strings.TrimSpace(b.embedder.Model())
+}
+
+// saveAutomaticWorkOutcomeTx is the server-side memory safety net. Agents are
+// still expected to call remember_work for decisions and lessons, but a final
+// finish, handoff, or lease expiry must not discard its bounded result merely
+// because the agent omitted that optional call. Embedding is deliberately
+// deferred to the existing retry worker so this path never spends provider
+// budget while holding the work lease transaction.
+func (b *Brain) saveAutomaticWorkOutcomeTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	namespaceID, workItemID, attemptID int64,
+	startedAt time.Time,
+	summary, result, nextAction, reason string,
+) (bool, error) {
+	content := automaticWorkOutcomeText(summary, result, nextAction)
+	if content == "" {
+		return false, nil
+	}
+
+	var alreadyLinked bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM work_item_memory_links link
+			WHERE link.work_item_id = $1 AND link.created_at >= $2
+			UNION ALL
+			SELECT 1
+			FROM work_events event
+			WHERE event.work_item_id = $1
+			  AND event.event_type = 'work.memory.remembered'
+			  AND event.occurred_at >= $2
+		)`, workItemID, startedAt).Scan(&alreadyLinked); err != nil {
+		return false, fmt.Errorf("check automatic work memory: %w", err)
+	}
+	if alreadyLinked {
+		return false, nil
+	}
+
+	now := time.Now().UTC()
+	var episodeID int64
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO episodes (
+			namespace_id, content, embedding, embedding_model, occurred_at,
+			embedding_attempts, embedding_retry_at, embedding_updated_at
+		) VALUES ($1, $2, NULL, $3, $4, 0, $4, now())
+		RETURNING id`, namespaceID, content, b.workEmbeddingModel(), now).Scan(&episodeID); err != nil {
+		return false, fmt.Errorf("insert automatic work memory: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO work_item_memory_links (work_item_id, memory_type, memory_id, relation)
+		VALUES ($1, 'episode', $2, 'result')`, workItemID, episodeID); err != nil {
+		return false, fmt.Errorf("link automatic work memory: %w", err)
+	}
+	eventKey := workActionKeyDigest(fmt.Sprintf("automatic-work-memory:%s:%d", reason, attemptID))
+	if err := insertWorkExecutionEvent(ctx, tx, namespaceID, workItemID, &attemptID, "work.memory.auto_saved", eventKey, map[string]any{
+		"episode_id":      episodeID,
+		"relation":        "result",
+		"reason":          reason,
+		"indexing_status": "pending",
+	}); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (b *Brain) saveExpiredWorkOutcomeTx(ctx context.Context, tx pgx.Tx, namespaceID, workItemID, attemptID int64, startedAt time.Time) error {
+	var summary, result, nextAction string
+	err := tx.QueryRow(ctx, `
+		SELECT summary, result, next_action
+		FROM work_checkpoints
+		WHERE attempt_id = $1
+		ORDER BY created_at DESC, id DESC
+		LIMIT 1`, attemptID).Scan(&summary, &result, &nextAction)
+	if errors.Is(err, pgx.ErrNoRows) {
+		summary = "Execution attempt expired"
+		result = "The lease expired before a final checkpoint was recorded"
+		nextAction = "Resume the work item and inspect its conditions"
+	} else if err != nil {
+		return fmt.Errorf("read expired work checkpoint: %w", err)
+	}
+	_, err = b.saveAutomaticWorkOutcomeTx(ctx, tx, namespaceID, workItemID, attemptID, startedAt, summary, result, nextAction, "expired")
+	return err
 }
 
 // RememberForWork stores one durable episode and links it to a work item. The

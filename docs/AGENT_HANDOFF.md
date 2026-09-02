@@ -63,6 +63,8 @@ After every meaningful action, call `checkpoint_work` with what was done, the ob
 
 For unfinished work, call `handoff_work`. It records the current result and next action, ends the attempt, and makes the item available to a later agent. A stop hook may check for an accepted `handoff_work` or `finish_work` response, but it must not decide completion or copy a lease token into logs.
 
+The server also saves one bounded result memory automatically when `finish_work` or `handoff_work` succeeds without a memory linked during that attempt. If a lease expires, the latest checkpoint is saved the same way. Embedding is queued for the existing retry worker, so the original text remains available even when the provider is unavailable. This is a safety net, not a replacement for `remember_work` calls for decisions, constraints, and failure lessons.
+
 If a process ends unexpectedly, the lease remains until its expiry. A new agent calls `resume_project`, then `resume_work` for the same item. It waits for the live lease or follows the recorded handoff, and continues from `next_action`; it does not create a replacement item.
 
 ## Optional Git connector

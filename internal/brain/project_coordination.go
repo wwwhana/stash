@@ -492,7 +492,7 @@ func (b *Brain) expireProjectAttempts(ctx context.Context, namespaceID int64) er
 	}
 	rows.Close()
 	for _, workItemID := range workItemIDs {
-		if err := expireStaleWorkAttempts(ctx, tx, namespaceID, workItemID); err != nil {
+		if err := b.expireStaleWorkAttempts(ctx, tx, namespaceID, workItemID); err != nil {
 			return err
 		}
 	}
