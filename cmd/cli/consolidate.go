@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -15,7 +16,10 @@ import (
 )
 
 func consolidateRunCmd(ctx context.Context, cmd *cli.Command) error {
-	namespaces := cmd.StringSlice("namespaces")
+	namespaces, err := explicitConsolidationNamespaces(cmd.StringSlice("namespaces"))
+	if err != nil {
+		return err
+	}
 	dryRun := cmd.Bool("dry-run")
 
 	bc := getBootstrap(cmd)
@@ -25,10 +29,6 @@ func consolidateRunCmd(ctx context.Context, cmd *cli.Command) error {
 			"namespaces": namespaces,
 			"status":     "dry-run requested",
 		})
-	}
-
-	if len(namespaces) == 0 {
-		namespaces = []string{"/"}
 	}
 
 	ids, err := bc.Brain.ResolveNamespaceIDs(ctx, namespaces)
@@ -52,13 +52,12 @@ func consolidateRunCmd(ctx context.Context, cmd *cli.Command) error {
 
 func consolidateServeCmd(ctx context.Context, cmd *cli.Command) error {
 	interval := cmd.Duration("interval")
-	namespaces := cmd.StringSlice("namespaces")
+	namespaces, err := explicitConsolidationNamespaces(cmd.StringSlice("namespaces"))
+	if err != nil {
+		return err
+	}
 
 	bc := getBootstrap(cmd)
-
-	if len(namespaces) == 0 {
-		namespaces = []string{"/"}
-	}
 
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -94,4 +93,32 @@ func consolidateServeCmd(ctx context.Context, cmd *cli.Command) error {
 			return nil
 		}
 	}
+}
+
+func explicitConsolidationNamespaces(values []string) ([]string, error) {
+	seen := make(map[string]struct{})
+	namespaces := make([]string, 0, len(values))
+	for _, value := range values {
+		for _, namespace := range strings.Split(value, ",") {
+			namespace = strings.TrimSpace(namespace)
+			if namespace == "" {
+				continue
+			}
+			if namespace == "/" {
+				return nil, fmt.Errorf("consolidation namespace / is not allowed; select one or more non-root namespaces")
+			}
+			if !strings.HasPrefix(namespace, "/") {
+				return nil, fmt.Errorf("consolidation namespace %q must start with /", namespace)
+			}
+			if _, ok := seen[namespace]; ok {
+				continue
+			}
+			seen[namespace] = struct{}{}
+			namespaces = append(namespaces, namespace)
+		}
+	}
+	if len(namespaces) == 0 {
+		return nil, fmt.Errorf("at least one non-root consolidation namespace is required")
+	}
+	return namespaces, nil
 }

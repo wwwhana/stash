@@ -70,7 +70,7 @@ func projectCapabilityOption() mcp.ToolOption {
 
 func registerProjectCoordinationTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 	mcpServer.AddTool(mcp.NewTool("resume_project",
-		mcp.WithDescription("Universal session entry point for Web MCP agents. Returns the shared goal, this agent's active work, and at most three runnable candidates without requiring Git, local paths, or MCP Roots."),
+		mcp.WithDescription("Entry point when continuing an existing Stash project or a user-requested shared Work Plan. Returns the shared goal, this agent's active work, and at most three runnable candidates without requiring Git, local paths, or MCP Roots. Do not call for unrelated ordinary requests."),
 		mcp.WithString("namespace", mcp.Description("Exact project namespace path"), mcp.Required()),
 		mcp.WithString("agent_id", mcp.Description("Optional stable display and routing name for this agent")),
 		projectCapabilityOption(),

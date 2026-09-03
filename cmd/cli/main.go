@@ -39,10 +39,10 @@ func main() {
 				Name:  "serve",
 				Usage: "Start MCP, web console, Swagger docs, metrics, health checks, and consolidation",
 				Flags: []cli.Flag{
-					&cli.StringFlag{Name: "host", Value: "0.0.0.0", Usage: "Server host"},
+					&cli.StringFlag{Name: "host", Value: "127.0.0.1", Usage: "Server host"},
 					&cli.StringFlag{Name: "port", Value: "8080", Usage: "Server port"},
 					&cli.DurationFlag{Name: "consolidate-interval", Value: 5 * time.Minute, Usage: "Consolidation interval"},
-					&cli.StringSliceFlag{Name: "consolidate-namespaces", Usage: "Namespaces to consolidate (default: all)"},
+					&cli.StringSliceFlag{Name: "consolidate-namespaces", Usage: "Required non-root namespaces to consolidate"},
 				},
 				Action: serveAllCmd,
 			},
@@ -143,7 +143,7 @@ func main() {
 						Usage:  "Run consolidation once",
 						Action: consolidateRunCmd,
 						Flags: []cli.Flag{
-							&cli.StringSliceFlag{Name: "namespaces", Aliases: []string{"n"}, Usage: "Namespace paths to consolidate (each includes descendants)"},
+							&cli.StringSliceFlag{Name: "namespaces", Aliases: []string{"n"}, Usage: "Required non-root namespace paths to consolidate (each includes descendants)"},
 							&cli.BoolFlag{Name: "dry-run", Aliases: []string{"d"}, Usage: "Show what would be consolidated"},
 						},
 					},
@@ -153,7 +153,7 @@ func main() {
 						Action: consolidateServeCmd,
 						Flags: []cli.Flag{
 							&cli.DurationFlag{Name: "interval", Aliases: []string{"i"}, Value: 5 * time.Minute, Usage: "Interval between runs"},
-							&cli.StringSliceFlag{Name: "namespaces", Aliases: []string{"n"}, Usage: "Namespaces to consolidate"},
+							&cli.StringSliceFlag{Name: "namespaces", Aliases: []string{"n"}, Usage: "Required non-root namespaces to consolidate"},
 						},
 					},
 				},
@@ -570,11 +570,11 @@ func main() {
 						Usage:  "Start the HTTP server (MCP, SSE, web console, Swagger docs, metrics, and health checks)",
 						Action: mcpServeCmd,
 						Flags: []cli.Flag{
-							&cli.StringFlag{Name: "host", Value: "0.0.0.0"},
+							&cli.StringFlag{Name: "host", Value: "127.0.0.1"},
 							&cli.StringFlag{Name: "port", Value: "8080"},
 							&cli.BoolFlag{Name: "with-consolidation", Usage: "Run consolidation in background alongside MCP server"},
 							&cli.DurationFlag{Name: "consolidate-interval", Value: 5 * time.Minute, Usage: "Consolidation interval"},
-							&cli.StringSliceFlag{Name: "consolidate-namespaces", Usage: "Namespaces to consolidate (default: all)"},
+							&cli.StringSliceFlag{Name: "consolidate-namespaces", Usage: "Required non-root namespaces to consolidate"},
 						},
 					},
 					{
@@ -584,7 +584,7 @@ func main() {
 						Flags: []cli.Flag{
 							&cli.BoolFlag{Name: "with-consolidation", Usage: "Run consolidation in background alongside MCP server"},
 							&cli.DurationFlag{Name: "consolidate-interval", Value: 5 * time.Minute, Usage: "Consolidation interval"},
-							&cli.StringSliceFlag{Name: "consolidate-namespaces", Usage: "Namespaces to consolidate (default: all)"},
+							&cli.StringSliceFlag{Name: "consolidate-namespaces", Usage: "Required non-root namespaces to consolidate"},
 						},
 					},
 				},

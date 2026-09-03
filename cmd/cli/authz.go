@@ -21,6 +21,8 @@ const (
 	keySSOUser contextKey = "sso_user"
 )
 
+var authenticatedRequestProtection = http.NewCrossOriginProtection()
+
 // httpContextFunc only copies identity that was already verified by the HTTP
 // middleware. It must never treat an unverified header as a user identity.
 func httpContextFunc(ctx context.Context, _ *http.Request) context.Context {
@@ -32,6 +34,11 @@ func httpContextFunc(ctx context.Context, _ *http.Request) context.Context {
 
 func authenticatedHTTP(provider *auth.Provider, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := authenticatedRequestProtection.Check(r); err != nil {
+			observability.RecordAuthCheck(r.URL.Path, "cross_origin")
+			http.Error(w, "cross-origin request denied", http.StatusForbidden)
+			return
+		}
 		if provider == nil {
 			observability.RecordAuthCheck(r.URL.Path, "disabled")
 			ctx := context.WithValue(r.Context(), keyMode, "local")

@@ -130,7 +130,9 @@ func observeMCPTool(logger *slog.Logger, timeout time.Duration) server.ToolHandl
 				} else if outcome == "error" {
 					args = append(args, "error", "tool returned an error result")
 				}
-				if outcome == "ok" {
+				if outcome == "ok" && request.Params.Name == "queue_prompt_history" {
+					logger.Debug("mcp tool call", args...)
+				} else if outcome == "ok" {
 					logger.Info("mcp tool call", args...)
 				} else {
 					logger.Warn("mcp tool call failed", args...)
@@ -168,6 +170,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 			{"/", "Workspace", "Default workspace for this Stash user."},
 			{"/self", "Self", "Agent's self-knowledge: capabilities, limits, preferences, and behavioral patterns."},
 			{"/self/capabilities", "Capabilities", "What the agent can do well. Strengths and proven competencies."},
+			{"/self/history", "Prompt history", "User prompts captured automatically by the client hook."},
 			{"/self/limits", "Limits", "What the agent struggles with or cannot do. Known failure modes."},
 			{"/self/preferences", "Preferences", "How the agent works best. Behavioral patterns and standing instructions."},
 		}
@@ -226,6 +229,31 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 			result["retry_at"] = remembered.RetryAt
 		}
 		return jsonToolResult(bc, result)
+	})
+
+	mcpServer.AddTool(mcp.NewTool("queue_prompt_history",
+		mcp.WithDescription(render("queue_prompt_history_description")),
+		mcp.WithString("prompt", mcp.Description(render("queue_prompt_history_prompt")), mcp.Required()),
+	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		nss, err := resolveNamespaces(ctx, "/self/history")
+		if err != nil {
+			return nil, err
+		}
+		namespace := nss[0]
+		_, err = bc.Brain.QueueRemember(ctx, namespace, request.GetString("prompt", ""), nil)
+		if errors.Is(err, brain.ErrNamespaceNotFound) {
+			if _, createErr := bc.Brain.CreateNamespace(ctx, namespace, "Prompt history", "User prompts captured automatically by the client hook."); createErr != nil {
+				return nil, fmt.Errorf("queue prompt history: create namespace: %w", createErr)
+			}
+			_, err = bc.Brain.QueueRemember(ctx, namespace, request.GetString("prompt", ""), nil)
+		}
+		if err != nil {
+			return nil, err
+		}
+		recordEmbeddingQueued()
+		// MCP hook output is interpreted as hook control JSON. Keep a successful
+		// side-effect silent so it does not add queue metadata to the prompt.
+		return jsonToolResult(bc, map[string]any{})
 	})
 
 	mcpServer.AddTool(mcp.NewTool("recall",
@@ -303,9 +331,13 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 
 	mcpServer.AddTool(mcp.NewTool("consolidate",
 		mcp.WithDescription(render("consolidate_description")),
-		mcp.WithString("namespaces", mcp.Description(render("namespaces_param"))),
+		mcp.WithString("namespaces", mcp.Description(render("namespaces_param")), mcp.Required()),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		namespaces, err := resolveNamespaces(ctx, request.GetString("namespaces", "/"))
+		requestedNamespaces, err := explicitConsolidationNamespaces([]string{request.GetString("namespaces", "")})
+		if err != nil {
+			return nil, err
+		}
+		namespaces, err := resolveNamespaces(ctx, strings.Join(requestedNamespaces, ","))
 		if err != nil {
 			return nil, err
 		}
@@ -341,6 +373,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 				"hypotheses_updated":           result.HypothesesUpdated,
 				"facts_decayed":                result.FactsDecayed,
 				"facts_expired":                result.FactsExpired,
+				"pending_stage_inputs":         result.PendingStageInputs,
 				"llm_calls":                    result.LLMCalls,
 				"duration":                     result.Duration.String(),
 				"errors":                       result.Errors,
@@ -1052,7 +1085,10 @@ func mcpServeCmd(ctx context.Context, cmd *cli.Command) error {
 	bc := getBootstrap(cmd)
 	options := mcpHTTPOptions{Addr: configuredListenAddress(bc, cmd)}
 	if cmd.Bool("with-consolidation") {
-		consolidation := consolidationOptionsFromCommand(cmd)
+		consolidation, err := consolidationOptionsFromCommand(cmd)
+		if err != nil {
+			return err
+		}
 		options.Consolidation = &consolidation
 	}
 	return serveMCPHTTP(ctx, bc, options)
@@ -1068,11 +1104,15 @@ type consolidationOptions struct {
 	Namespaces []string
 }
 
-func consolidationOptionsFromCommand(cmd *cli.Command) consolidationOptions {
+func consolidationOptionsFromCommand(cmd *cli.Command) (consolidationOptions, error) {
+	namespaces, err := explicitConsolidationNamespaces(cmd.StringSlice("consolidate-namespaces"))
+	if err != nil {
+		return consolidationOptions{}, err
+	}
 	return consolidationOptions{
 		Interval:   cmd.Duration("consolidate-interval"),
-		Namespaces: cmd.StringSlice("consolidate-namespaces"),
-	}
+		Namespaces: namespaces,
+	}, nil
 }
 
 func configuredListenAddress(bc *bootstrap.Context, cmd *cli.Command) string {
@@ -1094,15 +1134,32 @@ func serveMCPHTTP(ctx context.Context, bc *bootstrap.Context, options mcpHTTPOpt
 	if bc == nil {
 		return fmt.Errorf("server is not initialized")
 	}
+	if options.Consolidation != nil {
+		namespaces, err := explicitConsolidationNamespaces(options.Consolidation.Namespaces)
+		if err != nil {
+			return err
+		}
+		options.Consolidation.Namespaces = namespaces
+	}
 	if bc.Auth != nil && bc.Auth.Mode() == "stdio" {
 		return fmt.Errorf("STASH_AUTH_MODE=stdio can only be used with `mcp execute`")
 	}
+	if err := validateListenAddress(options.Addr, bc.Auth); err != nil {
+		return err
+	}
 
+	handler := newStashHTTPHandler(bc)
+	if bc.Auth == nil || bc.Auth.Mode() == "none" {
+		handler = unauthenticatedLoopbackOnly(handler)
+	}
 	httpServer := &http.Server{
 		Addr:    options.Addr,
-		Handler: newStashHTTPHandler(bc),
+		Handler: handler,
 		// SSE 는 응답이 끝나지 않는 스트림이므로 쓰기 타임아웃을 걸지 않는다.
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+		MaxHeaderBytes:    64 << 10,
 	}
 
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
@@ -1153,6 +1210,76 @@ func serveMCPHTTP(ctx context.Context, bc *bootstrap.Context, options mcpHTTPOpt
 	}
 }
 
+func validateListenAddress(addr string, provider *auth.Provider) error {
+	if provider != nil && provider.Mode() != "none" {
+		return nil
+	}
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("invalid server address %q: %w", addr, err)
+	}
+	host = strings.TrimSpace(host)
+	if strings.EqualFold(host, "localhost") {
+		return nil
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return nil
+	}
+	return fmt.Errorf("STASH_AUTH_MODE=none can only listen on a loopback address; configure authentication before listening on %q", addr)
+}
+
+func loopbackHostOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isLoopbackHost(r.Host) {
+			http.Error(w, "invalid Host header", http.StatusBadRequest)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func unauthenticatedLoopbackOnly(next http.Handler) http.Handler {
+	return loopbackHostOnly(http.NewCrossOriginProtection().Handler(next))
+}
+
+func isLoopbackHost(authority string) bool {
+	authority = strings.TrimSpace(authority)
+	if authority == "" || strings.ContainsAny(authority, "/\\@") {
+		return false
+	}
+
+	host := authority
+	switch {
+	case strings.HasPrefix(authority, "["):
+		closing := strings.IndexByte(authority, ']')
+		if closing < 0 {
+			return false
+		}
+		if closing+1 == len(authority) {
+			host = authority[1:closing]
+		} else {
+			var err error
+			host, _, err = net.SplitHostPort(authority)
+			if err != nil {
+				return false
+			}
+		}
+	case strings.Count(authority, ":") == 1:
+		var err error
+		host, _, err = net.SplitHostPort(authority)
+		if err != nil {
+			return false
+		}
+	}
+
+	host = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 // newStashHTTPHandler keeps every HTTP surface on one listener. A nil Auth
 // provider is the intentional representation of STASH_AUTH_MODE=none.
 func newStashHTTPHandler(bc *bootstrap.Context) http.Handler {
@@ -1178,7 +1305,7 @@ func newStashHTTPHandler(bc *bootstrap.Context) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", authenticatedHTTP(bc.Auth, newStashSkillsHTTPTransport(streamableServer, sessionResolver)))
 	mux.Handle("/sse", authenticatedHTTP(bc.Auth, sseServer.SSEHandler()))
-	mux.Handle("/message", authenticatedHTTP(bc.Auth, sseServer.MessageHandler()))
+	mux.Handle("/message", authenticatedHTTP(bc.Auth, limitRequestBody(sseServer.MessageHandler(), maxMCPRequestBodyBytes)))
 	mux.HandleFunc("/.well-known/oauth-protected-resource", bc.Auth.HandleProtectedResourceMetadata)
 	mux.HandleFunc("/.well-known/oauth-protected-resource/mcp", bc.Auth.HandleProtectedResourceMetadata)
 	mux.HandleFunc("/.well-known/oauth-protected-resource/sse", bc.Auth.HandleProtectedResourceMetadata)
@@ -1188,6 +1315,7 @@ func newStashHTTPHandler(bc *bootstrap.Context) http.Handler {
 	mux.HandleFunc("/authorize", bc.Auth.HandleAuthorize)
 	mux.HandleFunc("/oauth/token", bc.Auth.HandleOAuthToken)
 	mux.HandleFunc("/oauth/register", bc.Auth.HandleOAuthRegister)
+	mux.HandleFunc("/oauth/consent", bc.Auth.HandleConsent)
 	mux.HandleFunc("/auth/login", bc.Auth.HandleLogin)
 	mux.HandleFunc("/auth/callback", bc.Auth.HandleCallback)
 	mux.HandleFunc("/oauth/callback", bc.Auth.HandleCallback)
@@ -1205,6 +1333,14 @@ func newStashHTTPHandler(bc *bootstrap.Context) http.Handler {
 func mcpExecuteCmd(ctx context.Context, cmd *cli.Command) error {
 	bc := getBootstrap(cmd)
 	mcpServer := newMCPServer(bc)
+	var consolidation *consolidationOptions
+	if cmd.Bool("with-consolidation") {
+		options, err := consolidationOptionsFromCommand(cmd)
+		if err != nil {
+			return err
+		}
+		consolidation = &options
+	}
 
 	workerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -1219,12 +1355,11 @@ func mcpExecuteCmd(ctx context.Context, cmd *cli.Command) error {
 		runWorkspaceLifecycleTicker(workerCtx, bc)
 	}()
 
-	if cmd.Bool("with-consolidation") {
-		consolidation := consolidationOptionsFromCommand(cmd)
+	if consolidation != nil {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			runConsolidationTicker(workerCtx, bc, consolidation)
+			runConsolidationTicker(workerCtx, bc, *consolidation)
 		}()
 	}
 
@@ -1235,11 +1370,11 @@ func mcpExecuteCmd(ctx context.Context, cmd *cli.Command) error {
 }
 
 func mcpTokenCmd(_ context.Context, cmd *cli.Command) error {
-	secret := strings.TrimSpace(os.Getenv("STASH_AUTH_API_SECRET"))
-	if secret == "" {
-		secret = strings.TrimSpace(os.Getenv("STASH_AUTH_OAUTH_API_SECRET"))
+	secret := os.Getenv("STASH_AUTH_API_SECRET")
+	if strings.TrimSpace(secret) == "" {
+		secret = os.Getenv("STASH_AUTH_OAUTH_API_SECRET")
 	}
-	if secret == "" {
+	if strings.TrimSpace(secret) == "" {
 		return fmt.Errorf("STASH_AUTH_API_SECRET must be set")
 	}
 	subject := strings.TrimSpace(cmd.String("subject"))
@@ -1362,10 +1497,10 @@ func runWorkspaceLifecycleTicker(ctx context.Context, bc *bootstrap.Context) {
 
 func runConsolidationTicker(ctx context.Context, bc *bootstrap.Context, options consolidationOptions) {
 	interval := options.Interval
-	namespaces := options.Namespaces
-
-	if len(namespaces) == 0 {
-		namespaces = []string{"/"}
+	namespaces, err := explicitConsolidationNamespaces(options.Namespaces)
+	if err != nil {
+		log.Printf("Background consolidation disabled: %v", err)
+		return
 	}
 
 	log.Printf("Starting background consolidation with interval %s", interval)
@@ -1393,8 +1528,8 @@ func runConsolidationTicker(ctx context.Context, bc *bootstrap.Context, options 
 						log.Printf("Consolidation failed for namespace ID %d: %v", id, err)
 						continue
 					}
-					log.Printf("Consolidation completed for %s: facts=%d relationships=%d goals_annotated=%d failure_repeats=%d hypotheses_updated=%d",
-						result.Namespace, result.FactsCreated, result.RelationshipsFound, result.GoalsAnnotated, result.FailureRepeatsDetected, result.HypothesesUpdated)
+					log.Printf("Consolidation completed for %s: facts=%d relationships=%d goals_annotated=%d failure_repeats=%d hypotheses_updated=%d pending_stage_inputs=%d errors=%d",
+						result.Namespace, result.FactsCreated, result.RelationshipsFound, result.GoalsAnnotated, result.FailureRepeatsDetected, result.HypothesesUpdated, result.PendingStageInputs, len(result.Errors))
 				}
 			}
 		case <-ctx.Done():

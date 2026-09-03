@@ -1,7 +1,7 @@
 {
   "name": "stash-work-plan",
-  "version": "0.4.1",
-  "description": "Resume and coordinate shared component-oriented work through Stash; Git and external connectors are optional.",
+  "version": "0.4.4",
+  "description": "Queue prompt history and coordinate shared component-oriented work through Stash; Git and external connectors are optional.",
   "author": {
     "name": "wwwhana",
     "url": "https://github.com/wwwhana"
@@ -15,7 +15,7 @@
   "interface": {
     "displayName": "Stash Work Plan",
     "shortDescription": "Resume and coordinate agent work in Stash.",
-    "longDescription": "Resume a shared project without requiring Git, claim one work item, split child and prerequisite work, link bounded external resources, checkpoint observed results, verify completion evidence, and hand off unfinished tasks.",
+    "longDescription": "Give one memory reminder at session startup, queue prompt history before provider work, resume a shared project without requiring Git, and finish or hand off claimed work with minimal Stash calls.",
     "developerName": "wwwhana",
     "category": "Productivity",
     "capabilities": ["Interactive", "Write"],

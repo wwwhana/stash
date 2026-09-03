@@ -116,3 +116,17 @@ func TestAuthenticatedHTTPRejectsMissingCredentials(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
 	}
 }
+
+func TestAuthenticatedHTTPRejectsCrossOriginWrite(t *testing.T) {
+	h := authenticatedHTTP(&auth.Provider{}, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("cross-origin request reached the MCP handler")
+	}))
+	req := httptest.NewRequest(http.MethodPost, "https://stash.example.com/mcp", nil)
+	req.Header.Set("Origin", "https://attacker.example.com")
+	req.Header.Set("Sec-Fetch-Site", "same-site")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+}

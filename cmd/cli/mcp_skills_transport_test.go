@@ -109,7 +109,7 @@ func TestStashSkillsHTTPTransportAnswersHeaderlessGetProbe(t *testing.T) {
 }
 
 func TestStashSkillsHTTPTransportKeepsProbesBehindAuthentication(t *testing.T) {
-	provider, err := auth.Init(context.Background(), auth.Config{Mode: "token", APISecret: "test-secret"})
+	provider, err := auth.Init(context.Background(), auth.Config{Mode: "token", APISecret: testAuthSecret})
 	if err != nil {
 		t.Fatalf("init token auth: %v", err)
 	}

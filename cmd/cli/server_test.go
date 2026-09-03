@@ -17,6 +17,8 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
+const testAuthSecret = "0123456789abcdef0123456789abcdef"
+
 func TestConfiguredHTTPAddress(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -60,10 +62,125 @@ func TestOperationalRoutesAreRegistered(t *testing.T) {
 			if rr.Code != http.StatusServiceUnavailable {
 				t.Fatalf("GET %s status = %d, want %d", path, rr.Code, http.StatusServiceUnavailable)
 			}
-			if !strings.Contains(rr.Body.String(), "service is not initialized") {
+			if rr.Body.String() != "service unavailable\n" {
 				t.Fatalf("GET %s body = %q", path, rr.Body.String())
 			}
 		})
+	}
+}
+
+func TestDisabledAuthenticationOnlyListensOnLoopback(t *testing.T) {
+	for _, addr := range []string{"127.0.0.1:8080", "[::1]:8080", "localhost:8080"} {
+		if err := validateListenAddress(addr, nil); err != nil {
+			t.Fatalf("loopback address %q rejected: %v", addr, err)
+		}
+	}
+	for _, addr := range []string{"0.0.0.0:8080", ":8080", "[::]:8080"} {
+		if err := validateListenAddress(addr, nil); err == nil {
+			t.Fatalf("public address %q accepted without authentication", addr)
+		}
+	}
+	provider, err := auth.Init(context.Background(), auth.Config{Mode: "token", APISecret: testAuthSecret})
+	if err != nil {
+		t.Fatalf("init token auth: %v", err)
+	}
+	if err := validateListenAddress("0.0.0.0:8080", provider); err != nil {
+		t.Fatalf("authenticated public address rejected: %v", err)
+	}
+}
+
+func TestDisabledAuthenticationRejectsNonLoopbackHost(t *testing.T) {
+	for _, host := range []string{"localhost", "localhost.:8080", "127.0.0.1:8080", "127.0.0.2", "[::1]:8080", "::1"} {
+		if !isLoopbackHost(host) {
+			t.Errorf("loopback Host %q rejected", host)
+		}
+	}
+	for _, host := range []string{"", "stash.example.com", "stash.example.com:8080", "127.0.0.1.example.com", "[::1]bad", "user@localhost"} {
+		if isLoopbackHost(host) {
+			t.Errorf("non-loopback Host %q accepted", host)
+		}
+	}
+
+	called := false
+	handler := loopbackHostOnly(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/mcp", nil)
+	request.Host = "attacker.example:8080"
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest || called {
+		t.Fatalf("non-loopback Host status = %d, handler called = %t", response.Code, called)
+	}
+
+	called = false
+	handler = unauthenticatedLoopbackOnly(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	request = httptest.NewRequest(http.MethodPost, "http://127.0.0.1/mcp", nil)
+	request.Header.Set("Origin", "https://attacker.example")
+	request.Header.Set("Sec-Fetch-Site", "cross-site")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden || called {
+		t.Fatalf("cross-origin local POST status = %d, handler called = %t", response.Code, called)
+	}
+}
+
+func TestDisabledAuthenticationLoopbackBoundaryOverHTTP(t *testing.T) {
+	server := httptest.NewServer(unauthenticatedLoopbackOnly(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})))
+	defer server.Close()
+
+	tests := []struct {
+		name       string
+		host       string
+		origin     string
+		fetchSite  string
+		wantStatus int
+	}{
+		{name: "forged host", host: "attacker.example:8080", wantStatus: http.StatusBadRequest},
+		{name: "cross-origin write", origin: "https://attacker.example", fetchSite: "cross-site", wantStatus: http.StatusForbidden},
+		{name: "local client", wantStatus: http.StatusNoContent},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			request, err := http.NewRequest(http.MethodPost, server.URL, nil)
+			if err != nil {
+				t.Fatalf("create request: %v", err)
+			}
+			if tt.host != "" {
+				request.Host = tt.host
+			}
+			if tt.origin != "" {
+				request.Header.Set("Origin", tt.origin)
+			}
+			if tt.fetchSite != "" {
+				request.Header.Set("Sec-Fetch-Site", tt.fetchSite)
+			}
+			response, err := server.Client().Do(request)
+			if err != nil {
+				t.Fatalf("send request: %v", err)
+			}
+			defer response.Body.Close()
+			if response.StatusCode != tt.wantStatus {
+				t.Fatalf("status = %d, want %d", response.StatusCode, tt.wantStatus)
+			}
+		})
+	}
+}
+
+func TestLegacyMessageRequestBodyIsLimited(t *testing.T) {
+	handler := newStashHTTPHandler(&bootstrap.Context{})
+	body := strings.NewReader(strings.Repeat("x", maxMCPRequestBodyBytes+1))
+	request := httptest.NewRequest(http.MethodPost, "/message", body)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized POST /message status = %d, want %d", response.Code, http.StatusRequestEntityTooLarge)
 	}
 }
 
@@ -125,11 +242,11 @@ func TestStashHTTPHandlerAllowsDisabledAuthentication(t *testing.T) {
 }
 
 func TestStashHTTPHandlerUsesNativeMCPToken(t *testing.T) {
-	provider, err := auth.Init(context.Background(), auth.Config{Mode: "token", APISecret: "test-secret"})
+	provider, err := auth.Init(context.Background(), auth.Config{Mode: "token", APISecret: testAuthSecret})
 	if err != nil {
 		t.Fatalf("init token auth: %v", err)
 	}
-	token, err := auth.GenerateAPIToken("agent-1", "test-secret", time.Hour)
+	token, err := auth.GenerateAPIToken("agent-1", testAuthSecret, time.Hour)
 	if err != nil {
 		t.Fatalf("generate token: %v", err)
 	}
@@ -195,5 +312,22 @@ func TestObserveMCPToolLogsCallAndErrorWithoutArguments(t *testing.T) {
 	}
 	if strings.Contains(logText, "arguments") {
 		t.Fatalf("MCP tool log should not include arguments: %s", logText)
+	}
+}
+
+func TestObserveMCPToolKeepsSuccessfulPromptQueueOutOfInfoLogs(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	middleware := observeMCPTool(logger, time.Second)
+	handler := middleware(func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText("{}"), nil
+	})
+	request := mcp.CallToolRequest{}
+	request.Params.Name = "queue_prompt_history"
+	if _, err := handler(context.Background(), request); err != nil {
+		t.Fatalf("queue_prompt_history: %v", err)
+	}
+	if logs.Len() != 0 {
+		t.Fatalf("successful prompt queue wrote info log: %s", logs.String())
 	}
 }

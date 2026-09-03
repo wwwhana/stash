@@ -157,7 +157,7 @@ func collectWorkspaceFacts(ctx context.Context, cwd, agentID, projectNamespace s
 	if remoteName == "" {
 		remoteName = "origin"
 	}
-	remoteURL, err := optionalGitOutput(ctx, absCWD, "remote", "get-url", remoteName)
+	remoteURL, err := optionalGitOutput(ctx, absCWD, "remote", "get-url", "--", remoteName)
 	if err != nil {
 		return nil, err
 	}

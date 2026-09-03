@@ -1,9 +1,9 @@
 {{define "server_description"}}
 Stash persists agent memory and local work state in namespaces.
 
-Start each session with init. Before history-dependent work, use recall. Store durable decisions, corrections, constraints, project facts, failures, and handoffs with remember; do not store routine narration. Verify a namespace with list_namespaces before writing, and create it when needed. Use context only for short-lived active focus. Episodes are raw observations; facts are consolidated knowledge.
+Call init only for first-time setup. Use recall only when saved history can change the answer, and remember only durable decisions, corrections, constraints, project facts, failures, and lessons. Do not call list_namespaces when the exact namespace is already known. Use context only for short-lived active focus. Episodes are raw observations; facts are consolidated knowledge.
 
-For tracked work, call resume_project with the exact namespace and your routing capabilities. Resume active work first or choose one of the few returned candidates, then call the default brief resume_work. Read the shared goal path, parent plan component, owned scopes, and next action. Reuse context_digest as known_context_digest, and fetch a linked resource only when it is needed for that action. The full get_goal_map and get_work_plan views are for owner monitoring, not routine worker input. Claim the item with claim_work, checkpoint every meaningful result, and use spawn_work when a child or prerequisite is discovered. Attach completion evidence, verify it, and call finish_work only after every required condition and blocker passes. Call handoff_work before ending unfinished work. Git workspace tools are optional connector helpers and are never a prerequisite.
+Use the tracked-work tools only for an existing Stash work item or when the user asks for a shared Work Plan. If an exact work item ID is already supplied, skip resume_project and call resume_work directly. Read context once, then reuse it until Stash reports a conflict or stale state. Claim the item with claim_work. Do not checkpoint routine shell commands or file edits; checkpoint only before interruption, lease risk, or a handoff-worthy partial result. One evidence call may support every condition proved by the same observation. Put the pending conditions proved by that evidence in finish_work.passed_condition_ids so finish accepts them in the same call. Use verify_work_condition only for an explicit waiver or when a condition must be accepted before finish. Git workspace tools remain optional.
 
 When remember returns indexed=false, the original text is already safe and will be indexed automatically; do not submit a duplicate. Paginated responses may return items, has_more, and next_offset; continue with offset=next_offset. If Stash fails twice, tell the user memory is unavailable instead of pretending it worked.
 
@@ -13,26 +13,26 @@ If a tracked attempt ends through finish_work, handoff_work, or lease expiry wit
 {{define "server_instructions"}}
 Use Stash as the durable automation record for this agent.
 
-At the start of every session, call `init`, then `list_namespaces` and `resume_project` with the exact project namespace, a stable `agent_id`, and only the capabilities you have. Continue active work first; otherwise call `resume_work` for one returned candidate. Before any tracked local or external action, call `claim_work` with a fresh UUIDv4 `action_key`.
+Do not call Stash merely because a session started. Call `init` only for first-time setup, `list_namespaces` only when the namespace is unknown, and `recall` only when saved history can change the current answer. Use tracked-work tools only for a named existing item or a user-requested shared Work Plan. If an exact work item ID is supplied, skip `resume_project`; otherwise call it once to select an item. Call `resume_work` once, then `claim_work` with a fresh UUIDv4 `action_key`.
 
-During work, call `checkpoint_work` after each meaningful result with exactly one next action. Use `spawn_work` for child or prerequisite deliverables, `attach_work_resource` for bounded external references, and `remember_work` for durable decisions, constraints, failures, and results. Stash also saves a bounded final result automatically on `finish_work`, `handoff_work`, or lease expiry when no memory was linked during that attempt. Submit evidence and verify every required condition before `finish_work`; call `handoff_work` when work remains unfinished.
+Do not call Stash after each shell command or file edit during uninterrupted work. Use `checkpoint_work` only before interruption, lease risk, or a partial result another agent must resume. Use one `submit_work_evidence` call for all condition IDs supported by the same observation. Pass the successfully proved pending IDs as `finish_work.passed_condition_ids`; `finish_work` accepts those evidence-backed conditions and saves one bounded final result in the same call. `remember_work` remains for a distinct durable decision, correction, failure, or lesson. Call `handoff_work` only when work remains unfinished.
 
 For memory-only work, use `recall` before history-dependent decisions and `remember` for durable observations. Treat capabilities as routing hints, never as authorization. Keep lease tokens, action keys, credentials, and secrets out of memory, evidence, comments, and logs. Follow `next_offset` or `next_query` for paginated results, and reuse an action key only to retry the exact same uncertain mutation.
 {{end}}
 
 {{define "init_description"}}
-Initialize Stash for this session and idempotently create /, /self, /self/capabilities, /self/limits, and /self/preferences. Call first.
+Perform first-time Stash setup and idempotently create /, /self, /self/capabilities, /self/history, /self/limits, and /self/preferences. Do not repeat this in normal sessions.
 {{end}}
 
 {{define "list_namespaces_description"}}
-List available namespaces. Use before choosing a namespace for reads or writes.
+List available namespaces only when the exact namespace is unknown.
 {{end}}
 {{define "list_namespaces_namespaces"}}
 Optional comma-separated paths. A path includes itself and descendants; / means all.
 {{end}}
 
 {{define "create_namespace_description"}}
-Create a namespace and any missing parents. Check list_namespaces first to avoid duplicates.
+Create a namespace and any missing parents. If the exact path is already known, call this directly without listing every namespace first.
 {{end}}
 {{define "create_namespace_slug"}}
 Lowercase path beginning with /; segments may contain letters, numbers, hyphens, and underscores.
@@ -59,6 +59,13 @@ Self-contained durable information, including enough context to remain useful la
 {{end}}
 {{define "remember_namespace"}}
 Exact existing namespace path. Defaults to /.
+{{end}}
+
+{{define "queue_prompt_history_description"}}
+Hook-only: durably queue one user prompt under /self/history and return before embedding. Agents must not call this tool directly.
+{{end}}
+{{define "queue_prompt_history_prompt"}}
+Exact user prompt supplied by the UserPromptSubmit hook.
 {{end}}
 
 {{define "recall_description"}}
@@ -88,7 +95,7 @@ Description of the episode to find.
 {{end}}
 
 {{define "consolidate_description"}}
-Derive facts, relationships, patterns, and failure lessons from pending episodes in a namespace.
+Derive structured knowledge from pending records in explicitly selected non-root namespaces. The root namespace is rejected; results include the remaining stage-input count and errors.
 {{end}}
 
 {{define "set_context_description"}}

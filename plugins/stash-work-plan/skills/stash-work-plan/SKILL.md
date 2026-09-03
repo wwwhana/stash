@@ -9,10 +9,11 @@ Use Stash as the shared AI plan and continuity record. Human work may remain aut
 
 ## Resume before creating
 
-1. Call `resume_project` with the exact namespace, a stable `agent_id`, and the small set of capabilities available in this session.
-2. Continue this agent's active work first. Otherwise choose one returned candidate whose `required_capabilities` it can satisfy.
-3. Call `resume_work` for that item and read its compact goal path, parent plan component, owned scopes, next action, pending conditions, relevant memory, linked resource summaries, prerequisite results, and blockers.
-4. Continue a matching item. Create a component, task, or issue only when the bounded responses and any needed paginated search show no match.
+1. Use this flow only for an existing Stash work item or when the user asked for a shared Work Plan. Do not call Stash for unrelated ordinary work.
+2. If an exact work item ID is supplied, skip `resume_project`. Otherwise call it once with the exact namespace, a stable `agent_id`, and the small set of capabilities available in this session.
+3. Continue this agent's active work first. Otherwise choose one returned candidate whose `required_capabilities` it can satisfy.
+4. Call `resume_work` once for that item and read its compact goal path, parent plan component, owned scopes, next action, pending conditions, relevant memory, linked resource summaries, prerequisite results, and blockers.
+5. Continue a matching item. Resume again only after a conflict, stale-state response, handoff, or explicit refresh request. Create work only when the bounded responses show no match.
 
 No local path, Git repository, or MCP Roots are required. Capabilities, paths, URLs, provider IDs, and agent IDs are routing hints; MCP authentication controls namespace access.
 
@@ -69,17 +70,22 @@ A `worktree_id` is optional connector metadata. Use a new action key for every l
 
 ## Checkpoint observed progress
 
-- Call `checkpoint_work` after each meaningful action. Record what was observed and exactly one concrete `next_action`.
+- Do not call Stash after routine shell commands, file reads, or edits.
+- Call `checkpoint_work` only before interruption, lease risk, or when a partial result must survive for another agent. Include one concrete `next_action`.
 - Call `renew_work_lease` before a long action could cross the deadline.
-- Use `remember_work` for durable decisions, corrections, failure lessons, and outcome facts. It does not prove completion. Stash also saves one bounded result memory automatically on a successful `finish_work` or `handoff_work`, and preserves the latest checkpoint when a lease expires.
-- Call `resume_project` again when project state may have changed.
+- Resume again only when Stash reports a conflict or stale state.
+
+## Required memory check
+
+- Combine related durable details into one `remember_work` call for a distinct decision, correction, failure, or lesson. Final results are already saved by `finish_work` or `handoff_work`; omit routine narration.
+- `finish_work` or `handoff_work`: accept the result only when the response says `result_memory_linked: true`.
 
 ## Prove and finish
 
 1. Exercise each condition through its named path. Keep source, build, test, HTTP, UI, device, and deployment observations separate when required.
-2. Call `submit_work_evidence` and retain the evidence ID.
-3. Call `verify_work_condition` with that ID. Use `waived` only with an explicit reason and supporting evidence.
-4. Call `finish_work` only after every required condition is accepted and every blocker is finished.
+2. Use one `submit_work_evidence` call for every condition proved by the same observation.
+3. Put the successfully proved pending IDs in `finish_work.passed_condition_ids`; it accepts those conditions only when this attempt supplied linked evidence. Use `verify_work_condition` only for an explicit waiver or when acceptance must be recorded before finish.
+4. Confirm every blocker is finished and `result_memory_linked: true` is present in the response.
 
 If unfinished, call `handoff_work` with the current observed result and exactly one next action. A comment, chat summary, status edit, or connector heartbeat does not release a lease.
 
@@ -91,7 +97,7 @@ Call `validate_work_plan` after meaningful component, task, dependency, or decis
 
 ## Fresh-agent recovery
 
-`resume_project` → continue the same active item or choose one candidate → `resume_work` → `prepare_work` only if needed → `claim_work` → checkpoint observations → submit and verify evidence → `finish_work`, or `handoff_work` if unfinished.
+With an exact item ID, start at `resume_work`; otherwise use `resume_project` once to select it. Then `prepare_work` only if needed → `claim_work` → submit batched evidence → `finish_work`, or `handoff_work` if unfinished. Add a checkpoint only at a recovery boundary.
 
 Never reconstruct project state from old chat when the bounded Stash resumes are available.
 

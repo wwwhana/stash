@@ -61,3 +61,20 @@ func TestAdminOnlyHTTPRequiresConfiguredCredential(t *testing.T) {
 		t.Fatalf("valid admin token status=%d called=%v, want 200 and handler call", valid.Code, called)
 	}
 }
+
+func TestAdminOnlyHTTPRejectsCrossOriginWrite(t *testing.T) {
+	called := false
+	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true })
+	bc := &bootstrap.Context{Config: &config.Config{AdminToken: "maintenance-secret"}, Brain: &brain.Brain{}}
+	handler := adminOnlyHTTP(bc, next)
+
+	request := httptest.NewRequest(http.MethodPost, "https://stash.example.com/admin/maintenance/embeddings/reindex", nil)
+	request.Header.Set("Origin", "https://attacker.example")
+	request.Header.Set("X-Stash-Admin-Token", "maintenance-secret")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusForbidden || called {
+		t.Fatalf("cross-origin admin write status=%d called=%v, want 403 and no handler call", response.Code, called)
+	}
+}

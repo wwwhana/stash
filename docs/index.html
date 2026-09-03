@@ -2144,7 +2144,7 @@
           </div>
           <div class="qs-step">
             <div class="qs-step-num">2</div>
-            <div class="qs-step-text">Copy <code>.env.example</code> → <code>.env</code> and set your API key + model preferences</div>
+            <div class="qs-step-text">Copy <code>.env.example</code> → <code>.env</code>, set a random <code>STASH_AUTH_API_SECRET</code>, then configure your model</div>
           </div>
           <div class="qs-step">
             <div class="qs-step-num">3</div>
@@ -2171,8 +2171,9 @@
             <div>&nbsp;</div>
             <div><span class="t-comment"># 2. configure</span></div>
             <div><span class="t-prompt">$</span> <span class="t-cmd">cp .env.example .env</span></div>
-            <div><span class="t-dim">&nbsp;&nbsp; # edit .env with your API key,</span></div>
-            <div><span class="t-dim">&nbsp;&nbsp; # models and STASH_VECTOR_DIM</span></div>
+            <div><span class="t-prompt">$</span> <span class="t-cmd">openssl rand -hex 32</span></div>
+            <div><span class="t-dim">&nbsp;&nbsp; # paste into STASH_AUTH_API_SECRET, then set</span></div>
+            <div><span class="t-dim">&nbsp;&nbsp; # the API key, models and STASH_VECTOR_DIM</span></div>
             <div>&nbsp;</div>
             <div><span class="t-comment"># 3. launch everything</span></div>
             <div><span class="t-prompt">$</span> <span class="t-cmd">docker compose up</span></div>
@@ -2187,7 +2188,7 @@
         </div>
         <div class="qs-note">
           <span>⚠️</span>
-          <span>Set <code>STASH_VECTOR_DIM</code> to match the embedding model. If the model or dimension changes later, Stash queues existing memories for reindexing.</span>
+          <span>Set a unique <code>STASH_AUTH_API_SECRET</code> and match <code>STASH_VECTOR_DIM</code> to the embedding model.</span>
         </div>
       </div>
     </div>
@@ -2205,10 +2206,10 @@
     <div class="mcp-url-hero reveal">
       <div class="mcp-url-label">MCP Server URL</div>
       <div class="mcp-url-box">
-        <span class="mcp-url-text">http://localhost:8080/sse</span>
-        <button class="mcp-url-copy" type="button" data-copy="http://localhost:8080/sse">Copy</button>
+        <span class="mcp-url-text">http://localhost:8080/mcp</span>
+        <button class="mcp-url-copy" type="button" data-copy="http://localhost:8080/mcp">Copy</button>
       </div>
-      <div class="mcp-url-sub">Stash is already running after <code>docker compose up</code> — just copy the URL above into your agent.</div>
+      <div class="mcp-url-sub">Generate a Stash API token and send it as <code>Authorization: Bearer &lt;token&gt;</code>. See the full walkthrough below.</div>
     </div>
 
     <!-- INTEGRATION EXAMPLES -->
@@ -2239,7 +2240,8 @@
         <pre class="integration-code" id="cfg-cursor">{
   "mcpServers": {
     "stash": {
-      "url": "http://localhost:8080/sse"
+      "url": "http://localhost:8080/mcp",
+      "headers": { "Authorization": "Bearer &lt;stash_api_token&gt;" }
     }
   }
 }</pre>
@@ -2254,7 +2256,8 @@
         <pre class="integration-code" id="cfg-claude">{
   "mcpServers": {
     "stash": {
-      "url": "http://localhost:8080/sse"
+      "url": "http://localhost:8080/mcp",
+      "headers": { "Authorization": "Bearer &lt;stash_api_token&gt;" }
     }
   }
 }</pre>
@@ -2270,7 +2273,8 @@
   "mcp": {
     "stash": {
       "type": "remote",
-      "url": "http://localhost:8080/sse",
+      "url": "http://localhost:8080/mcp",
+      "headers": { "Authorization": "Bearer &lt;stash_api_token&gt;" },
       "enabled": true
     }
   }
@@ -2286,7 +2290,8 @@
         <pre class="integration-code" id="cfg-windsurf">{
   "mcpServers": {
     "stash": {
-      "url": "http://localhost:8080/sse"
+      "url": "http://localhost:8080/mcp",
+      "headers": { "Authorization": "Bearer &lt;stash_api_token&gt;" }
     }
   }
 }</pre>
@@ -2295,7 +2300,7 @@
     </div>
 
     <div class="mcp-note reveal">
-      Any agent that supports MCP over SSE works — just point it at <code>http://localhost:8080/sse</code>.
+      Prefer Streamable HTTP at <code>http://localhost:8080/mcp</code> and include a Stash bearer token.
     </div>
 
     <!-- TOOLS -->

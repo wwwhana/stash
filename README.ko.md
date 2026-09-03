@@ -16,7 +16,9 @@
 ```bash
 git clone https://github.com/wwwhana/stash.git
 cd stash
-cp .env.example .env   # API 키와 모델을 수정하세요
+cp .env.example .env
+openssl rand -hex 32   # 출력값을 .env의 STASH_AUTH_API_SECRET에 넣으세요
+# .env에서 제공자 API 키와 모델 설정을 수정하세요
 docker compose up
 ```
 
@@ -62,29 +64,29 @@ STASH_VECTOR_DIM=384
 `docker compose up` 실행 후, Stash는 HTTP/SSE 방식으로 MCP 서버를 노출합니다. Streamable HTTP(`/mcp`)와 표준 SSE(`/sse`)를 모두 지원합니다.
 
 ### 1. Claude Code
-`/mcp` HTTP 엔드포인트를 기본으로 사용합니다.
-```bash
-claude mcp add stash http://localhost:8080/mcp
-```
+`/mcp` HTTP 주소를 사용하고, 아래에서 발급한 로컬 Bearer 토큰을 보내도록
+클라이언트를 설정합니다.
 
 ### 2. Codex
-Docker Compose로 실행한 로컬 Web MCP 서버는 다음처럼 등록합니다.
+Docker Compose 기본 설정은 토큰 인증을 사용합니다. 실행 중인 컨테이너에서
+토큰을 발급한 뒤 로컬 Web MCP 서버를 등록합니다.
 
 ```bash
-codex mcp add stash-local --url http://127.0.0.1:8080/mcp
+export STASH_MCP_TOKEN="$(docker compose exec -T stash /stash mcp token --subject codex)"
+codex mcp add stash-local --url http://127.0.0.1:8080/mcp --bearer-token-env-var STASH_MCP_TOKEN
 ```
 
-기본 로컬 설정인 `STASH_AUTH_MODE=none`에서는 MCP 로그인이 필요하지 않습니다. `stdio` 방식으로 stash CLI 바이너리를 직접 실행할 수도 있습니다.
+`stdio` 방식으로 stash CLI 바이너리를 직접 실행할 수도 있습니다.
 ```json
 "stash": {
   "command": "stash",
-  "args": ["mcp", "execute", "--with-consolidation"]
+  "args": ["mcp", "execute", "--with-consolidation", "--consolidate-namespaces", "/projects"]
 }
 ```
 
 원격 MCP 서버는 Streamable HTTP로 연결합니다. `oauth` 프로필에서는 MCP
 클라이언트가 OAuth 인증 코드 방식으로 로그인한 뒤 MCP 리소스에 묶인 Stash
-접근 토큰을 받습니다.
+접근 권한을 사용자가 확인하고 허용하면 Stash 접근 토큰을 받습니다.
 
 ```bash
 codex mcp add stash --url https://stash.example.com/mcp
@@ -103,7 +105,7 @@ codex mcp add stash --url https://stash.example.com/mcp --bearer-token-env-var S
 
 인증 프로필은 네 가지입니다.
 
-- `none`: HTTP 인증 없음. 격리된 로컬 실행에서만 사용합니다.
+- `none`: HTTP 인증 없음. 이 모드에서는 로컬 주소 밖으로 서버를 열 수 없습니다.
 - `oauth` (기존 `oidc`도 호환): 브라우저 OIDC 로그인과 MCP OAuth 인증 코드
   방식을 함께 사용합니다. MCP와 SSE는 리소스가 확인된 Stash OAuth 접근
   토큰과 Stash API Bearer 토큰을 받습니다.
@@ -120,9 +122,13 @@ OIDC를 쓰지 않는 서버는 `STASH_AUTH_API_SECRET`이 있는 환경에서
 `stash mcp token --subject <에이전트>`를 실행하세요. 기본 유효기간은 30일이며
 `STASH_AUTH_TOKEN_TTL` 또는 명령의 `--ttl`로 늘려 발급할 수 있습니다.
 
+OAuth 접근 토큰의 기본 유효기간은 1시간이며, 한 번 쓴 뒤 교체되는 갱신 토큰은
+30일입니다. `STASH_AUTH_ACCESS_TOKEN_TTL`과
+`STASH_AUTH_REFRESH_TOKEN_TTL`로 설정하며, 접근 토큰은 1시간을 넘길 수 없습니다.
+
 ## 운영 지표와 상태 확인
 
-`stash serve`는 MCP, 관리 화면, OAuth 경로, 운영 지표, 상태 확인을 하나의 HTTP 포트(기본 `:8080`)에서 제공합니다. HTTP 인증을 켜면 `http://localhost:8080/metrics`도 MCP와 같은 Bearer 인증이 필요합니다. `/healthz`와 `/readyz`는 로드 밸런서 상태 확인을 위해 공개로 둡니다. HTTP 요청, 인증 결과, MCP 도구 호출, 외부 제공자 호출, 네임스페이스 범위 적용, 기억 통합 작업, 임베딩 재시도 대기 건수를 기록합니다. 요청·인증·도구·제공자·범위 지표의 라벨에는 사용자 ID와 실제 네임스페이스 이름을 넣지 않습니다.
+`stash serve`는 MCP, 관리 화면, OAuth 경로, 운영 지표, 상태 확인을 하나의 HTTP 포트(기본 `127.0.0.1:8080`)에서 제공합니다. Docker도 호스트의 로컬 주소에만 8080번 포트를 연결합니다. HTTP 인증을 켜면 `http://localhost:8080/metrics`도 MCP와 같은 Bearer 인증이 필요합니다. `/healthz`와 `/readyz`는 로드 밸런서 상태 확인을 위해 공개로 둡니다. HTTP 요청, 인증 결과, MCP 도구 호출, 외부 제공자 호출, 네임스페이스 범위 적용, 기억 통합 대기량과 최근 오류 수, 작업 결과 기억 연결, 임베딩 재시도 대기 건수를 기록합니다. 요청·인증·도구·제공자·범위 지표의 라벨에는 사용자 ID와 실제 네임스페이스 이름을 넣지 않습니다.
 
 임베딩 API가 짧은 요청 재시도 후에도 실패하면 원문은 인덱싱 대기 상태로 저장됩니다. PostgreSQL 연결은 정상이지만 벡터 값만 저장하지 못한 경우에도 원문을 보존합니다. 한 항목이 다섯 번 실패하면 자동 재시도를 멈추고 관리자가 다시 시작할 때까지 일시 중지해, 작은 일일 한도를 계속 소모하지 않게 합니다. 재시도 간격은 설정한 최댓값 안에서 늘어납니다. 임베딩 제공자가 잠시 응답하지 않아도 `recall`은 저장된 원문과 사실의 `entity`·`property`·`value` 필드를 PostgreSQL 트라이그램 검색으로 찾아 작업을 계속할 수 있습니다. `STASH_EMBEDDING_RETRY_INTERVAL`, `STASH_EMBEDDING_RETRY_MAX_INTERVAL`, `STASH_EMBEDDING_RETRY_BATCH_SIZE`로 주기와 한 번에 처리할 수를 설정합니다.
 
@@ -132,7 +138,7 @@ MCP 도구 결과에는 기본 32KB 안전 상한이 있습니다. 이 값은 �
 
 리즌 모델과 임베딩 모델의 입력 한도는 MCP 응답 상한과 별도로 설정합니다. 리즌 모델의 전체 컨텍스트 크기를 `STASH_REASONER_CONTEXT_TOKENS`에, 지시문과 JSON 답변을 위해 남겨 둘 공간을 `STASH_REASONER_RESERVED_TOKENS`에 넣습니다. 임베딩 모델의 입력 한도는 `STASH_EMBEDDING_CONTEXT_TOKENS`에 넣습니다. Stash는 이 토큰 예산을 보수적인 UTF-8 바이트 예산으로 바꾸고, 문단을 먼저 나눈 뒤 마침표 같은 문장 끝을 우선해 자료를 나눠 호출합니다. 자연스러운 경계가 없을 때만 글자 중간을 나눕니다. 긴 임베딩 입력은 여러 묶음의 벡터를 합쳐 하나로 저장합니다. MCP는 모델의 토크나이저나 현재 대화에 남은 토큰을 알려주지 않으므로 값을 `0`으로 두면 제공자가 알려 준 한도를 읽어 자동으로 맞추고, 한도를 알 수 없을 때도 컨텍스트 초과 후 더 작게 나눠 다시 시도합니다. 컨텍스트가 44,544토큰인 리즌 모델이라면 `STASH_REASONER_CONTEXT_TOKENS=44544`, `STASH_REASONER_RESERVED_TOKENS=4096` 이상으로 시작하면 됩니다.
 
-`info`에서는 MCP/API 호출과 OpenAI 호환 제공자 호출이 콘솔에 남습니다. `STASH_LOG_LEVEL=debug`로 올리면 일반 관리 화면 요청도 볼 수 있고, 실패한 요청은 `warn`으로 표시됩니다. 로그에는 메서드, 제한된 경로, 상태, 걸린 시간, 호출 구성 요소·모델, 가능한 경우 요청 ID를 넣으며 쿼리 문자열, 인증 헤더, 쿠키, 요청 본문은 기록하지 않습니다.
+`info`에서는 MCP/API 호출과 OpenAI 호환 제공자 호출이 콘솔에 남습니다. 프롬프트마다 실행되는 `queue_prompt_history`의 성공 기록은 `debug`에서만 표시합니다. `STASH_LOG_LEVEL=debug`로 올리면 이 기록과 일반 관리 화면 요청을 볼 수 있고, 실패한 요청은 `warn`으로 표시됩니다. 로그에는 메서드, 제한된 경로, 상태, 걸린 시간, 호출 구성 요소·모델, 가능한 경우 요청 ID를 넣으며 쿼리 문자열, 인증 헤더, 쿠키, 요청 본문은 기록하지 않습니다.
 
 제공자 요청과 MCP 도구 호출은 기본 2분 안에 끝나야 합니다. 모델 서버가 느리거나 큰 계획을 검토하는 환경에서는 `STASH_OPENAI_REQUEST_TIMEOUT`과 `STASH_MCP_TOOL_TIMEOUT`을 같은 값 또는 도구 제한을 더 크게 설정하세요. 제한 시간이 지나면 요청은 오류로 끝나고, 임베딩은 원문을 보존한 채 다음 재시도 대상으로 남습니다.
 
@@ -175,8 +181,9 @@ Streamable HTTP를 지원하면 `http://localhost:8080/mcp`를 사용하세요. 
 }
 ```
 
-### 자동 저장 및 심리스 핸드오프 (Seamless Handoff)
-AI 에이전트가 매번 프롬프트 없이도 기계적으로 기억을 저장하고 다음 세션으로 바통을 넘기게 하려면 **[Seamless Agent Handoff Guide](docs/AGENT_HANDOFF.md)**를 읽어보세요. Cursor, Claude Desktop, Antigravity IDE 등에서 자동으로 컨텍스트를 불러오고 저장하도록 강제할 수 있습니다.
+### 자동 저장과 작업 이어가기
+
+Codex·Claude Code용 플러그인은 세션을 새로 시작할 때 기억 사용 원칙을 한 번만 알려 줍니다. 사용자가 보낸 프롬프트는 기존 OAuth 연결로 저장 대기열에 넣고, 임베딩은 서버에서 따로 처리합니다. 프롬프트 원문이 저장되므로 사용 범위와 끄는 방법은 **[에이전트 작업 이어가기 안내](docs/AGENT_HANDOFF.md)**에서 확인하세요.
 
 ## 동작 원리 (What It Does)
 
@@ -192,9 +199,9 @@ Stash는 AI 에이전트와 현실 세계 사이의 인지적 계층(Cognitive l
 
 소유자가 읽는 작업 계획은 바뀌는 `PLAN.md` 대신 작업 계획 API에 저장합니다. 고정된 구성 요소 아래에 실제 작업, 선행 관계, 선택형 연결 자료, 구현 전 결정 내용을 둡니다. `get_work_plan`이 모두가 보는 현재 계획이며, `create_plan_component`, `update_plan_component`, `create_plan_task`, `update_plan_task`, 작업 상태 도구, `link_plan_components`, `record_plan_decision`으로 갱신합니다. `validate_work_plan`은 설정된 Reasoner 모델로 계획의 의미를 검사하고 최신 결과를 저장합니다. 임베딩 모델은 이때 사용하지 않습니다. 계획 내용이 바뀌면 `get_work_plan.validation.stale`이 이전 검사 결과임을 표시합니다. 일반 이슈 보드는 별도의 로컬 이슈용이며 계획에 속한 카드를 섞어 보여주지 않습니다.
 
-모든 Web MCP 에이전트는 `resume_project(namespace, agent_id, capabilities)`로 시작합니다. 로컬 경로, Git 저장소, MCP Roots 없이도 자신이 진행 중인 작업과 지금 맡을 수 있는 후보를 최대 3개씩 받습니다. 항목을 고른 뒤 `resume_work`를 호출하면 공통 목표 경로, 다음 행동, 남은 완료 조건, 관련 기억, 짧은 자료 요약, 끝난 선행 작업의 결과, 막는 작업만 받습니다. 같은 `context_digest`를 다시 보내면 바뀌지 않은 내용을 반복하지 않습니다. 실제 행동 직전에는 `claim_work`로 작업권 하나를 받습니다.
+기존 Stash 작업을 이어가거나 사용자가 공통 작업 계획을 요청했을 때만 `resume_project(namespace, agent_id, capabilities)`를 호출합니다. 로컬 경로, Git 저장소, MCP Roots 없이도 진행 중인 작업과 지금 맡을 수 있는 후보를 최대 3개씩 받습니다. 항목을 고른 뒤 `resume_work`를 한 번 호출하면 공통 목표 경로, 다음 행동, 남은 완료 조건, 관련 기억, 짧은 자료 요약, 끝난 선행 작업의 결과, 막는 작업만 받습니다. 충돌이나 상태 변경 응답이 없으면 같은 내용을 다시 조회하지 않습니다. 실제 행동 직전에는 `claim_work`로 작업권 하나를 받습니다.
 
-작업 중 새 결과가 필요해지면 `spawn_work`로 자식 작업, 선행 작업, 관련 작업을 만듭니다. 자식 작업과 선행 작업은 끝날 때까지 부모를 막으므로 여러 에이전트가 A-1·A-2를 나누어도 공통 목표를 놓치지 않습니다. `finish_work`는 필수 조건에 근거가 연결되고 막는 작업이 모두 끝난 뒤에만 성공하며, 충족된 자식 목표를 부모 목표에 반영합니다.
+작업 중 새 결과가 필요해지면 `spawn_work`로 자식 작업, 선행 작업, 관련 작업을 만듭니다. 자식 작업과 선행 작업은 끝날 때까지 부모를 막으므로 여러 에이전트가 A-1·A-2를 나누어도 공통 목표를 놓치지 않습니다. 같은 관찰은 관련 조건 ID를 묶어 근거 한 건으로 저장합니다. 성공을 확인한 대기 조건 ID를 `finish_work.passed_condition_ids`에 넣으면 현재 실행의 근거가 연결된 조건만 같은 호출에서 통과 처리합니다. 근거가 없거나 막는 작업이 남아 있으면 완료할 수 없습니다.
 
 `attach_work_resource`는 외부 원문 전체를 복사하지 않고 짧은 요약과 주소만 연결합니다. 사람의 Jira 작업과 Confluence 문서는 외부 시스템을 기준으로 유지하고, AI 작업은 Stash에 별도로 기록한 뒤 목표 지도에서 함께 볼 수 있습니다. 현재 버전은 어느 서비스에도 묶이지 않는 자료 연결 구조를 제공합니다. 외부 변경 감지와 다시 쓰기는 필요할 때 붙이는 부가 기능입니다.
 
@@ -209,7 +216,7 @@ stash issue list --namespaces / --status doing --label auth
 stash issue comment add W-000001 --body "재현 조건을 확인했습니다"
 ```
 
-영문 에이전트 규칙 예시는 [docs/AGENT.md](docs/AGENT.md)에서 복사할 수 있습니다. 기본 순서는 `resume_project` → `resume_work` → `claim_work`이며, 이후 중간 기록·근거·조건 확인·인계·완료 도구를 사용합니다. 작업 중 다른 결과가 필요해지면 `spawn_work`로 나눕니다. 먼저 프로젝트 네임스페이스와 공통 목표를 만들고, Git이나 외부 서비스는 프로젝트에 필요할 때만 연결하세요.
+영문 에이전트 규칙 예시는 [docs/AGENT.md](docs/AGENT.md)에서 복사할 수 있습니다. 기본 순서는 `resume_project` → `resume_work` → `claim_work` → 묶음 근거 → `finish_work`입니다. 명령이나 파일 변경마다 Stash를 호출하지 않으며, 진행 기록은 중단 위험이나 인계할 중간 결과가 있을 때만 남깁니다. 작업 중 다른 결과가 필요해지면 `spawn_work`로 나눕니다.
 
 ### 작업 계획 스킬
 
@@ -224,10 +231,12 @@ codex plugin add stash-work-plan@stash-tools
 ```
 
 Claude에서는 `/stash-work-plan:stash-work-plan`, Codex에서는 `$stash-work-plan`으로 실행합니다.
-두 플러그인은 같은 `hooks/hooks.json`을 사용합니다. 작업권을 잡은 뒤
-`finish_work` 또는 `handoff_work`를 기록해야 두 클라이언트에서 정상적으로 응답을
-끝낼 수 있습니다. 설치 후 Codex는 `/hooks`에서 새 훅을 검토하고 신뢰하고,
-Claude Code는 `/hooks`에서 훅이 등록됐는지 확인하세요.
+두 플러그인은 같은 `hooks/hooks.json`을 사용합니다. 새 세션을 시작할 때 기억
+사용 원칙을 한 번 알려 주고, 사용자가 보낸 프롬프트를 인증된 `stash` MCP
+연결로 저장 대기열에 넣습니다. 작업권을 잡은 뒤에는 `finish_work` 또는
+`handoff_work`를 기록해야 정상적으로 응답을 끝낼 수 있습니다. 설치 후 Codex는
+`/hooks`에서 새 훅을 검토하고 신뢰하고, Claude Code는 `/hooks`에서 훅이
+등록됐는지 확인하세요.
 
 Streamable HTTP `/mcp`에서는 SEP-2640 초안의 `io.modelcontextprotocol/skills` 확장으로 내장 `stash-work` 규칙도 제공합니다. 초안을 지원하는 클라이언트는 `skills/list`로 찾을 수 있고, 아직 지원하지 않는 클라이언트는 위 Codex·Claude 플러그인을 사용하면 됩니다. 실제 사용자 정의 메서드를 받을 수 있는 `/mcp`에서만 이 확장을 알립니다.
 

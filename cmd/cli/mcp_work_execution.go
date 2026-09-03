@@ -639,6 +639,13 @@ func parsePositiveIDList(request mcp.CallToolRequest, key string) ([]int64, erro
 	return normalized, nil
 }
 
+func parseOptionalPositiveIDList(request mcp.CallToolRequest, key string) ([]int64, error) {
+	if _, ok := request.GetArguments()[key]; !ok {
+		return nil, nil
+	}
+	return parsePositiveIDList(request, key)
+}
+
 func requiredWorkString(request mcp.CallToolRequest, key string) (string, error) {
 	value, err := request.RequireString(key)
 	if err != nil {
@@ -788,7 +795,15 @@ func finishInput(request mcp.CallToolRequest) (brain.WorkFinishInput, error) {
 	if err != nil {
 		return brain.WorkFinishInput{}, err
 	}
-	return brain.WorkFinishInput{Summary: summary, Result: result}, nil
+	passedConditionIDs, err := parseOptionalPositiveIDList(request, "passed_condition_ids")
+	if err != nil {
+		return brain.WorkFinishInput{}, err
+	}
+	return brain.WorkFinishInput{
+		Summary:            summary,
+		Result:             result,
+		PassedConditionIDs: passedConditionIDs,
+	}, nil
 }
 
 func conditionArraySchema() map[string]any {
@@ -978,7 +993,7 @@ func registerWorkExecutionTools(mcpServer *server.MCPServer, bc *bootstrap.Conte
 	}))
 
 	mcpServer.AddTool(mcp.NewTool("checkpoint_work", attemptMutationOptions(
-		mcp.WithDescription("Call after each meaningful action to save what changed, the observed result, and one concrete next action while extending the lease."),
+		mcp.WithDescription("Save a recoverable partial result before interruption, lease risk, or handoff. Do not call after routine shell commands or file edits."),
 		mcp.WithString("summary", mcp.Description("Concise description of the action taken"), mcp.Required()),
 		mcp.WithString("result", mcp.Description("Observed result, including failures or unresolved facts"), mcp.Required()),
 		mcp.WithString("next_action", mcp.Description("One concrete action to take next"), mcp.Required()),
@@ -1014,7 +1029,7 @@ func registerWorkExecutionTools(mcpServer *server.MCPServer, bc *bootstrap.Conte
 	}))
 
 	mcpServer.AddTool(mcp.NewTool("submit_work_evidence", attemptMutationOptions(
-		mcp.WithDescription("Call after observing a test, build, review, artifact, or other result that can prove a completion condition."),
+		mcp.WithDescription("Record an observed test, build, review, artifact, or other result. One call can support every condition proved by the same observation."),
 		mcp.WithString("evidence_type", mcp.Description("Short kind such as test, build, review, artifact, or observation"), mcp.Required()),
 		mcp.WithString("summary", mcp.Description("What was observed and why it matters"), mcp.Required()),
 		mcp.WithString("reference", mcp.Description("Optional file, command, run, URL, or artifact reference")),
@@ -1065,7 +1080,7 @@ func registerWorkExecutionTools(mcpServer *server.MCPServer, bc *bootstrap.Conte
 	}))
 
 	mcpServer.AddTool(mcp.NewTool("verify_work_condition", attemptMutationOptions(
-		mcp.WithDescription("Call after submitting evidence to mark one completion condition passed, or waived with an explicit reason and supporting evidence."),
+		mcp.WithDescription("Explicitly accept or waive one evidence-backed condition before finish. Usually omit this for passed conditions because finish_work accepts named pending conditions in the same call; waivers still require this call."),
 		mcp.WithNumber("condition_id", mcp.Description("Condition from resume_work"), mcp.Required()),
 		mcp.WithString("status", mcp.Description("Verification result"), mcp.Enum("passed", "waived"), mcp.Required()),
 		mcp.WithArray("evidence_ids", mcp.Description("Evidence from this work item that proves or supports the result"), mcp.Required(), mcp.MinItems(1), mcp.MaxItems(100), mcp.UniqueItems(true), mcp.Items(map[string]any{"type": "integer", "minimum": 1})),
@@ -1132,9 +1147,10 @@ func registerWorkExecutionTools(mcpServer *server.MCPServer, bc *bootstrap.Conte
 	}))
 
 	mcpServer.AddTool(mcp.NewTool("finish_work", attemptMutationOptions(
-		mcp.WithDescription("Call only after every required completion condition has linked evidence and is passed or explicitly waived, and all blockers are finished."),
+		mcp.WithDescription("Complete work after every required condition has linked evidence and all blockers are finished. Include pending conditions proved by evidence from this attempt in passed_condition_ids; explicit waivers must already be recorded. The server accepts those conditions and verifies a result-memory link in the same call."),
 		mcp.WithString("summary", mcp.Description("Concise description of the completed work"), mcp.Required()),
 		mcp.WithString("result", mcp.Description("Observed final result"), mcp.Required()),
+		mcp.WithArray("passed_condition_ids", mcp.Description("Pending condition IDs explicitly accepted by this finish call; each must have evidence from this attempt"), mcp.MinItems(1), mcp.MaxItems(100), mcp.UniqueItems(true), mcp.Items(map[string]any{"type": "integer", "minimum": 1})),
 	)...), recordWorkExecutionHandler("finish", func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		attemptID, leaseToken, actionKey, err := attemptMutationArguments(request)
 		if err != nil {
@@ -1162,7 +1178,7 @@ func registerWorkExecutionTools(mcpServer *server.MCPServer, bc *bootstrap.Conte
 	}))
 
 	mcpServer.AddTool(mcp.NewTool("handoff_work", attemptMutationOptions(
-		mcp.WithDescription("Call before stopping unfinished work to save the observed result and one concrete next action, end the lease, and make the item available."),
+		mcp.WithDescription("Call before stopping unfinished work to save the observed result and one concrete next action, verify a result-memory link, end the lease, and make the item available."),
 		mcp.WithString("summary", mcp.Description("Concise description of work completed so far"), mcp.Required()),
 		mcp.WithString("result", mcp.Description("Observed current result, including blockers or failures"), mcp.Required()),
 		mcp.WithString("next_action", mcp.Description("One concrete action for the next agent"), mcp.Required()),
@@ -1193,7 +1209,7 @@ func registerWorkExecutionTools(mcpServer *server.MCPServer, bc *bootstrap.Conte
 	}))
 
 	mcpServer.AddTool(mcp.NewTool("remember_work",
-		mcp.WithDescription("Call when a durable decision, correction, failure lesson, or handoff fact from tracked work should remain searchable after the work events age out. Stash keeps one bounded result automatically when finish_work, handoff_work, or lease expiry has no linked memory."),
+		mcp.WithDescription("Call when a durable decision, correction, failure, or lesson comes from tracked work; this call is required for those outcomes. Omit routine narration. Stash separately verifies one result link when finish_work or handoff_work succeeds."),
 		mcp.WithNumber("work_item_id", mcp.Description("Work item that produced this memory"), mcp.Required()),
 		mcp.WithString("content", mcp.Description("Self-contained durable information; omit routine narration and all lease tokens"), mcp.Required()),
 		mcp.WithString("relation", mcp.Description("How the memory relates to the work item"), mcp.DefaultString("result"), mcp.Enum("context", "constraint", "decision", "evidence", "failure", "result", "supersedes")),

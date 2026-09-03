@@ -9,6 +9,8 @@ import (
 	"github.com/alash3al/stash/internal/bootstrap"
 )
 
+var adminRequestProtection = http.NewCrossOriginProtection()
+
 // registerAdminRoutes adds deliberately small, same-origin maintenance
 // endpoints. They are not MCP tools: global reindexing is an operator action,
 // not something an agent should be able to trigger through a normal namespace.
@@ -32,6 +34,10 @@ func adminOnlyHTTP(bc *bootstrap.Context, next http.Handler) http.Handler {
 		}
 		if strings.TrimSpace(bc.Config.AdminToken) == "" && strings.TrimSpace(bc.Config.AdminSubjects) == "" {
 			writeAdminError(w, http.StatusServiceUnavailable, "admin maintenance is not configured")
+			return
+		}
+		if err := adminRequestProtection.Check(r); err != nil {
+			writeAdminError(w, http.StatusForbidden, "cross-origin request denied")
 			return
 		}
 

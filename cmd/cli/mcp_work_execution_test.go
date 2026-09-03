@@ -66,6 +66,15 @@ func TestWorkExecutionToolSchemas(t *testing.T) {
 			}
 		}
 	}
+	finish := tools["finish_work"].Tool.InputSchema
+	if _, ok := finish.Properties["passed_condition_ids"]; !ok {
+		t.Fatal("finish_work does not accept passed_condition_ids")
+	}
+	for _, required := range finish.Required {
+		if required == "passed_condition_ids" {
+			t.Fatal("finish_work unexpectedly requires passed_condition_ids for already verified conditions")
+		}
+	}
 }
 
 func TestWorkExecutionDescriptionsSayWhenToCall(t *testing.T) {
@@ -76,11 +85,11 @@ func TestWorkExecutionDescriptionsSayWhenToCall(t *testing.T) {
 		"prepare_work":          "before starting",
 		"start_work":            "immediately before",
 		"resume_work":           "before acting",
-		"checkpoint_work":       "after each meaningful action",
-		"submit_work_evidence":  "after observing",
-		"verify_work_condition": "after submitting",
+		"checkpoint_work":       "before interruption",
+		"submit_work_evidence":  "one call can support",
+		"verify_work_condition": "usually omit",
 		"renew_work_lease":      "before the lease expires",
-		"finish_work":           "only after every required",
+		"finish_work":           "same call",
 		"handoff_work":          "before stopping unfinished",
 		"remember_work":         "when a durable",
 	}
@@ -175,6 +184,28 @@ func TestParsePositiveIDListRejectsFractionalIDs(t *testing.T) {
 	request.Params.Arguments = map[string]any{"evidence_ids": []any{1.5}}
 	if _, err := parsePositiveIDList(request, "evidence_ids"); err == nil {
 		t.Fatal("fractional evidence ID was accepted")
+	}
+}
+
+func TestFinishInputParsesOptionalPassedConditionIDs(t *testing.T) {
+	request := mcp.CallToolRequest{}
+	request.Params.Arguments = map[string]any{
+		"summary":              "done",
+		"result":               "tests passed",
+		"passed_condition_ids": []any{float64(3), float64(3), float64(7)},
+	}
+	input, err := finishInput(request)
+	if err != nil {
+		t.Fatalf("parse finish input: %v", err)
+	}
+	if len(input.PassedConditionIDs) != 2 || input.PassedConditionIDs[0] != 3 || input.PassedConditionIDs[1] != 7 {
+		t.Fatalf("passed condition IDs = %#v", input.PassedConditionIDs)
+	}
+
+	request.Params.Arguments = map[string]any{"summary": "done", "result": "already verified"}
+	input, err = finishInput(request)
+	if err != nil || input.PassedConditionIDs != nil {
+		t.Fatalf("optional passed condition IDs = %#v, %v", input.PassedConditionIDs, err)
 	}
 }
 

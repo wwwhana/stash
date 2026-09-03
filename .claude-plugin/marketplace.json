@@ -12,7 +12,7 @@
       "name": "stash-work-plan",
       "displayName": "Stash Work Plan",
       "source": "./plugins/stash-work-plan",
-      "description": "Resume and coordinate shared work through Stash; Git and external connectors are optional.",
+      "description": "Queue prompt history and coordinate shared work through Stash; Git and external connectors are optional.",
       "author": {
         "name": "wwwhana",
         "url": "https://github.com/wwwhana"

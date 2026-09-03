@@ -73,9 +73,14 @@ func TestNewMCPServerIncludesAgentAutomationInstructions(t *testing.T) {
 	mcpServer := newMCPServer(nil)
 	response := mcpServer.HandleMessage(t.Context(), json.RawMessage(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}`))
 	result := rpcResult[mcp.InitializeResult](t, response)
-	for _, want := range []string{"init", "resume_project", "claim_work", "checkpoint_work", "finish_work", "handoff_work"} {
+	for _, want := range []string{"init", "resume_project", "claim_work", "checkpoint_work", "submit_work_evidence", "finish_work", "handoff_work"} {
 		if !strings.Contains(result.Instructions, want) {
 			t.Errorf("initialize instructions do not mention %q: %q", want, result.Instructions)
+		}
+	}
+	for _, want := range []string{"Do not call Stash merely because a session started", "Do not call Stash after each shell command or file edit", "`finish_work.passed_condition_ids`"} {
+		if !strings.Contains(result.Instructions, want) {
+			t.Errorf("initialize instructions do not limit unnecessary calls with %q: %q", want, result.Instructions)
 		}
 	}
 }

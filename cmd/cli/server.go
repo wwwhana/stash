@@ -94,6 +94,7 @@ func registerOperationalRoutes(mux *http.ServeMux, bc *bootstrap.Context) {
 
 func registerDocumentationRoutes(mux *http.ServeMux) {
 	mux.Handle("/openapi.json", web.OpenAPIHandler())
+	mux.Handle("/swagger-init.js", web.SwaggerInitHandler())
 	swagger := web.SwaggerUIHandler()
 	for _, path := range []string{"/docs", "/docs/", "/swagger", "/swagger/"} {
 		mux.Handle(path, swagger)
@@ -103,7 +104,7 @@ func registerDocumentationRoutes(mux *http.ServeMux) {
 func serviceStatusHandler(bc *bootstrap.Context, body string, ready bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if bc == nil || bc.Brain == nil {
-			http.Error(w, "service is not initialized", http.StatusServiceUnavailable)
+			http.Error(w, "service unavailable", http.StatusServiceUnavailable)
 			return
 		}
 
@@ -114,13 +115,29 @@ func serviceStatusHandler(bc *bootstrap.Context, body string, ready bool) http.H
 			err = bc.Brain.Health(r.Context())
 		}
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusServiceUnavailable)
+			if bc.Logger != nil {
+				bc.Logger.Warn("service status check failed", "ready", ready, "error", err)
+			}
+			http.Error(w, "service unavailable", http.StatusServiceUnavailable)
 			return
 		}
 
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(body))
 	}
+}
+
+func limitRequestBody(next http.Handler, maxBytes int64) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil && (r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch) {
+			if r.ContentLength > maxBytes {
+				http.Error(w, "request body is too large", http.StatusRequestEntityTooLarge)
+				return
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // configuredHTTPAddress parses STASH_HTTP_ADDR. It accepts :8080,

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Track successful Stash leases and gate Codex or Claude's Stop event."""
+"""Inject one memory reminder and enforce successful Stash work endings."""
 
 from __future__ import annotations
 
@@ -14,6 +14,12 @@ from typing import Any
 
 START_TOOLS = {"claim_work", "start_work", "claim_workspace"}
 END_TOOLS = {"finish_work", "handoff_work"}
+SESSION_MEMORY_GUIDANCE = (
+    "Stash 기억 안내: 사용자가 보낸 프롬프트는 자동으로 저장 대기열에 들어갑니다. "
+    "오류가 표시되면 해당 프롬프트는 저장되지 않은 것입니다. "
+    "저장된 기억이 현재 판단을 바꿀 때만 recall을 사용하고, "
+    "결정·정정·실패·교훈만 remember 또는 remember_work로 남기세요."
+)
 
 
 def state_path(event: dict[str, Any]) -> Path | None:
@@ -70,24 +76,58 @@ def response_succeeded(event: dict[str, Any]) -> bool:
     return True
 
 
-def handle_tool(event: dict[str, Any]) -> None:
-    path = state_path(event)
-    if path is None or not response_succeeded(event):
-        return
+def response_has_result_memory_link(value: Any) -> bool:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return False
+    if isinstance(value, list):
+        return any(response_has_result_memory_link(item) for item in value)
+    if not isinstance(value, dict):
+        return False
+    if value.get("result_memory_linked") is True:
+        return True
+    return any(
+        response_has_result_memory_link(value.get(key))
+        for key in ("structuredContent", "structured_content", "result", "content", "text")
+        if key in value
+    )
+
+
+def handle_tool(event: dict[str, Any]) -> bool:
     tool_name = str(event.get("tool_name", ""))
     tool = tool_name.rsplit("__", 1)[-1]
+    if tool not in START_TOOLS and tool not in END_TOOLS:
+        return True
+    path = state_path(event)
+    if path is None:
+        print("Stash 훅 입력에 session_id가 없습니다.", file=sys.stderr)
+        return False
+    if not response_succeeded(event):
+        return True
     if tool in START_TOOLS:
         write_active(path)
     elif tool in END_TOOLS:
+        if not response_has_result_memory_link(event.get("tool_response")):
+            print(
+                f"Stash {tool} 응답에서 result_memory_linked=true를 확인하지 못했습니다.",
+                file=sys.stderr,
+            )
+            return False
         clear_active(path)
+    return True
 
 
-def handle_stop(event: dict[str, Any]) -> None:
+def handle_stop(event: dict[str, Any]) -> bool:
     path = state_path(event)
-    if path is None or not path.exists():
+    if path is None:
+        print("Stash 훅 입력에 session_id가 없습니다.", file=sys.stderr)
+        return False
+    if not path.exists():
         json.dump({}, sys.stdout)
         sys.stdout.write("\n")
-        return
+        return True
     json.dump(
         {
             "decision": "block",
@@ -100,20 +140,41 @@ def handle_stop(event: dict[str, Any]) -> None:
         ensure_ascii=False,
     )
     sys.stdout.write("\n")
+    return True
+
+
+def handle_session_start() -> None:
+    json.dump(
+        {
+            "hookSpecificOutput": {
+                "hookEventName": "SessionStart",
+                "additionalContext": SESSION_MEMORY_GUIDANCE,
+            }
+        },
+        sys.stdout,
+        ensure_ascii=False,
+    )
+    sys.stdout.write("\n")
 
 
 def main() -> int:
     try:
         event = json.load(sys.stdin)
-    except (json.JSONDecodeError, TypeError):
-        return 0
+    except (json.JSONDecodeError, TypeError) as exc:
+        print(f"Stash 훅 입력을 읽지 못했습니다: {exc}", file=sys.stderr)
+        return 1
     if not isinstance(event, dict):
-        return 0
+        print("Stash 훅 입력은 JSON 객체여야 합니다.", file=sys.stderr)
+        return 1
     event_name = event.get("hook_event_name")
-    if event_name == "PostToolUse":
-        handle_tool(event)
+    if event_name == "SessionStart":
+        handle_session_start()
+    elif event_name == "PostToolUse":
+        if not handle_tool(event):
+            return 1
     elif event_name == "Stop":
-        handle_stop(event)
+        if not handle_stop(event):
+            return 1
     elif event_name == "SessionEnd":
         path = state_path(event)
         if path is not None:

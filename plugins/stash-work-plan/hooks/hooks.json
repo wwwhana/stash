@@ -1,9 +1,36 @@
 {
-  "description": "Keep a claimed Stash work item from ending without a recorded finish or handoff.",
+  "description": "Explain memory use once, queue prompt history, and keep claimed work from ending without a verified finish or handoff.",
   "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/stash_work_hook.py\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "stash",
+            "tool": "queue_prompt_history",
+            "input": {
+              "prompt": "${prompt}"
+            },
+            "timeout": 3
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
-        "matcher": "^mcp__stash(?:[-_][^_]+)?__.*$",
+        "matcher": "^mcp__stash(?:[-_][^_]+)?__(?:claim_work|start_work|claim_workspace|finish_work|handoff_work)$",
         "hooks": [
           {
             "type": "command",

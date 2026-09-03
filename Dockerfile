@@ -5,7 +5,7 @@
 # ------------------------------------------
 # Use --platform=$BUILDPLATFORM so this stage runs natively on your Mac (fast),
 # regardless of what architecture the final image is targeting.
-FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.25.14-alpine AS builder
 
 # Install ca-certificates in builder so we can copy them to the final image.
 RUN apk --no-cache add ca-certificates
@@ -16,8 +16,9 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 
-# 2. Copy source code
-COPY . .
+# 2. Copy only the Go packages used by the server build.
+COPY cmd/ ./cmd/
+COPY internal/ ./internal/
 
 # 3. Define build arguments for the TARGET platform.
 # These are automatically populated by Docker Buildx.

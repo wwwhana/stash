@@ -18,7 +18,9 @@ Open source. Self-hosted. Works with any MCP-compatible agent.
 ```bash
 git clone https://github.com/wwwhana/stash.git
 cd stash
-cp .env.example .env   # edit with your API key + model
+cp .env.example .env
+openssl rand -hex 32   # paste this into STASH_AUTH_API_SECRET in .env
+# edit the provider API key and model settings in .env
 docker compose up
 ```
 
@@ -65,32 +67,31 @@ After `docker compose up`, Stash exposes an MCP server over HTTP/SSE. It support
 
 ### 1. Claude Code
 
-Uses the `/mcp` HTTP endpoint natively.
-
-```bash
-claude mcp add stash http://localhost:8080/mcp
-```
+Use the `/mcp` HTTP endpoint and configure the client to send the local bearer
+token generated below.
 
 ### 2. Codex
 
-For the local Web MCP server started by Docker Compose:
+The bundled Docker Compose profile uses token authentication. Generate a token
+from the running container, then register the local Web MCP server:
 
 ```bash
-codex mcp add stash-local --url http://127.0.0.1:8080/mcp
+export STASH_MCP_TOKEN="$(docker compose exec -T stash /stash mcp token --subject codex)"
+codex mcp add stash-local --url http://127.0.0.1:8080/mcp --bearer-token-env-var STASH_MCP_TOKEN
 ```
 
-With the bundled `STASH_AUTH_MODE=none` local setting, no MCP login is needed. You can also use the `stdio` transport and point it to the stash CLI binary:
+You can also use the `stdio` transport and point it to the stash CLI binary:
 
 ```json
 "stash": {
   "command": "stash",
-  "args": ["mcp", "execute", "--with-consolidation"]
+  "args": ["mcp", "execute", "--with-consolidation", "--consolidate-namespaces", "/projects"]
 }
 ```
 
 For a remote MCP server, use Streamable HTTP. With the `oauth` profile, the
 MCP client follows OAuth Authorization Code login and receives a Stash access
-token bound to the MCP resource:
+token bound to the MCP resource after the user approves the Stash access page:
 
 ```bash
 codex mcp add stash --url https://stash.example.com/mcp
@@ -106,7 +107,8 @@ codex mcp add stash --url https://stash.example.com/mcp --bearer-token-env-var S
 
 Authentication profiles:
 
-- `none`: no HTTP authentication. Use only for an isolated local instance.
+- `none`: no HTTP authentication. Stash refuses to bind this mode beyond a
+  loopback address.
 - `oauth` (or the legacy alias `oidc`): OIDC login plus the MCP OAuth
   Authorization Code flow. MCP and SSE accept the resource-bound Stash OAuth
   access token and native Stash API bearer tokens.
@@ -123,6 +125,11 @@ login. For a server without OIDC, run `stash mcp token --subject <agent>` with
 `STASH_AUTH_API_SECRET`; the command does not open the database or contact an
 OIDC provider. The token lifetime follows `STASH_AUTH_TOKEN_TTL` (30 days by
 default) and can be renewed with the same command.
+
+OAuth access tokens expire after one hour by default; rotated refresh tokens
+expire after 30 days. Configure them with `STASH_AUTH_ACCESS_TOKEN_TTL` and
+`STASH_AUTH_REFRESH_TOKEN_TTL`. The access-token lifetime cannot exceed one
+hour.
 
 ### 3. agy (Antigravity)
 
@@ -168,7 +175,7 @@ Prefer the Streamable HTTP URL `http://localhost:8080/mcp`. Use the SSE URL `htt
 
 ## Metrics and Health
 
-`stash serve` uses one HTTP port for MCP, the web console, OAuth endpoints, metrics, and status checks (default `:8080`). Prometheus metrics are available at `http://localhost:8080/metrics`; when HTTP authentication is enabled, `/metrics` requires the same bearer credential as MCP. `/healthz` and `/readyz` stay public for load-balancer probes. The metrics cover HTTP requests, authentication outcomes, MCP tool calls, outbound provider calls, namespace-scope decisions, consolidation activity, and pending embedding retries. Request, authentication, tool, provider, and scope metrics use bounded labels and do not include user IDs or raw namespace names.
+`stash serve` uses one HTTP port for MCP, the web console, OAuth endpoints, metrics, and status checks (default `127.0.0.1:8080`). Docker also publishes port 8080 only on the host loopback interface. Prometheus metrics are available at `http://localhost:8080/metrics`; when HTTP authentication is enabled, `/metrics` requires the same bearer credential as MCP. `/healthz` and `/readyz` stay public for load-balancer probes. The metrics cover HTTP requests, authentication outcomes, MCP tool calls, outbound provider calls, namespace-scope decisions, consolidation backlog and latest errors, terminal result-memory coverage, and pending embedding retries. Request, authentication, tool, provider, and scope metrics use bounded labels and do not include user IDs or raw namespace names.
 
 The HTTP contract is available as OpenAPI at `http://localhost:8080/openapi.json`; the interactive Swagger UI is at `http://localhost:8080/docs` (also `/swagger`). The UI loads its pinned viewer assets from jsDelivr, while the specification remains available same-origin for offline tooling.
 
@@ -184,11 +191,11 @@ Provider requests and MCP tool handlers have a two-minute default deadline. Set 
 
 When `STASH_EMBEDDING_MODEL` or `STASH_VECTOR_DIM` changes, Stash detects the change at startup. It resizes the pgvector columns when needed, clears old vectors and the embedding cache, and queues every live episode and fact for indexing with the new model. The original content is preserved; the background worker recomputes vectors and retries provider failures. Use `stash reindex --dry-run` to inspect a manual reindex, or `stash reindex` when you want to start one immediately without changing the model setting.
 
-At `info`, Stash logs completed MCP/API calls and OpenAI-compatible provider calls. Set `STASH_LOG_LEVEL=debug` to include ordinary web access records; failed requests are promoted to `warn`. Logs include the method, bounded path, status, duration, component/model, and request ID when available, but never query strings, authorization headers, cookies, or request bodies.
+At `info`, Stash logs completed MCP/API calls and OpenAI-compatible provider calls. Successful `queue_prompt_history` calls stay at `debug` because they occur for every submitted prompt. Set `STASH_LOG_LEVEL=debug` to include them and ordinary web access records; failed requests are promoted to `warn`. Logs include the method, bounded path, status, duration, component/model, and request ID when available, but never query strings, authorization headers, cookies, or request bodies.
 
 ### Auto-Save &amp; Seamless Handoff
 
-To make your AI agents automatically save their memory and pass the baton between sessions without manual prompting, read the [**Seamless Agent Handoff Guide**](docs/AGENT_HANDOFF.md). You can configure Cursor, Claude Desktop, or Antigravity IDE to mechanically load and save context.
+The bundled Codex and Claude Code plugin gives one memory reminder at session startup and queues each submitted prompt without waiting for embedding. It reuses the client's authenticated MCP connection and stores exact prompt text, so review the privacy and opt-out notes in the [**Seamless Agent Handoff Guide**](docs/AGENT_HANDOFF.md).
 
 ## What It Does
 
@@ -204,9 +211,9 @@ The web console's Work Graph lists `/projects/<name>` namespaces as project scop
 
 For an owner-facing living plan, use the Work Plan API instead of a changing `PLAN.md`. Its stable component cards hold executable child tasks, directed prerequisites, optional connector references, and decisions made before implementation. `get_work_plan` is the shared current plan; `create_plan_component`, `update_plan_component`, `create_plan_task`, `update_plan_task`, task-state tools, `link_plan_components`, and `record_plan_decision` update it. `validate_work_plan` runs an explicit semantic review with the configured Reasoner model and stores the latest result; it does not use the embedding model. When plan content changes, `get_work_plan.validation.stale` marks the saved review as outdated. The ordinary issue board remains for ad-hoc local issues and does not mix in plan-managed cards.
 
-Every Web MCP agent starts with `resume_project(namespace, agent_id, capabilities)`. It returns that agent's active work and at most three runnable candidates without a local path, Git repository, or MCP Roots. After choosing an item, `resume_work` returns a bounded brief containing its goal path, parent plan component, owned scopes, next action, pending conditions, relevant memory, linked resource summaries, completed prerequisite results, and blockers. It does not send the full owner-facing plan to a worker. Reusing `context_digest` returns a tiny unchanged receipt. `claim_work` grants one exclusive lease immediately before action.
+Call `resume_project(namespace, agent_id, capabilities)` only when continuing an existing Stash item or a user-requested shared Work Plan. It returns that agent's active work and at most three runnable candidates without a local path, Git repository, or MCP Roots. After choosing an item, call `resume_work` once for a bounded brief containing its goal path, parent plan component, owned scopes, next action, pending conditions, relevant memory, linked resource summaries, completed prerequisite results, and blockers. Do not refresh it unless Stash reports a conflict or stale state. `claim_work` grants one exclusive lease immediately before action.
 
-During an active lease, `spawn_work` creates a child, prerequisite, or related item with its first action and completion conditions. Child and prerequisite items block the parent until they finish, so many agents can decompose A-1 and A-2 without losing the common outcome. `finish_work` is rejected until every required condition has linked evidence and every blocker is finished, then eligible child goals roll into their parents.
+During an active lease, `spawn_work` creates a child, prerequisite, or related item with its first action and completion conditions. Child and prerequisite items block the parent until they finish, so many agents can decompose A-1 and A-2 without losing the common outcome. Submit one evidence record for every condition proved by the same observation, then pass the successfully proved pending IDs to `finish_work.passed_condition_ids`. The finish call accepts only IDs backed by current-attempt evidence and is rejected while evidence or blockers are missing.
 
 `attach_work_resource` stores a small reference instead of copying an entire source. A Jira issue or Confluence page can remain authoritative for human work while Stash records AI work, links the two, and shows both in the Goal Map. The current build provides the neutral resource model; connector polling and write-back are optional add-ons and are not required for the work loop.
 
@@ -221,7 +228,7 @@ stash issue list --namespaces / --status doing --label auth
 stash issue comment add W-000001 --body "Reproduction confirmed"
 ```
 
-An agent rules sample is available at [docs/AGENT.md](docs/AGENT.md). The default sequence is `resume_project` → `resume_work` → `claim_work`, followed by checkpoints, evidence, verification, handoff, or finish. Use `spawn_work` when execution reveals another result that must be delivered. Create the project namespace and shared goal before assigning work; attach Git or another external system only when that project needs it.
+An agent rules sample is available at [docs/AGENT.md](docs/AGENT.md). The default sequence is `resume_project` → `resume_work` → `claim_work` → batched evidence → `finish_work`. Do not call Stash after routine commands or edits; checkpoint only at interruption, lease-risk, or handoff boundaries. Use `spawn_work` when execution reveals another result that must be delivered.
 
 ### Work plan skill
 
@@ -236,10 +243,12 @@ codex plugin add stash-work-plan@stash-tools
 ```
 
 Claude exposes the plugin skill as `/stash-work-plan:stash-work-plan`; Codex exposes it as `$stash-work-plan`.
-Both plugins use the same `hooks/hooks.json`: after claiming work, a successful
-`finish_work` or `handoff_work` is required before either client can normally
-stop the turn. Review and trust the changed hook in Codex's `/hooks`; verify
-that it is listed in Claude Code's `/hooks`.
+Both plugins use the same `hooks/hooks.json`. It adds one local memory reminder
+at a new session startup, queues submitted prompts through the authenticated
+`stash` MCP connection, and requires a successful `finish_work` or
+`handoff_work` before claimed work can normally stop. Review and trust the
+changed hooks in Codex's `/hooks`; verify that they are listed in Claude Code's
+`/hooks`.
 
 The Streamable HTTP endpoint also serves the built-in `stash-work` instructions through the experimental `io.modelcontextprotocol/skills` extension described by draft SEP-2640. Clients that implement the draft can discover it with `skills/list`; other clients can keep using the Codex or Claude plugin above. The extension is advertised only on `/mcp`, where its custom methods are reachable.
 

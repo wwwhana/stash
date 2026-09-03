@@ -199,8 +199,7 @@
         template,
         data() {
             const route = routeAPI.readRoute(window.location);
-            const token = (() => { try { return sessionStorage.getItem('stash.apiToken') || ''; } catch (_) { return ''; } })();
-            api.token = token;
+            api.token = '';
             api.requestId = 0;
             api.sessionId = '';
             return {
@@ -468,19 +467,17 @@
             markAuthenticationExpired() {
                 api.token = '';
                 api.sessionId = '';
-                try { sessionStorage.removeItem('stash.apiToken'); } catch (_) {}
                 this.auth = { ...(this.auth || {}), authenticated: false, user: '' };
                 this.authPanelOpen = false;
                 this.issuedToken = '';
                 this.tokenError = '로그인이 만료되었습니다. 다시 로그인하세요.';
             },
-            logout() {
+            async logout() {
                 api.token = '';
                 api.sessionId = '';
-                try { sessionStorage.removeItem('stash.apiToken'); } catch (_) {}
                 this.authPanelOpen = false;
                 this.issuedToken = '';
-                window.location.assign('/auth/logout');
+                try { await fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' }); } finally { window.location.assign('/'); }
             },
             async issueToken() {
                 if (this.tokenLoading) return; this.tokenLoading = true; this.tokenError = '';

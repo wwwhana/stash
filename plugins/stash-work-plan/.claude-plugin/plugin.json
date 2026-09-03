@@ -1,7 +1,7 @@
 {
   "name": "stash-work-plan",
-  "version": "0.4.1",
-  "description": "Resume and coordinate shared component-oriented work through Stash; Git and external connectors are optional.",
+  "version": "0.4.4",
+  "description": "Queue prompt history and coordinate shared component-oriented work through Stash; Git and external connectors are optional.",
   "author": {
     "name": "wwwhana",
     "url": "https://github.com/wwwhana"
