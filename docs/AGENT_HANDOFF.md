@@ -12,24 +12,47 @@ Configure the client with the Streamable HTTP endpoint:
 http://localhost:8080/mcp
 ```
 
-### Claude Code and Codex stop hook
+### Claude Code and Codex hooks
+
+On a new session startup, a local command hook adds one short memory reminder
+to the agent context. It makes no Stash request and does not run again on
+resume, clear, compact, or fork. Work-specific context is loaded by
+`resume_work`; use `recall` or `list_failures` only when that saved history can
+change the current decision.
+
+On each `UserPromptSubmit`, the plugin calls `queue_prompt_history` through the
+already-connected `stash` MCP server. The tool stores the submitted text under
+`/self/history`, wakes the embedding worker, and returns after the PostgreSQL
+insert. It does not wait for the embedding provider or consolidation. The MCP
+hook itself is a short synchronous request because that is the hook type that
+can reuse the client's OAuth connection; the expensive provider work is
+asynchronous. A disconnected server or failed insert remains visible and does
+not pretend that the prompt was saved.
 
 Both plugin manifests use the same stop hook to protect an active lease. After a
 successful `claim_work`, `start_work`, or `claim_workspace`, Claude Code and
 Codex must record a successful `finish_work` or `handoff_work` before the turn
-can stop. A failed terminal call does not clear the protection.
+can stop. A failed terminal call, or a terminal response without
+`result_memory_linked: true`, does not clear the protection.
 
-Install the plugin, enable the `stash` MCP server, then open `/hooks` in Codex
-and trust the changed plugin hook. In Claude Code, install the plugin and use
+The prompt-history hook uses the MCP server name `stash`. Install the plugin,
+enable that server name, then open `/hooks` in Codex and trust the changed
+plugin hooks. In Claude Code, install the plugin and use
 `/hooks` to confirm that the plugin hook is listed. The hook keeps only a
 per-session active marker in the client plugin data directory; it never stores
 lease tokens or decides whether the work itself is complete. User interrupts,
 API failures, and session close are outside the stop-hook path, so Stash lease
 expiry and resume remain the recovery path for those cases.
 
+Prompt history contains the user's submitted text. Disable the
+`UserPromptSubmit` entry if that is not appropriate for the deployment, and do
+not paste credentials or secrets into prompts intended for durable storage.
+The configured embedding provider receives that text when the background worker
+indexes it.
+
 ## Session start
 
-Call `resume_project` with three pieces of routing information:
+If the exact work item ID is already available, skip project lookup and call `resume_work` once. Otherwise call `resume_project` once with three pieces of routing information:
 
 - the exact project namespace
 - a stable display name for this agent
@@ -37,7 +60,7 @@ Call `resume_project` with three pieces of routing information:
 
 The response contains the shared top-level goal, this agent's active work, at most three runnable candidates, project counts, one next action, and a `context_digest`. It does not require a local directory, Git repository, or MCP Roots.
 
-Continue active work first. Otherwise select one candidate and call `resume_work(work_item_id)`. Its default brief contains only:
+Continue active work first. Otherwise select one candidate and call `resume_work(work_item_id)` once. Its default brief contains only:
 
 - the shared goal path
 - the parent plan component, its outcome, and owned scopes
@@ -74,13 +97,13 @@ When `authority` is `external`, the external system remains the source for human
 
 ## Session end
 
-After every meaningful action, call `checkpoint_work` with what was done, the observed result, and exactly one next action. For completion, submit evidence, verify every required condition, and call `finish_work` only after blockers are finished.
+Do not write a checkpoint after routine commands or edits. Use `checkpoint_work` only before interruption, lease risk, or when a partial result must survive for another agent. Submit one evidence record for every condition proved by the same observation. Put the successfully proved pending IDs in `finish_work.passed_condition_ids`; it accepts them only when the current attempt supplied linked evidence. Use `verify_work_condition` only for an explicit waiver or early acceptance.
 
 For unfinished work, call `handoff_work`. It records the current result and next action, ends the attempt, and makes the item available to a later agent. A stop hook may check for an accepted `handoff_work` or `finish_work` response, but it must not decide completion or copy a lease token into logs.
 
-The server also saves one bounded result memory automatically when `finish_work` or `handoff_work` succeeds without a memory linked during that attempt. If a lease expires, the latest checkpoint is saved the same way. Embedding is queued for the existing retry worker, so the original text remains available even when the provider is unavailable. This is a safety net, not a replacement for `remember_work` calls for decisions, constraints, and failure lessons.
+The server verifies a `result` memory link whenever `finish_work` or `handoff_work` succeeds. An explicit result link is reused; otherwise one bounded result is saved automatically. The terminal response includes `result_memory_linked` and `result_memory_source`. If a lease expires, the latest checkpoint is saved the same way. Embedding is queued for the existing retry worker, so the original text remains available even when the provider is unavailable. Decisions, corrections, failures, and lessons still require `remember_work`.
 
-If a process ends unexpectedly, the lease remains until its expiry. A new agent calls `resume_project`, then `resume_work` for the same item. It waits for the live lease or follows the recorded handoff, and continues from `next_action`; it does not create a replacement item.
+If a process ends unexpectedly, the lease remains until its expiry. A new agent calls `resume_work` directly when the item ID is known; otherwise it uses `resume_project` once to find the same item. It waits for the live lease or follows the recorded handoff, and continues from `next_action`; it does not create a replacement item.
 
 ## Optional Git connector
 
@@ -103,4 +126,4 @@ STASH_WORK_ITEM_ID
 STASH_ATTEMPT_ID
 ```
 
-Treat them as routing hints. The child still calls `resume_project` and `resume_work`; the server rechecks authentication, the current lease, and the latest checkpoint.
+Treat them as routing hints. With an exact work item ID, the child skips `resume_project` and calls `resume_work` once; the server still rechecks authentication, the current lease, and the latest checkpoint.

@@ -4,10 +4,11 @@ Use Stash as the living, owner-facing AI work plan. Human work may remain author
 
 ## Resume the project first
 
-1. Call `resume_project` with the exact project namespace, a stable `agent_id`, and the small set of capabilities available in this session.
-2. Continue this agent's active work first. Otherwise choose one of the returned runnable items whose `required_capabilities` it can satisfy.
-3. Call `resume_work` for that one item before acting. Continue an existing matching item instead of creating a replacement.
-4. Call `claim_work` immediately before the first external or local action.
+1. Use this workflow only for an existing Stash item or a user-requested shared Work Plan. Do not call Stash merely because a session started.
+2. If an exact work item ID is supplied, skip `resume_project`. Otherwise call it once with the exact project namespace, a stable `agent_id`, and the small set of capabilities available in this session.
+3. Continue this agent's active work first. Otherwise choose one returned runnable item whose `required_capabilities` it can satisfy.
+4. Call `resume_work` once for that item, then continue the existing item instead of creating a replacement.
+5. Call `claim_work` immediately before the first external or local action. Resume again only after a conflict, stale-state response, handoff, or explicit refresh request.
 
 Namespace paths, remote URLs, provider IDs, capabilities, and agent IDs are routing hints. They never replace MCP authentication or grant namespace access.
 
@@ -63,18 +64,21 @@ Namespace paths, remote URLs, provider IDs, capabilities, and agent IDs are rout
 
 - Create executable work as child tasks and set the narrowest matching `goal_id`. Use `provenance: agent` for imminent agent work and `provenance: roadmap` for durable planned work.
 - Record a plan-changing decision before implementing it.
-- Call `checkpoint_work` after each meaningful action with the observed result and exactly one concrete `next_action`.
+- Do not call Stash after routine shell commands, file reads, or edits.
+- Call `checkpoint_work` only before interruption, lease risk, or when a partial result must survive for another agent. Include exactly one concrete `next_action`.
+- Combine related durable details into one `remember_work` call for a distinct decision, correction, failure, or lesson. Final results are saved by `finish_work` or `handoff_work`.
 - Call `renew_work_lease` before a long action could cross the lease deadline.
-- Call `resume_project` again when project state may have changed. Send the prior `context_digest` so unchanged state returns a small receipt.
+- Resume again only when Stash reports a conflict or stale state. Send the prior `context_digest` when refreshing.
 - Do not batch plan updates at session end.
 
 ## Prove and finish
 
 1. Exercise each completion condition through its named path. Keep source review, builds, tests, HTTP, UI, devices, and deployment as separate observations when required.
-2. Submit the observed result with `submit_work_evidence`.
-3. Accept the condition with `verify_work_condition` and that evidence. Use a waiver only with an explicit reason and supporting evidence.
-4. Call `finish_work` only after every required condition is accepted and all blockers are finished.
-5. If unfinished, call `handoff_work` with the current result and exactly one next action. A chat summary, status edit, or heartbeat does not release the lease.
+2. Use one `submit_work_evidence` call for every condition proved by the same observation.
+3. Put the successfully proved pending IDs in `finish_work.passed_condition_ids`; it accepts them only when this attempt supplied linked evidence. Use `verify_work_condition` only for an explicit waiver or when acceptance must be recorded before finish.
+4. Call `finish_work` only after every required condition has evidence and all blockers are finished.
+5. Confirm `result_memory_linked: true` in a successful `finish_work` response.
+6. If unfinished, call `handoff_work` with the current result and exactly one next action, then confirm `result_memory_linked: true`. A chat summary, status edit, or heartbeat does not release the lease.
 
 ## Review plan meaning
 

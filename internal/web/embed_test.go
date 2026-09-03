@@ -19,6 +19,12 @@ func TestUIPageRoutesServeTheWorkspace(t *testing.T) {
 			if !strings.Contains(response.Body.String(), `data-stash-vue-console`) {
 				t.Fatalf("GET %s did not serve the Vue workspace", path)
 			}
+			if got := response.Header().Get("Content-Security-Policy"); !strings.Contains(got, "frame-ancestors 'none'") || !strings.Contains(got, "script-src 'self' 'unsafe-eval'") || strings.Contains(got, "script-src 'self' 'unsafe-inline'") {
+				t.Fatalf("GET %s content security policy = %q", path, got)
+			}
+			if response.Header().Get("X-Content-Type-Options") != "nosniff" {
+				t.Fatalf("GET %s is missing nosniff", path)
+			}
 		})
 	}
 }
@@ -67,6 +73,7 @@ func TestUIAssetsAndUnknownPathsKeepFileServerBehavior(t *testing.T) {
 		"/console-app.js":                 "StashConsoleApp",
 		"/vue-monitor.js":                 "stash-vue-monitor",
 		"/vue-console.js":                 "data-stash-vue-console",
+		"/vue-bootstrap.js":               "stashConsoleApplyTheme",
 		"/vue-console.css":                "--app-bg",
 		"/vue-monitor.css":                "--vue-bg",
 	}
@@ -92,5 +99,16 @@ func TestUIPageRoutesAreReadOnly(t *testing.T) {
 	GetUIHandler().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/ui/plan", nil))
 	if response.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("POST /ui/plan status = %d, want %d", response.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+func TestVueConsoleDoesNotRestoreBrowserStoredTokens(t *testing.T) {
+	response := httptest.NewRecorder()
+	GetUIHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/vue-console.js", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("GET /vue-console.js status = %d, want %d", response.Code, http.StatusOK)
+	}
+	if strings.Contains(response.Body.String(), "sessionStorage") || strings.Contains(response.Body.String(), "stash.apiToken") {
+		t.Fatal("Vue console still reads an API token from browser storage")
 	}
 }

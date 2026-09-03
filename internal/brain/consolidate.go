@@ -34,6 +34,7 @@ type ConsolidationResult struct {
 	HypothesesUpdated          int           `json:"hypotheses_updated"`
 	FactsDecayed               int           `json:"facts_decayed"`
 	FactsExpired               int           `json:"facts_expired"`
+	PendingStageInputs         int           `json:"pending_stage_inputs"`
 	LLMCalls                   int           `json:"llm_calls"`
 	Errors                     []string      `json:"errors,omitempty"`
 }
@@ -76,6 +77,9 @@ func (b *Brain) ConsolidateByID(ctx context.Context, nsID int64) (ConsolidationR
 			return ConsolidationResult{}, ErrNamespaceNotFound
 		}
 		return ConsolidationResult{}, fmt.Errorf("resolve consolidation namespace: %w", err)
+	}
+	if namespaceSlug == "/" {
+		return ConsolidationResult{}, fmt.Errorf("brain: root namespace cannot be consolidated; select one or more non-root namespaces")
 	}
 
 	result := ConsolidationResult{Namespace: namespaceSlug}
@@ -172,6 +176,11 @@ func (b *Brain) ConsolidateByID(ctx context.Context, nsID int64) (ConsolidationR
 	if err := b.SaveConsolidationProgress(saveCtx, *cp); err != nil {
 		result.Errors = append(result.Errors, fmt.Sprintf("save progress: %v", err))
 	}
+	if pending, err := b.countPendingConsolidationStageInputs(saveCtx, nsID); err != nil {
+		result.Errors = append(result.Errors, fmt.Sprintf("count pending stage inputs: %v", err))
+	} else {
+		result.PendingStageInputs = pending
+	}
 
 	result.Duration = time.Since(start)
 	observability.RecordConsolidation(observability.Observation{
@@ -184,9 +193,48 @@ func (b *Brain) ConsolidateByID(ctx context.Context, nsID int64) (ConsolidationR
 		LLMCalls:           result.LLMCalls,
 		Duration:           result.Duration,
 		Errors:             len(result.Errors),
+		PendingStageInputs: result.PendingStageInputs,
 	})
 
 	return result, nil
+}
+
+func (b *Brain) countPendingConsolidationStageInputs(ctx context.Context, nsID int64) (int, error) {
+	var pending int64
+	err := b.pool.QueryRow(ctx, `
+		WITH progress AS (
+			SELECT * FROM consolidation_progress WHERE namespace_id = $1
+		)
+		SELECT
+			(SELECT count(*) FROM episodes, progress
+			 WHERE episodes.namespace_id = $1 AND episodes.deleted_at IS NULL
+			   AND episodes.id > progress.last_episode_id) +
+			(SELECT count(*) FROM facts, progress
+			 WHERE facts.namespace_id = $1 AND facts.deleted_at IS NULL AND facts.valid_until IS NULL
+			   AND facts.id > progress.last_fact_id) +
+			(SELECT count(*) FROM facts, progress
+			 WHERE facts.namespace_id = $1 AND facts.deleted_at IS NULL AND facts.valid_until IS NULL
+			   AND facts.id > progress.last_causal_fact_id) +
+			(SELECT count(*) FROM facts, progress
+			 WHERE facts.namespace_id = $1 AND facts.deleted_at IS NULL AND facts.valid_until IS NULL
+			   AND facts.id > progress.last_goal_progress_fact_id) +
+			(SELECT count(*) FROM failures, progress
+			 WHERE failures.namespace_id = $1 AND failures.deleted_at IS NULL
+			   AND failures.id > progress.last_failure_id) +
+			(SELECT count(*) FROM facts, progress
+			 WHERE facts.namespace_id = $1 AND facts.deleted_at IS NULL AND facts.valid_until IS NULL
+			   AND facts.id > progress.last_pattern_fact_id) +
+			(SELECT count(*) FROM relationships, progress
+			 WHERE relationships.namespace_id = $1 AND relationships.deleted_at IS NULL
+			   AND relationships.id > progress.last_pattern_rel_id) +
+			(SELECT count(*) FROM facts, progress
+			 WHERE facts.namespace_id = $1 AND facts.deleted_at IS NULL AND facts.valid_until IS NULL
+			   AND facts.id > progress.last_hypothesis_fact_id)
+	`).Scan(&pending)
+	if err != nil {
+		return 0, err
+	}
+	return int(pending), nil
 }
 
 // --- Stage 1: Episodes -> Facts ---
@@ -228,7 +276,6 @@ func (b *Brain) consolidateEpisodesToFacts(ctx context.Context, nsID int64, cp *
 	clusters := b.clusterEpisodes(episodes)
 
 	var maxID int64
-	processed := make(map[int64]bool)
 
 	for _, cluster := range clusters {
 		if ctx.Err() != nil {
@@ -256,9 +303,6 @@ func (b *Brain) consolidateEpisodesToFacts(ctx context.Context, nsID int64, cp *
 		}
 
 		if sf.Summary == "" {
-			for _, e := range cluster {
-				processed[e.ID] = true
-			}
 			continue
 		}
 
@@ -270,7 +314,7 @@ func (b *Brain) consolidateEpisodesToFacts(ctx context.Context, nsID int64, cp *
 		}
 
 		// Check for duplicate fact
-		dupID, err := b.findDuplicateFact(ctx, nsID, vec)
+		dupID, err := b.findDuplicateFact(ctx, nsID, vec, sf.Entity, sf.Property, sf.Value)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("check duplicate: %v", err))
 			continue
@@ -279,11 +323,24 @@ func (b *Brain) consolidateEpisodesToFacts(ctx context.Context, nsID int64, cp *
 			// 중복은 버리는 게 아니라 기존 fact 에 대한 재관측으로 기록한다.
 			if err := b.reinforceFact(ctx, dupID, cluster); err != nil {
 				errs = append(errs, err.Error())
+				continue
+			}
+			duplicateFact := &models.Fact{
+				ID:          dupID,
+				NamespaceID: nsID,
+				Content:     sf.Summary,
+				Entity:      strPtrOrNull(sf.Entity),
+				Property:    strPtrOrNull(sf.Property),
+				Value:       strPtrOrNull(sf.Value),
+			}
+			cd, ca, contradictionErr := b.DetectContradictions(ctx, nsID, duplicateFact)
+			contradictionsFound += cd
+			contradictionsAutoResolved += ca
+			if contradictionErr != nil {
+				errs = append(errs, fmt.Sprintf("detect contradictions for duplicate fact %d: %v", dupID, contradictionErr))
+				continue
 			}
 			deduped++
-			for _, e := range cluster {
-				processed[e.ID] = true
-			}
 			continue
 		}
 
@@ -330,9 +387,6 @@ func (b *Brain) consolidateEpisodesToFacts(ctx context.Context, nsID int64, cp *
 			errs = append(errs, fmt.Sprintf("detect contradictions: %v", contradictionErr))
 		}
 
-		for _, e := range cluster {
-			processed[e.ID] = true
-		}
 	}
 
 	// Only advance checkpoint if no errors occurred (bullet-proof: prevents losing episodes)
@@ -422,14 +476,20 @@ func (b *Brain) clusterEpisodes(episodes []models.Episode) [][]models.Episode {
 // Returns the id (not just a bool) so the caller can record the re-observation on the
 // existing row. Previously this returned only a bool and the caller did nothing with
 // it beyond skipping — see reinforceFact for why that mattered.
-func (b *Brain) findDuplicateFact(ctx context.Context, nsID int64, vec []float32) (int64, error) {
+func (b *Brain) findDuplicateFact(ctx context.Context, nsID int64, vec []float32, entity, property, value string) (int64, error) {
 	var id int64
 	var score float32
 	err := b.pool.QueryRow(ctx,
 		`SELECT id, 1 - (embedding <=> $2) AS score FROM facts
 		 WHERE namespace_id = $1 AND deleted_at IS NULL AND valid_until IS NULL AND embedding IS NOT NULL
+		 AND NOT (
+		   $3::text <> '' AND $4::text <> ''
+		   AND entity IS NOT DISTINCT FROM $3::text
+		   AND property IS NOT DISTINCT FROM $4::text
+		   AND COALESCE(value, '') IS DISTINCT FROM $5::text
+		 )
 		 ORDER BY embedding <=> $2 LIMIT 1`,
-		nsID, pgvector.NewVector(vec),
+		nsID, pgvector.NewVector(vec), entity, property, value,
 	).Scan(&id, &score)
 	if err != nil {
 		if err == pgx.ErrNoRows {

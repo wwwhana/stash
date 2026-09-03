@@ -22,6 +22,11 @@ type RememberForWorkResult struct {
 
 const automaticWorkOutcomeLimit = resumeMemoryContentLimit
 
+const (
+	workResultMemorySourceExisting  = "existing"
+	workResultMemorySourceAutomatic = "automatic"
+)
+
 // automaticWorkOutcomeText keeps the server-side safety net small enough to
 // be useful in the next resume prompt. It records the final observation, not
 // the conversation that led to it.
@@ -69,10 +74,10 @@ func (b *Brain) saveAutomaticWorkOutcomeTx(
 	namespaceID, workItemID, attemptID int64,
 	startedAt time.Time,
 	summary, result, nextAction, reason string,
-) (bool, error) {
+) (string, error) {
 	content := automaticWorkOutcomeText(summary, result, nextAction)
 	if content == "" {
-		return false, nil
+		return "", nil
 	}
 
 	var alreadyLinked bool
@@ -80,18 +85,31 @@ func (b *Brain) saveAutomaticWorkOutcomeTx(
 		SELECT EXISTS (
 			SELECT 1
 			FROM work_item_memory_links link
-			WHERE link.work_item_id = $1 AND link.created_at >= $2
-			UNION ALL
-			SELECT 1
-			FROM work_events event
-			WHERE event.work_item_id = $1
-			  AND event.event_type = 'work.memory.remembered'
-			  AND event.occurred_at >= $2
-		)`, workItemID, startedAt).Scan(&alreadyLinked); err != nil {
-		return false, fmt.Errorf("check automatic work memory: %w", err)
+			LEFT JOIN episodes episode
+			  ON link.memory_type = 'episode' AND episode.id = link.memory_id AND episode.namespace_id = $3
+			LEFT JOIN facts fact
+			  ON link.memory_type = 'fact' AND fact.id = link.memory_id AND fact.namespace_id = $3
+			LEFT JOIN hypotheses hypothesis
+			  ON link.memory_type = 'hypothesis' AND hypothesis.id = link.memory_id AND hypothesis.namespace_id = $3
+			LEFT JOIN failures failure
+			  ON link.memory_type = 'failure' AND failure.id = link.memory_id AND failure.namespace_id = $3
+			LEFT JOIN goals goal
+			  ON link.memory_type = 'goal' AND goal.id = link.memory_id AND goal.namespace_id = $3
+			WHERE link.work_item_id = $1
+			  AND link.relation = 'result'
+			  AND link.created_at >= $2
+			  AND (
+			    (link.memory_type = 'episode' AND episode.deleted_at IS NULL AND episode.id IS NOT NULL) OR
+			    (link.memory_type = 'fact' AND fact.deleted_at IS NULL AND fact.valid_until IS NULL AND fact.id IS NOT NULL) OR
+			    (link.memory_type = 'hypothesis' AND hypothesis.deleted_at IS NULL AND hypothesis.id IS NOT NULL) OR
+			    (link.memory_type = 'failure' AND failure.deleted_at IS NULL AND failure.id IS NOT NULL) OR
+			    (link.memory_type = 'goal' AND goal.deleted_at IS NULL AND goal.id IS NOT NULL)
+			  )
+		)`, workItemID, startedAt, namespaceID).Scan(&alreadyLinked); err != nil {
+		return "", fmt.Errorf("check automatic work memory: %w", err)
 	}
 	if alreadyLinked {
-		return false, nil
+		return workResultMemorySourceExisting, nil
 	}
 
 	now := time.Now().UTC()
@@ -102,13 +120,13 @@ func (b *Brain) saveAutomaticWorkOutcomeTx(
 			embedding_attempts, embedding_retry_at, embedding_updated_at
 		) VALUES ($1, $2, NULL, $3, $4, 0, $4, now())
 		RETURNING id`, namespaceID, content, b.workEmbeddingModel(), now).Scan(&episodeID); err != nil {
-		return false, fmt.Errorf("insert automatic work memory: %w", err)
+		return "", fmt.Errorf("insert automatic work memory: %w", err)
 	}
 
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO work_item_memory_links (work_item_id, memory_type, memory_id, relation)
 		VALUES ($1, 'episode', $2, 'result')`, workItemID, episodeID); err != nil {
-		return false, fmt.Errorf("link automatic work memory: %w", err)
+		return "", fmt.Errorf("link automatic work memory: %w", err)
 	}
 	eventKey := workActionKeyDigest(fmt.Sprintf("automatic-work-memory:%s:%d", reason, attemptID))
 	if err := insertWorkExecutionEvent(ctx, tx, namespaceID, workItemID, &attemptID, "work.memory.auto_saved", eventKey, map[string]any{
@@ -117,9 +135,9 @@ func (b *Brain) saveAutomaticWorkOutcomeTx(
 		"reason":          reason,
 		"indexing_status": "pending",
 	}); err != nil {
-		return false, err
+		return "", err
 	}
-	return true, nil
+	return workResultMemorySourceAutomatic, nil
 }
 
 func (b *Brain) saveExpiredWorkOutcomeTx(ctx context.Context, tx pgx.Tx, namespaceID, workItemID, attemptID int64, startedAt time.Time) error {

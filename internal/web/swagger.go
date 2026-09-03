@@ -3,6 +3,7 @@ package web
 import (
 	"io"
 	"net/http"
+	"strings"
 )
 
 const openAPISpec = `{
@@ -243,23 +244,23 @@ const swaggerUIPage = `<!doctype html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Stash API 문서</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.11.10/swagger-ui.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.32.14/swagger-ui.css" integrity="sha384-fgyWYkUAamzuI8mJFu/xpRP0JWCJRwkwUwsYDoOYVHUJ8NQE5cENn8ib3ppwFFSX" crossorigin="anonymous">
 </head>
 <body>
   <div id="swagger-ui"></div>
-  <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.11.10/swagger-ui-bundle.js"></script>
-  <script>
-    window.onload = () => SwaggerUIBundle({
-      url: '/openapi.json',
-      dom_id: '#swagger-ui',
-      deepLinking: true,
-      displayRequestDuration: true,
-      persistAuthorization: true,
-      validatorUrl: null
-    });
-  </script>
+  <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.32.14/swagger-ui-bundle.js" integrity="sha384-Dt83RhU85ZmX7werw9uTFCzmauXUoSyx3pdzTQMABtsnFmooJy4Vz9/ACh7n5m1A" crossorigin="anonymous"></script>
+  <script src="/swagger-init.js"></script>
 </body>
 </html>`
+
+const swaggerInitScript = `window.addEventListener('load', () => SwaggerUIBundle({
+  url: '/openapi.json',
+  dom_id: '#swagger-ui',
+  deepLinking: true,
+  displayRequestDuration: true,
+  persistAuthorization: false,
+  validatorUrl: null
+}));`
 
 // OpenAPIHandler serves the stable HTTP contract without requiring an API
 // credential. Operations that expose data remain protected by their own
@@ -275,6 +276,10 @@ func SwaggerUIHandler() http.Handler {
 	return staticDocumentHandler("text/html; charset=utf-8", swaggerUIPage, "swagger.html")
 }
 
+func SwaggerInitHandler() http.Handler {
+	return staticDocumentHandler("text/javascript; charset=utf-8", swaggerInitScript, "swagger-init.js")
+}
+
 func staticDocumentHandler(contentType, body, name string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -284,6 +289,12 @@ func staticDocumentHandler(contentType, body, name string) http.Handler {
 		}
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		if strings.HasPrefix(contentType, "text/html") {
+			w.Header().Set("Content-Security-Policy", "default-src 'none'; connect-src 'self'; img-src data:; script-src 'self' https://cdn.jsdelivr.net; style-src 'unsafe-inline' https://cdn.jsdelivr.net; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+		}
 		if r.Method == http.MethodHead {
 			return
 		}

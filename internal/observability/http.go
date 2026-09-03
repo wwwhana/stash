@@ -158,7 +158,7 @@ func isAPIRoute(path string) bool {
 	switch path {
 	case "/mcp", "/sse", "/message",
 		"/auth/login", "/auth/callback", "/auth/logout", "/auth/status", "/auth/token",
-		"/authorize", "/oauth/callback", "/oauth/token", "/oauth/register",
+		"/authorize", "/oauth/callback", "/oauth/token", "/oauth/register", "/oauth/consent",
 		"/admin/maintenance/embeddings", "/admin/maintenance/embeddings/retry",
 		"/admin/maintenance/embeddings/reindex":
 		return true
@@ -170,7 +170,7 @@ func routeLabel(path string) string {
 	switch path {
 	case "/", "/mcp", "/sse", "/message", "/metrics", "/healthz", "/readyz",
 		"/auth/login", "/auth/callback", "/auth/logout", "/auth/status", "/auth/token",
-		"/authorize", "/oauth/callback", "/oauth/token", "/oauth/register",
+		"/authorize", "/oauth/callback", "/oauth/token", "/oauth/register", "/oauth/consent",
 		"/admin/maintenance/embeddings", "/admin/maintenance/embeddings/retry",
 		"/admin/maintenance/embeddings/reindex":
 		return path

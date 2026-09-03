@@ -40,17 +40,35 @@ func TestSwaggerUIHandlerServesPinnedShell(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("GET /docs status = %d, want %d", response.Code, http.StatusOK)
 	}
-	for _, marker := range []string{"swagger-ui-dist@5.11.10", "SwaggerUIBundle", "'/openapi.json'"} {
+	for _, marker := range []string{
+		"swagger-ui-dist@5.32.14",
+		`integrity="sha384-fgyWYkUAamzuI8mJFu/xpRP0JWCJRwkwUwsYDoOYVHUJ8NQE5cENn8ib3ppwFFSX"`,
+		`integrity="sha384-Dt83RhU85ZmX7werw9uTFCzmauXUoSyx3pdzTQMABtsnFmooJy4Vz9/ACh7n5m1A"`,
+		`/swagger-init.js`,
+	} {
 		if !strings.Contains(response.Body.String(), marker) {
 			t.Fatalf("Swagger UI shell is missing %q", marker)
 		}
+	}
+	if strings.Contains(response.Body.String(), "persistAuthorization: true") {
+		t.Fatal("Swagger UI persists authorization data")
+	}
+	if got := response.Header().Get("Content-Security-Policy"); !strings.Contains(got, "script-src 'self' https://cdn.jsdelivr.net") {
+		t.Fatalf("Swagger UI content security policy = %q", got)
+	}
+
+	initResponse := httptest.NewRecorder()
+	SwaggerInitHandler().ServeHTTP(initResponse, httptest.NewRequest(http.MethodGet, "/swagger-init.js", nil))
+	if initResponse.Code != http.StatusOK || !strings.Contains(initResponse.Body.String(), "SwaggerUIBundle") || !strings.Contains(initResponse.Body.String(), "persistAuthorization: false") {
+		t.Fatalf("Swagger init status=%d body=%q", initResponse.Code, initResponse.Body.String())
 	}
 }
 
 func TestDocumentationHandlersAreReadOnly(t *testing.T) {
 	for name, handler := range map[string]http.Handler{
-		"openapi": OpenAPIHandler(),
-		"swagger": SwaggerUIHandler(),
+		"openapi":      OpenAPIHandler(),
+		"swagger":      SwaggerUIHandler(),
+		"swagger init": SwaggerInitHandler(),
 	} {
 		t.Run(name, func(t *testing.T) {
 			response := httptest.NewRecorder()

@@ -10,7 +10,7 @@ Never include credentials, lease tokens, private headers, or unrelated response 
 
 ## Verify each condition
 
-Use `verify_work_condition` only with evidence from the same work item that supports that condition. A source review does not prove a runtime path; a successful build does not prove UI behavior; a headless test does not prove a physical device write.
+Use one `submit_work_evidence` call for all conditions proved by the same observation. Put the successfully proved pending IDs in `finish_work.passed_condition_ids`; it accepts them only when the current attempt supplied linked evidence. Use `verify_work_condition` only for an explicit waiver or when acceptance must be recorded before finish. A source review does not prove a runtime path; a successful build does not prove UI behavior; a headless test does not prove a physical device write.
 
 For `status: passed`, attach evidence that directly demonstrates the condition. For `status: waived`, attach supporting evidence and explain the exact reason in `waiver_reason`.
 

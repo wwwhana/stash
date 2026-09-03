@@ -352,7 +352,7 @@
             async logout() {
                 this.executionLeaseTokens = {};
                 this.executionPendingMutation = null;
-                await fetch('/auth/logout', { method: 'POST' });
+                await fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' });
                 this.sessionId = '';
                 window.location.reload();
             },

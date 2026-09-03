@@ -10,8 +10,9 @@ Stash는 소유자가 보는 공통 목표 지도와 에이전트가 이어받�
 4. 실제 행동 직전에 `claim_work`로 작업권을 받는다.
 5. 의미 있는 행동 뒤에는 `checkpoint_work`로 관찰한 결과와 다음 행동 하나를 남긴다.
 6. 다른 결과가 필요해지면 `spawn_work`로 자식 작업이나 선행 작업을 만든다.
-7. 완료 조건마다 실제 근거를 등록하고 확인한 뒤 `finish_work`를 호출한다.
-8. 끝내지 못한 채 멈출 때는 `handoff_work`로 다음 행동을 남기고 작업권을 놓는다.
+7. 결정·정정·실패·교훈이 생기면 `remember_work`로 작업에 연결한다.
+8. 완료 조건마다 실제 근거를 등록하고 확인한 뒤 `finish_work`를 호출한다.
+9. 끝내지 못한 채 멈출 때는 `handoff_work`로 다음 행동을 남기고 작업권을 놓는다.
 
 작업 항목은 여러 세션에 걸쳐 유지된다. 실행 시도는 한 에이전트가 그 작업을 맡은 한 번의 실행이다. 진행 기록, 완료 조건, 근거, 기억, 연결 자료, 선행 결과가 작업 항목에 남으므로 다음 에이전트는 이전 대화 없이 이어갈 수 있다.
 
@@ -67,22 +68,24 @@ Stash는 소유자가 보는 공통 목표 지도와 에이전트가 이어받�
 
 조건의 `description`에는 끝났다고 판단할 상태를 쓰고, `verification`에는 실행할 명령이나 관찰 방법을 쓴다. 필수 조건이 하나 이상 있어야 한다.
 
-근거는 변경할 수 없는 기록으로 저장된다. `submit_work_evidence.condition_ids`로 관련 조건을 지정하고, 반환된 근거 ID를 `verify_work_condition.evidence_ids`에 넣는다. 통과와 예외 처리 모두 연결된 근거가 필요하며, 예외 처리에는 이유도 필요하다.
+근거는 변경할 수 없는 기록으로 저장된다. 같은 관찰로 확인한 조건은 `submit_work_evidence.condition_ids` 한 번에 함께 지정한다. 성공을 확인한 대기 조건 ID를 `finish_work.passed_condition_ids`에 넣으면 현재 실행의 근거가 연결된 조건만 같은 호출에서 통과 처리한다. `verify_work_condition`은 조건을 미리 확정하거나 근거와 이유를 갖춘 예외 처리가 필요할 때만 사용한다.
 
 `finish_work`는 다음을 한 번에 확인한다.
 
-- 필수 조건이 모두 근거와 연결되어 통과했거나 이유와 근거를 갖춘 예외 상태다.
+- 필수 조건이 모두 근거와 연결되어 통과했거나 이유와 근거를 갖춘 예외 상태다. 현재 실행의 근거가 있는 대기 조건은 같은 호출에서 통과 처리한다.
 - 이 작업을 막는 작업이 모두 `done` 또는 `canceled`다.
+- 이번 실행의 최종 결과가 `result` 기억으로 연결되어 있다. 직접 연결한 결과가 없으면 서버가 짧은 결과 기억을 만든다.
 - 완료 처리와 함께 다음 행동을 비운다.
 
 하나라도 맞지 않으면 작업은 완료 상태로 바뀌지 않는다.
+`finish_work`와 `handoff_work` 응답의 `result_memory_linked`가 `true`인지 확인한다. `result_memory_source`는 기존 연결을 썼으면 `existing`, 서버가 만들었으면 `automatic`이다.
 
 ## 작업권과 중복 실행 방지
 
 - 한 작업에는 살아 있는 실행 시도가 하나만 존재한다.
 - `claim_work`는 평문 `lease_token`을 응답으로만 돌려주고 서버에는 해시만 저장한다.
 - 토큰은 해당 실행 시도의 변경 호출에만 사용한다. 기억, 진행 기록, 로그, 문서, 근거, 인계 내용에 넣지 않는다.
-- 기본 작업권 시간은 15분이며 최대 24시간이다. 새 결과가 있으면 `checkpoint_work`, 기다리는 중이면 `renew_work_lease`로 연장한다.
+- 기본 작업권 시간은 15분이며 최대 24시간이다. 중단 위험이 있거나 다른 에이전트가 이어받아야 할 중간 결과가 있으면 `checkpoint_work`, 기다리는 중이면 `renew_work_lease`로 연장한다. 명령이나 파일 변경마다 기록하지 않는다.
 - 살아 있는 작업권이 있으면 다른 에이전트는 작업을 복제해 우회하지 않는다.
 - 호출 결과를 받지 못했다면 같은 논리 행동에 같은 `action_key`를 사용해 다시 보낸다. 다른 행동에는 새 키를 쓴다.
 - 원격 인증에서는 서버가 확인한 사용자만 권한을 결정한다. `agent_id`와 `capabilities`는 표시와 배정에만 쓰인다.
@@ -152,23 +155,19 @@ Stash는 소유자가 보는 공통 목표 지도와 에이전트가 이어받�
 {"name":"attach_work_resource","arguments":{"work_item_id":102,"resource_key":"jira:APP-12","kind":"ticket","source":"jira","authority":"external","title":"APP-12 검토","uri":"https://jira.example.com/browse/APP-12","summary":"사람 검토 상태는 Jira에서 관리","external_id":"APP-12","revision":"7","role":"input"}}
 ```
 
-의미 있는 행동 뒤에는 관찰 결과를 남긴다.
+중단 전에 현재 결과를 남겨야 할 때만 진행 기록을 만든다.
 
 ```json
 {"name":"checkpoint_work","arguments":{"attempt_id":501,"lease_token":"LEASE_TOKEN","summary":"작은 확인 절차를 실행했다.","result":"지정한 패키지 확인이 종료 코드 0으로 끝났다.","next_action":"확인 결과를 완료 조건에 연결한다.","lease_seconds":900,"action_key":"work-101-checkpoint-test-v1"}}
 ```
 
-근거를 등록하고 조건에 연결한다.
+같은 관찰로 확인한 조건을 한 번에 근거와 연결한다.
 
 ```json
 {"name":"submit_work_evidence","arguments":{"attempt_id":501,"lease_token":"LEASE_TOKEN","condition_ids":[201],"evidence_type":"test","summary":"지정한 확인 절차가 통과했다.","reference":"go test ./internal/brain","payload":{"exit_code":0},"action_key":"work-101-evidence-test-v1"}}
 ```
 
-```json
-{"name":"verify_work_condition","arguments":{"attempt_id":501,"lease_token":"LEASE_TOKEN","condition_id":201,"status":"passed","evidence_ids":[301],"action_key":"work-101-verify-test-v1"}}
-```
-
-필수 조건과 선행 작업이 모두 끝나면 완료한다.
+필수 조건과 선행 작업이 모두 끝나면 완료한다. 위 근거가 연결된 대기 조건은 이 호출에서 통과 처리된다.
 
 ```json
 {"name":"finish_work","arguments":{"attempt_id":501,"lease_token":"LEASE_TOKEN","summary":"요청한 결과를 완성했다.","result":"모든 필수 조건과 선행 작업 결과를 확인했다.","action_key":"work-101-finish-v1"}}

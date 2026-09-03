@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html/template"
 	"io"
 	"log"
 	"net/http"
@@ -19,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	jose "github.com/go-jose/go-jose/v4"
@@ -26,31 +28,46 @@ import (
 )
 
 const (
-	stateCookieName      = "oauthstate"
-	nonceCookieName      = "oidc_nonce"
-	sessionCookieName    = "stash_session"
-	apiTokenPrefix       = "stash_api_"
-	oauthTokenPrefix     = "stash_oauth_"
-	refreshTokenPrefix   = "stash_refresh_"
-	sessionTokenPrefix   = "stash_session_"
-	defaultTokenTTL      = 30 * 24 * time.Hour
-	authorizationCodeTTL = 90 * time.Second
-	loginStateTTL        = 10 * time.Minute
+	stateCookieName        = "oauthstate"
+	nonceCookieName        = "oidc_nonce"
+	sessionCookieName      = "stash_session"
+	apiTokenPrefix         = "stash_api_"
+	oauthTokenPrefix       = "stash_oauth_"
+	refreshTokenPrefix     = "stash_refresh_"
+	sessionTokenPrefix     = "stash_session_"
+	defaultTokenTTL        = 30 * 24 * time.Hour
+	defaultAccessTokenTTL  = time.Hour
+	defaultRefreshTokenTTL = 30 * 24 * time.Hour
+	authorizationCodeTTL   = 90 * time.Second
+	loginStateTTL          = 10 * time.Minute
+	dynamicClientIdleTTL   = 24 * time.Hour
+	oauthRateWindow        = time.Minute
+	oauthProviderTimeout   = 15 * time.Second
+	maxPendingRequests     = 128
+	maxOAuthClients        = 256
+	maxRefreshTokens       = 1024
+	maxRefreshPerClient    = 8
+	maxAuthorizeRequests   = 120
+	maxRegisterRequests    = 20
+	maxTokenRequests       = 240
+	minimumSecretBytes     = 32
 )
 
 // Config contains the settings needed by the HTTP authentication boundary.
 type Config struct {
-	Mode           string
-	Issuer         string
-	ClientID       string
-	MCPClientID    string
-	ClientSecret   string
-	RedirectURL    string
-	APISecret      string
-	MCPResourceURL string
-	CookieSecure   bool
-	APITokenTTL    time.Duration
-	StdioToken     string
+	Mode            string
+	Issuer          string
+	ClientID        string
+	MCPClientID     string
+	ClientSecret    string
+	RedirectURL     string
+	APISecret       string
+	MCPResourceURL  string
+	CookieSecure    bool
+	APITokenTTL     time.Duration
+	AccessTokenTTL  time.Duration
+	RefreshTokenTTL time.Duration
+	StdioToken      string
 }
 
 type Provider struct {
@@ -67,6 +84,9 @@ type Provider struct {
 	pending               map[string]authorizationRequest
 	codes                 map[string]authorizationCode
 	refreshTokens         map[string]refreshToken
+	authorizeRate         fixedWindowRateLimit
+	registerRate          fixedWindowRateLimit
+	tokenRate             fixedWindowRateLimit
 }
 
 // hmacKeySet adapts a configured OIDC client secret to go-oidc's KeySet
@@ -115,17 +135,22 @@ type oauthClient struct {
 	TokenEndpointAuthMethod string
 	Secret                  string
 	Name                    string
+	Dynamic                 bool
+	LastUsed                time.Time
 }
 
 type authorizationRequest struct {
-	ClientID        string
-	RedirectURI     string
-	State           string
-	CodeChallenge   string
-	ChallengeMethod string
-	Resource        string
-	Scope           string
-	ExpiresAt       time.Time
+	ClientID         string
+	RedirectURI      string
+	State            string
+	CodeChallenge    string
+	ChallengeMethod  string
+	Resource         string
+	Scope            string
+	ExpiresAt        time.Time
+	Subject          string
+	SessionExpiresAt time.Time
+	ConsentToken     string
 }
 
 type authorizationCode struct {
@@ -144,12 +169,37 @@ type refreshToken struct {
 	ClientID  string
 	Resource  string
 	Scope     string
+	CreatedAt time.Time
 	ExpiresAt time.Time
 }
+
+type fixedWindowRateLimit struct {
+	StartedAt time.Time
+	Count     int
+}
+
+func (l *fixedWindowRateLimit) allow(now time.Time, limit int) bool {
+	if l.StartedAt.IsZero() || now.Sub(l.StartedAt) >= oauthRateWindow {
+		l.StartedAt = now
+		l.Count = 0
+	}
+	if l.Count >= limit {
+		return false
+	}
+	l.Count++
+	return true
+}
+
+var browserRequestProtection = http.NewCrossOriginProtection()
 
 // Init returns nil when authentication is explicitly disabled.
 func Init(ctx context.Context, cfg Config) (*Provider, error) {
 	mode := strings.ToLower(strings.TrimSpace(cfg.Mode))
+	cfg.Issuer = strings.TrimSpace(cfg.Issuer)
+	cfg.ClientID = strings.TrimSpace(cfg.ClientID)
+	cfg.MCPClientID = strings.TrimSpace(cfg.MCPClientID)
+	cfg.RedirectURL = strings.TrimSpace(cfg.RedirectURL)
+	cfg.MCPResourceURL = strings.TrimSpace(cfg.MCPResourceURL)
 	if mode == "" || mode == "none" {
 		log.Println("Auth mode: none (HTTP authentication is disabled)")
 		return nil, nil
@@ -171,8 +221,8 @@ func Init(ctx context.Context, cfg Config) (*Provider, error) {
 		}, nil
 	}
 	if mode == "token" {
-		if strings.TrimSpace(cfg.APISecret) == "" {
-			return nil, errors.New("token mode requires STASH_AUTH_API_SECRET")
+		if err := validateSigningSecret(cfg.APISecret); err != nil {
+			return nil, fmt.Errorf("token mode requires STASH_AUTH_API_SECRET: %w", err)
 		}
 		if cfg.APITokenTTL <= 0 {
 			cfg.APITokenTTL = defaultTokenTTL
@@ -192,11 +242,17 @@ func Init(ctx context.Context, cfg Config) (*Provider, error) {
 	if cfg.Issuer == "" {
 		return nil, errors.New("OAuth mode requires an issuer")
 	}
-	if cfg.MCPClientID == "" && strings.TrimSpace(cfg.MCPResourceURL) == "" {
-		return nil, errors.New("OAuth mode requires STASH_AUTH_MCP_CLIENT_ID or STASH_AUTH_MCP_RESOURCE_URL")
+	if !validResourceURL(cfg.Issuer) {
+		return nil, errors.New("OAuth issuer must use HTTPS or loopback HTTP")
 	}
-	if strings.TrimSpace(cfg.APISecret) == "" {
-		return nil, errors.New("HTTP MCP authentication requires STASH_AUTH_API_SECRET")
+	if strings.TrimSpace(cfg.MCPResourceURL) == "" {
+		return nil, errors.New("OAuth mode requires STASH_AUTH_MCP_RESOURCE_URL")
+	}
+	if !validResourceURL(cfg.MCPResourceURL) {
+		return nil, errors.New("STASH_AUTH_MCP_RESOURCE_URL must use HTTPS or loopback HTTP")
+	}
+	if err := validateSigningSecret(cfg.APISecret); err != nil {
+		return nil, fmt.Errorf("HTTP MCP authentication requires STASH_AUTH_API_SECRET: %w", err)
 	}
 	// The browser login is optional: an MCP resource server can operate without
 	// keeping a second confidential OAuth client. A client ID/secret pair may be
@@ -210,13 +266,39 @@ func Init(ctx context.Context, cfg Config) (*Provider, error) {
 	if webLoginConfigured && (cfg.ClientID == "" || cfg.ClientSecret == "") {
 		return nil, errors.New("browser OAuth login requires client ID, client secret, and redirect URL together")
 	}
+	if webLoginConfigured && !validRedirectURI(cfg.RedirectURL) {
+		return nil, errors.New("browser OAuth redirect URL must use HTTPS or loopback HTTP")
+	}
+	if webLoginConfigured {
+		redirect, _ := url.Parse(cfg.RedirectURL)
+		if redirect.Scheme == "https" && !cfg.CookieSecure {
+			return nil, errors.New("browser OAuth over HTTPS requires secure cookies")
+		}
+		if redirect.Scheme == "http" && cfg.CookieSecure {
+			return nil, errors.New("loopback HTTP browser OAuth requires STASH_AUTH_COOKIE_SECURE=false")
+		}
+	}
 	if webLoginConfigured && cfg.APISecret == "" {
 		return nil, errors.New("browser OAuth login requires STASH_AUTH_API_SECRET for the session signer")
 	}
 	if cfg.APITokenTTL <= 0 {
 		cfg.APITokenTTL = defaultTokenTTL
 	}
-	provider, err := oidc.NewProvider(ctx, cfg.Issuer)
+	if cfg.AccessTokenTTL <= 0 {
+		cfg.AccessTokenTTL = defaultAccessTokenTTL
+	}
+	if cfg.RefreshTokenTTL <= 0 {
+		cfg.RefreshTokenTTL = defaultRefreshTokenTTL
+	}
+	if cfg.AccessTokenTTL > time.Hour {
+		return nil, errors.New("OAuth access-token lifetime must not exceed 1h")
+	}
+	if cfg.RefreshTokenTTL < cfg.AccessTokenTTL {
+		return nil, errors.New("OAuth refresh-token lifetime must not be shorter than the access-token lifetime")
+	}
+	discoveryCtx, discoveryCancel := context.WithTimeout(ctx, oauthProviderTimeout)
+	defer discoveryCancel()
+	provider, err := oidc.NewProvider(discoveryCtx, cfg.Issuer)
 	if err != nil {
 		return nil, fmt.Errorf("initialize OIDC provider: %w", err)
 	}
@@ -224,11 +306,15 @@ func Init(ctx context.Context, cfg Config) (*Provider, error) {
 	var oauth2Config oauth2.Config
 	var verifier *oidc.IDTokenVerifier
 	if webLoginConfigured {
+		endpoint := provider.Endpoint()
+		if !validRedirectURI(endpoint.AuthURL) || !validRedirectURI(endpoint.TokenURL) {
+			return nil, errors.New("OIDC provider returned an unsafe authorization or token endpoint")
+		}
 		oauth2Config = oauth2.Config{
 			ClientID:     cfg.ClientID,
 			ClientSecret: cfg.ClientSecret,
 			RedirectURL:  cfg.RedirectURL,
-			Endpoint:     provider.Endpoint(),
+			Endpoint:     endpoint,
 			Scopes:       []string{oidc.ScopeOpenID},
 		}
 		verifier = provider.Verifier(&oidc.Config{ClientID: cfg.ClientID})
@@ -246,7 +332,7 @@ func Init(ctx context.Context, cfg Config) (*Provider, error) {
 	// and audience through go-oidc's normal claim checks.
 	hmacVerifier := newHMACVerifier(cfg.Issuer, cfg.ClientID, cfg.ClientSecret, false)
 	hmacAccessVerifier := newHMACVerifier(cfg.Issuer, "", cfg.ClientSecret, true)
-	introspectionEndpoint := discoverIntrospectionEndpoint(ctx, cfg.Issuer)
+	introspectionEndpoint := providerIntrospectionEndpoint(provider)
 	clients := make(map[string]oauthClient)
 	// A configured MCP client is a public client by default. Its redirect URI
 	// is checked in clientRedirectAllowed; dynamic registrations are stored
@@ -327,13 +413,17 @@ func (p *Provider) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "OAuth authorization endpoint is not configured", http.StatusNotImplemented)
 		return
 	}
+	if !p.allowOAuthRequest(&p.authorizeRate, maxAuthorizeRequests) {
+		writeOAuthRateLimit(w)
+		return
+	}
 
 	query := r.URL.Query()
 	clientID := strings.TrimSpace(query.Get("client_id"))
 	redirectURI := strings.TrimSpace(query.Get("redirect_uri"))
 	state := query.Get("state")
-	if clientID == "" {
-		oauthError(w, redirectURI, state, "invalid_request", "client_id is required", false)
+	if clientID == "" || len(clientID) > 256 || len(redirectURI) > 2048 || len(state) > 2048 {
+		p.oauthError(w, r, redirectURI, state, "invalid_request", "authorization request is invalid", false)
 		return
 	}
 	if !validRedirectURI(redirectURI) || !p.clientRedirectAllowed(clientID, redirectURI) {
@@ -341,24 +431,24 @@ func (p *Provider) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if query.Get("response_type") != "code" {
-		oauthError(w, redirectURI, state, "unsupported_response_type", "response_type must be code", true)
+		p.oauthError(w, r, redirectURI, state, "unsupported_response_type", "response_type must be code", true)
 		return
 	}
 	challenge := strings.TrimSpace(query.Get("code_challenge"))
 	challengeMethod := strings.ToUpper(strings.TrimSpace(query.Get("code_challenge_method")))
-	if challenge == "" || challengeMethod != "S256" {
-		oauthError(w, redirectURI, state, "invalid_request", "PKCE S256 is required", true)
+	if !validPKCEChallenge(challenge) || challengeMethod != "S256" {
+		p.oauthError(w, r, redirectURI, state, "invalid_request", "PKCE S256 is required", true)
 		return
 	}
 
 	rawResource := strings.TrimSpace(query.Get("resource"))
-	if rawResource == "" {
-		oauthError(w, redirectURI, state, "invalid_request", "resource is required", true)
+	if rawResource == "" || len(rawResource) > 2048 || len(query.Get("scope")) > 256 {
+		p.oauthError(w, r, redirectURI, state, "invalid_request", "resource is required", true)
 		return
 	}
 	resource := normalizeResourceURL(rawResource)
 	if !p.resourceAllowed(resource, r) {
-		oauthError(w, redirectURI, state, "invalid_target", "resource is not this MCP server", true)
+		p.oauthError(w, r, redirectURI, state, "invalid_target", "resource is not this MCP server", true)
 		return
 	}
 	scope := normalizeScope(query.Get("scope"))
@@ -371,6 +461,12 @@ func (p *Provider) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
 	p.mu.Lock()
 	p.ensureOAuthMapsLocked()
 	p.pruneOAuthStateLocked(time.Now())
+	if len(p.pending) >= maxPendingRequests {
+		p.mu.Unlock()
+		clearOAuthCookies(w, p.config.CookieSecure)
+		writeOAuthError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "too many authorization requests")
+		return
+	}
 	p.pending[internalState] = authorizationRequest{
 		ClientID:        clientID,
 		RedirectURI:     redirectURI,
@@ -388,6 +484,7 @@ func (p *Provider) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
 		oauth2.SetAuthURLParam("resource", resource),
 		oauth2.SetAuthURLParam("scope", scope),
 	)
+	w.Header().Set("Cache-Control", "no-store")
 	http.Redirect(w, r, authURL, http.StatusFound)
 }
 
@@ -433,6 +530,7 @@ func (p *Provider) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	url := p.oauth2Config.AuthCodeURL(state, oauth2.SetAuthURLParam("nonce", nonce))
+	w.Header().Set("Cache-Control", "no-store")
 	http.Redirect(w, r, url, http.StatusFound)
 }
 
@@ -441,6 +539,10 @@ func (p *Provider) browserLoginConfigured() bool {
 }
 
 func (p *Provider) handleTokenLogin(w http.ResponseWriter, r *http.Request) {
+	if err := browserRequestProtection.Check(r); err != nil {
+		http.Error(w, "요청 출처를 확인할 수 없습니다.", http.StatusForbidden)
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
 	if err := r.ParseForm(); err != nil {
 		writeTokenLoginPage(w, true, p.browserLoginConfigured())
@@ -453,14 +555,16 @@ func (p *Provider) handleTokenLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.setSessionCookie(w, subject, expiresAt)
+	w.Header().Set("Cache-Control", "no-store")
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func writeTokenLoginPage(w http.ResponseWriter, failed, oauthEnabled bool) {
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if failed {
 		w.WriteHeader(http.StatusUnauthorized)
@@ -481,6 +585,38 @@ func writeTokenLoginPage(w http.ResponseWriter, failed, oauthEnabled bool) {
 		_, _ = io.WriteString(w, `<a href="/auth/login?provider=oidc">계정으로 로그인</a>`)
 	}
 	_, _ = io.WriteString(w, `<a href="/">돌아가기</a></main></body></html>`)
+}
+
+var oauthConsentPage = template.Must(template.New("oauth-consent").Parse(`<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stash 연결 허용</title><style>
+:root{color-scheme:light dark;--bg:#eef2f7;--surface:#fff;--ink:#182235;--muted:#667085;--border:#d7dee8;--accent:#5b5bd6;--danger:#b42318}*{box-sizing:border-box}body{min-height:100vh;margin:0;display:grid;place-items:center;padding:24px;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}@media(prefers-color-scheme:dark){:root{--bg:#0d131b;--surface:#151d27;--ink:#f4f7fb;--muted:#a8b5c7;--border:#2e3b4a;--accent:#a5b0ff;--danger:#ff9b8f}}main{width:min(460px,100%);padding:28px;border:1px solid var(--border);border-radius:16px;background:var(--surface);box-shadow:0 16px 40px #0002}h1{margin:0 0 10px;font-size:22px;letter-spacing:-.04em}p{margin:0 0 18px;color:var(--muted)}strong{color:var(--ink)}dl{margin:0 0 20px;padding:14px;border:1px solid var(--border);border-radius:10px}dt{font-weight:700}dd{margin:4px 0 0;overflow-wrap:anywhere;color:var(--muted)}.actions{display:grid;grid-template-columns:1fr 1fr;gap:10px}button{min-height:42px;border:0;border-radius:10px;font:inherit;font-weight:800;cursor:pointer}.allow{background:var(--accent);color:#fff}.deny{border:1px solid var(--border);background:transparent;color:var(--danger)}
+</style></head><body><main><h1>연결 허용</h1><p><strong>{{.ClientName}}</strong>에서 Stash에 연결하려고 합니다.</p><dl><dt>코드를 받을 주소</dt><dd>{{.RedirectOrigin}}</dd></dl><p>허용하면 내 Stash 데이터를 읽고 변경하고 삭제할 수 있습니다.</p><form method="post" action="/oauth/consent"><input type="hidden" name="state" value="{{.State}}"><input type="hidden" name="consent_token" value="{{.ConsentToken}}"><div class="actions"><button class="deny" name="decision" value="deny" type="submit">거절</button><button class="allow" name="decision" value="allow" type="submit">허용</button></div></form></main></body></html>`))
+
+func (p *Provider) writeOAuthConsentPage(w http.ResponseWriter, state, consentToken string, pending authorizationRequest) {
+	client, _ := p.client(pending.ClientID)
+	clientName := strings.TrimSpace(client.Name)
+	if clientName == "" {
+		clientName = pending.ClientID
+	}
+	redirectOrigin := pending.RedirectURI
+	if parsed, err := url.Parse(pending.RedirectURI); err == nil && parsed.Scheme != "" && parsed.Host != "" {
+		redirectOrigin = parsed.Scheme + "://" + parsed.Host
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := oauthConsentPage.Execute(w, map[string]string{
+		"ClientName":     clientName,
+		"RedirectOrigin": redirectOrigin,
+		"State":          state,
+		"ConsentToken":   consentToken,
+	}); err != nil {
+		log.Printf("render OAuth consent page: %v", err)
+	}
 }
 
 func (p *Provider) HandleCallback(w http.ResponseWriter, r *http.Request) {
@@ -512,54 +648,113 @@ func (p *Provider) HandleCallback(w http.ResponseWriter, r *http.Request) {
 			if strings.HasPrefix(err.message, "login was denied:") {
 				oauthCode = "access_denied"
 			}
-			oauthError(w, pending.RedirectURI, pending.State, oauthCode, err.message, true)
+			p.oauthError(w, r, pending.RedirectURI, pending.State, oauthCode, err.message, true)
 			return
 		}
 		http.Error(w, err.Error(), err.status)
 		return
 	}
 
-	p.mu.Lock()
-	p.ensureOAuthMapsLocked()
-	p.pruneOAuthStateLocked(time.Now())
-	pending, isOAuthRequest = p.pending[providedState]
 	if isOAuthRequest {
-		delete(p.pending, providedState)
-	}
-	p.mu.Unlock()
-
-	if isOAuthRequest {
-		code, err := randomToken(32)
+		consentToken, err := randomToken(32)
 		if err != nil {
-			http.Error(w, "could not create authorization code", http.StatusInternalServerError)
+			http.Error(w, "could not prepare authorization", http.StatusInternalServerError)
 			return
 		}
 		p.mu.Lock()
 		p.ensureOAuthMapsLocked()
-		p.codes[code] = authorizationCode{
-			Subject:         subject,
-			ClientID:        pending.ClientID,
-			RedirectURI:     pending.RedirectURI,
-			CodeChallenge:   pending.CodeChallenge,
-			ChallengeMethod: pending.ChallengeMethod,
-			Resource:        pending.Resource,
-			Scope:           pending.Scope,
-			ExpiresAt:       time.Now().Add(authorizationCodeTTL),
+		p.pruneOAuthStateLocked(time.Now())
+		pending, isOAuthRequest = p.pending[providedState]
+		if isOAuthRequest {
+			pending.Subject = subject
+			pending.SessionExpiresAt = expiresAt
+			pending.ConsentToken = consentToken
+			pending.ExpiresAt = time.Now().Add(loginStateTTL)
+			p.pending[providedState] = pending
 		}
 		p.mu.Unlock()
-		p.setSessionCookie(w, subject, expiresAt)
-		values := url.Values{"code": {code}}
-		if pending.State != "" {
-			values.Set("state", pending.State)
+		if !isOAuthRequest {
+			http.Error(w, "authorization request expired", http.StatusBadRequest)
+			return
 		}
-		location, _ := url.Parse(pending.RedirectURI)
-		location.RawQuery = mergeQuery(location.RawQuery, values)
-		http.Redirect(w, r, location.String(), http.StatusFound)
+		p.writeOAuthConsentPage(w, providedState, consentToken, pending)
 		return
 	}
 
 	p.setSessionCookie(w, subject, expiresAt)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (p *Provider) HandleConsent(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if !p.localAuthorizationServer() {
+		http.NotFound(w, r)
+		return
+	}
+	if err := browserRequestProtection.Check(r); err != nil {
+		http.Error(w, "요청 출처를 확인할 수 없습니다.", http.StatusForbidden)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid authorization decision", http.StatusBadRequest)
+		return
+	}
+	state := strings.TrimSpace(r.PostFormValue("state"))
+	consentToken := strings.TrimSpace(r.PostFormValue("consent_token"))
+	decision := strings.TrimSpace(r.PostFormValue("decision"))
+	if state == "" || len(state) > 128 || consentToken == "" || len(consentToken) > 128 || (decision != "allow" && decision != "deny") {
+		http.Error(w, "invalid authorization decision", http.StatusBadRequest)
+		return
+	}
+
+	p.mu.Lock()
+	p.ensureOAuthMapsLocked()
+	p.pruneOAuthStateLocked(time.Now())
+	pending, ok := p.pending[state]
+	if ok && pending.Subject != "" && len(consentToken) == len(pending.ConsentToken) && subtle.ConstantTimeCompare([]byte(consentToken), []byte(pending.ConsentToken)) == 1 {
+		delete(p.pending, state)
+	} else {
+		ok = false
+	}
+	p.mu.Unlock()
+	if !ok {
+		http.Error(w, "authorization request expired", http.StatusBadRequest)
+		return
+	}
+	if decision == "deny" {
+		p.oauthError(w, r, pending.RedirectURI, pending.State, "access_denied", "the user denied the request", true)
+		return
+	}
+
+	code, err := randomToken(32)
+	if err != nil {
+		p.oauthError(w, r, pending.RedirectURI, pending.State, "server_error", "could not create authorization code", true)
+		return
+	}
+	p.mu.Lock()
+	p.ensureOAuthMapsLocked()
+	p.pruneOAuthStateLocked(time.Now())
+	p.codes[code] = authorizationCode{
+		Subject:         pending.Subject,
+		ClientID:        pending.ClientID,
+		RedirectURI:     pending.RedirectURI,
+		CodeChallenge:   pending.CodeChallenge,
+		ChallengeMethod: pending.ChallengeMethod,
+		Resource:        pending.Resource,
+		Scope:           pending.Scope,
+		ExpiresAt:       time.Now().Add(authorizationCodeTTL),
+	}
+	p.mu.Unlock()
+	p.setSessionCookie(w, pending.Subject, pending.SessionExpiresAt)
+	values := url.Values{"code": {code}}
+	if pending.State != "" {
+		values.Set("state", pending.State)
+	}
+	p.oauthRedirect(w, r, pending.RedirectURI, values)
 }
 
 type authHTTPError struct {
@@ -590,7 +785,9 @@ func (p *Provider) completeOIDCLogin(r *http.Request, providedState string, w ht
 		return "", time.Time{}, &authHTTPError{http.StatusBadRequest, "authorization code is missing"}
 	}
 
-	token, err := p.oauth2Config.Exchange(r.Context(), code)
+	providerCtx, cancel := context.WithTimeout(r.Context(), oauthProviderTimeout)
+	defer cancel()
+	token, err := p.oauth2Config.Exchange(providerCtx, code)
 	if err != nil {
 		return "", time.Time{}, &authHTTPError{http.StatusBadGateway, "could not complete login"}
 	}
@@ -599,7 +796,7 @@ func (p *Provider) completeOIDCLogin(r *http.Request, providedState string, w ht
 		return "", time.Time{}, &authHTTPError{http.StatusBadGateway, "identity token is missing"}
 	}
 
-	idToken, err := p.verifyIdentityToken(r.Context(), rawIDToken)
+	idToken, err := p.verifyIdentityToken(providerCtx, rawIDToken)
 	if err != nil {
 		// Some OAuth providers expose an opaque access token and publish no
 		// usable JWKS for their ID token. The authorization-code exchange has
@@ -607,7 +804,7 @@ func (p *Provider) completeOIDCLogin(r *http.Request, providedState string, w ht
 		// introspection result bound to that same client is a safe OAuth
 		// compatibility fallback. Keep the verifier error in the log so the
 		// provider can still be configured for normal OIDC validation later.
-		if subject, expiresAt, introspectionErr := p.introspectLoginAccessToken(r.Context(), token.AccessToken); introspectionErr == nil {
+		if subject, expiresAt, introspectionErr := p.introspectLoginAccessToken(providerCtx, token.AccessToken); introspectionErr == nil {
 			log.Printf("OIDC identity token verification failed; accepted introspected access token: %v", err)
 			return subject, expiresAt, nil
 		} else {
@@ -740,9 +937,7 @@ func (p *Provider) setSessionCookie(w http.ResponseWriter, subject string, expir
 }
 
 func (p *Provider) clientRedirectAllowed(clientID, redirectURI string) bool {
-	p.mu.Lock()
-	client, registered := p.clients[clientID]
-	p.mu.Unlock()
+	client, registered := p.client(clientID)
 	if registered {
 		for _, candidate := range client.RedirectURIs {
 			if candidate == redirectURI {
@@ -768,7 +963,7 @@ func (p *Provider) clientRedirectAllowed(clientID, redirectURI string) bool {
 
 func validRedirectURI(raw string) bool {
 	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Fragment != "" || parsed.Host == "" {
+	if err != nil || parsed.Fragment != "" || parsed.User != nil || parsed.Host == "" {
 		return false
 	}
 	if parsed.Scheme == "https" {
@@ -777,9 +972,27 @@ func validRedirectURI(raw string) bool {
 	return isLoopbackRedirect(raw)
 }
 
+func validResourceURL(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Fragment != "" || parsed.RawQuery != "" || parsed.User != nil || parsed.Host == "" {
+		return false
+	}
+	if parsed.Scheme == "https" {
+		return true
+	}
+	return isLoopbackURL(parsed)
+}
+
 func isLoopbackRedirect(raw string) bool {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Scheme != "http" || parsed.User != nil || parsed.Hostname() == "" {
+		return false
+	}
+	return isLoopbackURL(parsed)
+}
+
+func isLoopbackURL(parsed *url.URL) bool {
+	if parsed == nil || parsed.Scheme != "http" || parsed.User != nil || parsed.Hostname() == "" {
 		return false
 	}
 	switch strings.ToLower(parsed.Hostname()) {
@@ -788,6 +1001,39 @@ func isLoopbackRedirect(raw string) bool {
 	default:
 		return false
 	}
+}
+
+func validPKCEChallenge(challenge string) bool {
+	if len(challenge) != 43 {
+		return false
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(challenge)
+	return err == nil && len(decoded) == sha256.Size
+}
+
+func validPKCEVerifier(verifier string) bool {
+	if len(verifier) < 43 || len(verifier) > 128 {
+		return false
+	}
+	for _, char := range verifier {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') {
+			continue
+		}
+		switch char {
+		case '-', '.', '_', '~':
+			continue
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func validateSigningSecret(secret string) error {
+	if len(strings.TrimSpace(secret)) < minimumSecretBytes {
+		return fmt.Errorf("must contain at least %d bytes", minimumSecretBytes)
+	}
+	return nil
 }
 
 func normalizeResourceURL(raw string) string {
@@ -821,6 +1067,7 @@ func normalizeScope(_ string) string {
 func mergeQuery(existing string, values url.Values) string {
 	query, _ := url.ParseQuery(existing)
 	for key, list := range values {
+		query.Del(key)
 		for _, value := range list {
 			query.Add(key, value)
 		}
@@ -828,22 +1075,48 @@ func mergeQuery(existing string, values url.Values) string {
 	return query.Encode()
 }
 
-func oauthError(w http.ResponseWriter, redirectURI, state, code, description string, redirectAllowed bool) {
+func (p *Provider) oauthError(w http.ResponseWriter, r *http.Request, redirectURI, state, code, description string, redirectAllowed bool) {
 	if redirectAllowed && validRedirectURI(redirectURI) {
-		location, err := url.Parse(redirectURI)
-		if err == nil {
-			values := url.Values{"error": {code}, "error_description": {description}}
-			if state != "" {
-				values.Set("state", state)
-			}
-			location.RawQuery = mergeQuery(location.RawQuery, values)
-			http.Redirect(w, &http.Request{}, location.String(), http.StatusFound)
-			return
+		values := url.Values{"error": {code}, "error_description": {description}}
+		if state != "" {
+			values.Set("state", state)
 		}
+		p.oauthRedirect(w, r, redirectURI, values)
+		return
 	}
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusBadRequest)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": code, "error_description": description})
+}
+
+func (p *Provider) oauthRedirect(w http.ResponseWriter, r *http.Request, redirectURI string, values url.Values) {
+	if !validRedirectURI(redirectURI) {
+		http.Error(w, "invalid redirect URI", http.StatusBadRequest)
+		return
+	}
+	location, err := url.Parse(redirectURI)
+	if err != nil {
+		http.Error(w, "invalid redirect URI", http.StatusBadRequest)
+		return
+	}
+	if issuer := p.localIssuerURL(r); issuer != "" {
+		values.Set("iss", issuer)
+	}
+	location.RawQuery = mergeQuery(location.RawQuery, values)
+	w.Header().Set("Cache-Control", "no-store")
+	http.Redirect(w, r, location.String(), http.StatusFound)
+}
+
+func (p *Provider) allowOAuthRequest(rate *fixedWindowRateLimit, limit int) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return rate.allow(time.Now(), limit)
+}
+
+func writeOAuthRateLimit(w http.ResponseWriter) {
+	w.Header().Set("Retry-After", strconv.Itoa(int(oauthRateWindow/time.Second)))
+	writeOAuthError(w, http.StatusTooManyRequests, "temporarily_unavailable", "too many OAuth requests")
 }
 
 func (p *Provider) pruneOAuthStateLocked(now time.Time) {
@@ -861,6 +1134,86 @@ func (p *Provider) pruneOAuthStateLocked(now time.Time) {
 		if !token.ExpiresAt.After(now) {
 			delete(p.refreshTokens, key)
 		}
+	}
+	for key, client := range p.clients {
+		if client.Dynamic && now.Sub(client.LastUsed) >= dynamicClientIdleTTL && !p.clientInUseLocked(key) {
+			delete(p.clients, key)
+		}
+	}
+}
+
+func (p *Provider) clientInUseLocked(clientID string) bool {
+	for _, pending := range p.pending {
+		if pending.ClientID == clientID {
+			return true
+		}
+	}
+	for _, code := range p.codes {
+		if code.ClientID == clientID {
+			return true
+		}
+	}
+	for _, token := range p.refreshTokens {
+		if token.ClientID == clientID {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *Provider) evictOldestUnusedClientLocked() bool {
+	oldestID := ""
+	var oldest time.Time
+	for clientID, client := range p.clients {
+		if !client.Dynamic || p.clientInUseLocked(clientID) {
+			continue
+		}
+		if oldestID == "" || client.LastUsed.Before(oldest) {
+			oldestID = clientID
+			oldest = client.LastUsed
+		}
+	}
+	if oldestID == "" {
+		return false
+	}
+	delete(p.clients, oldestID)
+	return true
+}
+
+func (p *Provider) storeRefreshTokenLocked(key string, token refreshToken) {
+	for p.refreshTokenCountLocked(token.Subject, token.ClientID, token.Resource) >= maxRefreshPerClient {
+		p.deleteOldestRefreshTokenLocked(token.Subject, token.ClientID, token.Resource, true)
+	}
+	for len(p.refreshTokens) >= maxRefreshTokens {
+		p.deleteOldestRefreshTokenLocked("", "", "", false)
+	}
+	p.refreshTokens[key] = token
+}
+
+func (p *Provider) refreshTokenCountLocked(subject, clientID, resource string) int {
+	count := 0
+	for _, token := range p.refreshTokens {
+		if token.Subject == subject && token.ClientID == clientID && token.Resource == resource {
+			count++
+		}
+	}
+	return count
+}
+
+func (p *Provider) deleteOldestRefreshTokenLocked(subject, clientID, resource string, matchingOnly bool) {
+	oldestKey := ""
+	var oldest time.Time
+	for key, token := range p.refreshTokens {
+		if matchingOnly && (token.Subject != subject || token.ClientID != clientID || token.Resource != resource) {
+			continue
+		}
+		if oldestKey == "" || token.CreatedAt.Before(oldest) {
+			oldestKey = key
+			oldest = token.CreatedAt
+		}
+	}
+	if oldestKey != "" {
+		delete(p.refreshTokens, oldestKey)
 	}
 }
 
@@ -880,8 +1233,12 @@ func (p *Provider) ensureOAuthMapsLocked() {
 }
 
 func (p *Provider) HandleLogout(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if err := browserRequestProtection.Check(r); err != nil {
+		http.Error(w, "요청 출처를 확인할 수 없습니다.", http.StatusForbidden)
 		return
 	}
 	secure := false
@@ -898,7 +1255,8 @@ func (p *Provider) HandleLogout(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 		SameSite: http.SameSiteLaxMode,
 	})
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (p *Provider) HandleStatus(w http.ResponseWriter, r *http.Request) {
@@ -906,6 +1264,7 @@ func (p *Provider) HandleStatus(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
 	status := map[string]any{"auth_mode": "none", "authenticated": false}
 	if p != nil {
@@ -932,15 +1291,16 @@ func (p *Provider) HandleAuthorizationServerMetadata(w http.ResponseWriter, r *h
 	}
 	issuer := p.localIssuerURL(r)
 	response := map[string]any{
-		"issuer":                                issuer,
-		"authorization_endpoint":                issuer + "/authorize",
-		"token_endpoint":                        issuer + "/oauth/token",
-		"registration_endpoint":                 issuer + "/oauth/register",
-		"scopes_supported":                      []string{oidc.ScopeOpenID},
-		"response_types_supported":              []string{"code"},
-		"grant_types_supported":                 []string{"authorization_code", "refresh_token"},
-		"code_challenge_methods_supported":      []string{"S256"},
-		"token_endpoint_auth_methods_supported": []string{"none", "client_secret_post", "client_secret_basic"},
+		"issuer":                                         issuer,
+		"authorization_endpoint":                         issuer + "/authorize",
+		"token_endpoint":                                 issuer + "/oauth/token",
+		"registration_endpoint":                          issuer + "/oauth/register",
+		"scopes_supported":                               []string{oidc.ScopeOpenID},
+		"response_types_supported":                       []string{"code"},
+		"grant_types_supported":                          []string{"authorization_code", "refresh_token"},
+		"code_challenge_methods_supported":               []string{"S256"},
+		"token_endpoint_auth_methods_supported":          []string{"none", "client_secret_post", "client_secret_basic"},
+		"authorization_response_iss_parameter_supported": true,
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
@@ -1095,9 +1455,11 @@ func (p *Provider) verifyOIDCAccessTokenContext(ctx context.Context, rawToken st
 	if p.accessVerifier == nil {
 		return "", errors.New("OIDC access-token verifier is unavailable")
 	}
-	accessToken, err := p.verifyAccessToken(ctx, rawToken)
+	providerCtx, cancel := context.WithTimeout(ctx, oauthProviderTimeout)
+	defer cancel()
+	accessToken, err := p.verifyAccessToken(providerCtx, rawToken)
 	if err != nil {
-		if subject, introspectionErr := p.introspectAccessToken(ctx, rawToken); introspectionErr == nil {
+		if subject, introspectionErr := p.introspectAccessToken(providerCtx, rawToken); introspectionErr == nil {
 			return subject, nil
 		}
 		return "", fmt.Errorf("invalid OIDC access token: %w", err)
@@ -1120,32 +1482,21 @@ func (p *Provider) verifyAccessToken(ctx context.Context, rawToken string) (*oid
 	return p.accessVerifier.Verify(ctx, rawToken)
 }
 
-func discoverIntrospectionEndpoint(ctx context.Context, issuer string) string {
-	issuer = strings.TrimRight(strings.TrimSpace(issuer), "/")
-	if issuer == "" {
-		return ""
-	}
-	discoveryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	request, err := http.NewRequestWithContext(discoveryCtx, http.MethodGet, issuer+"/.well-known/openid-configuration", nil)
-	if err != nil {
-		return ""
-	}
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		return ""
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
+func providerIntrospectionEndpoint(provider *oidc.Provider) string {
+	if provider == nil {
 		return ""
 	}
 	var metadata struct {
 		IntrospectionEndpoint string `json:"introspection_endpoint"`
 	}
-	if err := json.NewDecoder(io.LimitReader(response.Body, 256<<10)).Decode(&metadata); err != nil {
+	if err := provider.Claims(&metadata); err != nil {
 		return ""
 	}
-	return strings.TrimSpace(metadata.IntrospectionEndpoint)
+	endpoint := strings.TrimSpace(metadata.IntrospectionEndpoint)
+	if endpoint == "" || !validRedirectURI(endpoint) {
+		return ""
+	}
+	return endpoint
 }
 
 func (p *Provider) introspectAccessToken(ctx context.Context, rawToken string) (string, error) {
@@ -1287,9 +1638,6 @@ func requestBaseURL(r *http.Request) string {
 	if r.TLS != nil {
 		scheme = "https"
 	}
-	if forwarded := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0]); forwarded == "http" || forwarded == "https" {
-		scheme = forwarded
-	}
 	if strings.TrimSpace(r.Host) == "" {
 		return ""
 	}
@@ -1301,7 +1649,12 @@ func (p *Provider) HandleGenerateToken(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
+	if err := browserRequestProtection.Check(r); err != nil {
+		http.Error(w, `{"error":"cross-origin request denied"}`, http.StatusForbidden)
+		return
+	}
 	if p == nil {
 		http.Error(w, `{"error":"authentication is disabled"}`, http.StatusNotFound)
 		return
@@ -1340,13 +1693,18 @@ func (p *Provider) HandleOAuthToken(w http.ResponseWriter, r *http.Request) {
 		writeOAuthError(w, http.StatusNotImplemented, "temporarily_unavailable", "local OAuth token endpoint is not configured")
 		return
 	}
+	if !p.allowOAuthRequest(&p.tokenRate, maxTokenRequests) {
+		writeOAuthRateLimit(w)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	if err := r.ParseForm(); err != nil {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "could not parse form body")
 		return
 	}
 	grantType := strings.TrimSpace(r.Form.Get("grant_type"))
 	clientID, clientSecret, fromBasic := oauthClientCredentials(r)
-	if clientID == "" {
+	if clientID == "" || len(clientID) > 256 || len(clientSecret) > 256 {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_client", "client_id is required")
 		return
 	}
@@ -1376,6 +1734,10 @@ func (p *Provider) exchangeAuthorizationCode(w http.ResponseWriter, r *http.Requ
 	verifier := strings.TrimSpace(r.Form.Get("code_verifier"))
 	if codeValue == "" || redirectURI == "" || verifier == "" {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "code, redirect_uri, and code_verifier are required")
+		return
+	}
+	if !validPKCEVerifier(verifier) {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "code_verifier must be 43 to 128 unreserved characters")
 		return
 	}
 
@@ -1441,11 +1803,15 @@ func (p *Provider) exchangeRefreshToken(w http.ResponseWriter, r *http.Request, 
 }
 
 func (p *Provider) issueOAuthTokens(w http.ResponseWriter, subject, clientID, resource, scope string) {
-	ttl := p.config.APITokenTTL
-	if ttl <= 0 {
-		ttl = defaultTokenTTL
+	accessTTL := p.config.AccessTokenTTL
+	if accessTTL <= 0 {
+		accessTTL = defaultAccessTokenTTL
 	}
-	access, err := generateOAuthAccessToken(subject, p.config.APISecret, resource, scope, ttl)
+	refreshTTL := p.config.RefreshTokenTTL
+	if refreshTTL <= 0 {
+		refreshTTL = defaultRefreshTokenTTL
+	}
+	access, err := generateOAuthAccessToken(subject, p.config.APISecret, resource, scope, accessTTL)
 	if err != nil {
 		writeOAuthError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "access token generation is unavailable")
 		return
@@ -1459,13 +1825,14 @@ func (p *Provider) issueOAuthTokens(w http.ResponseWriter, subject, clientID, re
 	p.mu.Lock()
 	p.ensureOAuthMapsLocked()
 	p.pruneOAuthStateLocked(time.Now())
-	p.refreshTokens[refresh] = refreshToken{
+	p.storeRefreshTokenLocked(refresh, refreshToken{
 		Subject:   subject,
 		ClientID:  clientID,
 		Resource:  resource,
 		Scope:     scope,
-		ExpiresAt: time.Now().Add(ttl),
-	}
+		CreatedAt: time.Now(),
+		ExpiresAt: time.Now().Add(refreshTTL),
+	})
 	p.mu.Unlock()
 
 	w.Header().Set("Cache-Control", "no-store")
@@ -1473,7 +1840,7 @@ func (p *Provider) issueOAuthTokens(w http.ResponseWriter, subject, clientID, re
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"access_token":  access,
 		"token_type":    "Bearer",
-		"expires_in":    int(ttl.Seconds()),
+		"expires_in":    int(accessTTL.Seconds()),
 		"refresh_token": refresh,
 		"scope":         scope,
 	})
@@ -1491,6 +1858,10 @@ func (p *Provider) HandleOAuthRegister(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if !p.allowOAuthRequest(&p.registerRate, maxRegisterRequests) {
+		writeOAuthRateLimit(w)
+		return
+	}
 	defer r.Body.Close()
 	var request struct {
 		RedirectURIs            []string `json:"redirect_uris"`
@@ -1504,12 +1875,22 @@ func (p *Provider) HandleOAuthRegister(w http.ResponseWriter, r *http.Request) {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_client_metadata", "registration body is invalid")
 		return
 	}
-	if len(request.RedirectURIs) == 0 {
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_client_metadata", "registration body must contain one JSON object")
+		return
+	}
+	request.ClientName = strings.TrimSpace(request.ClientName)
+	if len(request.ClientName) > 128 || !utf8.ValidString(request.ClientName) {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_client_metadata", "client_name must be at most 128 bytes")
+		return
+	}
+	if len(request.RedirectURIs) == 0 || len(request.RedirectURIs) > 4 {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_client_metadata", "redirect_uris is required")
 		return
 	}
 	for _, redirectURI := range request.RedirectURIs {
-		if !validRedirectURI(redirectURI) {
+		if len(redirectURI) > 2048 || !validRedirectURI(redirectURI) {
 			writeOAuthError(w, http.StatusBadRequest, "invalid_redirect_uri", "redirect_uris must use HTTPS or loopback HTTP")
 			return
 		}
@@ -1549,16 +1930,20 @@ func (p *Provider) HandleOAuthRegister(w http.ResponseWriter, r *http.Request) {
 		}
 		secret = rawSecret
 	}
+	now := time.Now()
 	client := oauthClient{
 		ID:                      clientID,
 		RedirectURIs:            append([]string(nil), request.RedirectURIs...),
 		TokenEndpointAuthMethod: method,
 		Secret:                  secret,
 		Name:                    request.ClientName,
+		Dynamic:                 true,
+		LastUsed:                now,
 	}
 	p.mu.Lock()
 	p.ensureOAuthMapsLocked()
-	if len(p.clients) >= 1000 {
+	p.pruneOAuthStateLocked(now)
+	if len(p.clients) >= maxOAuthClients && !p.evictOldestUnusedClientLocked() {
 		p.mu.Unlock()
 		writeOAuthError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "client registration limit reached")
 		return
@@ -1594,7 +1979,13 @@ func (p *Provider) HandleOAuthRegister(w http.ResponseWriter, r *http.Request) {
 func (p *Provider) client(clientID string) (oauthClient, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.ensureOAuthMapsLocked()
+	p.pruneOAuthStateLocked(time.Now())
 	if client, ok := p.clients[clientID]; ok {
+		if client.Dynamic {
+			client.LastUsed = time.Now()
+			p.clients[clientID] = client
+		}
 		return client, true
 	}
 	if clientID == strings.TrimSpace(p.config.MCPClientID) {
@@ -1704,6 +2095,9 @@ func randomToken(size int) (string, error) {
 // GenerateAPIToken creates a Stash bearer token without contacting an OIDC
 // provider. The caller must keep the returned value private.
 func GenerateAPIToken(user, secret string, ttl time.Duration) (string, error) {
+	if err := validateSigningSecret(secret); err != nil {
+		return "", fmt.Errorf("API secret %w", err)
+	}
 	return generateStashToken(user, secret, ttl)
 }
 
@@ -1741,7 +2135,7 @@ func generateOAuthAccessToken(user, secret, resource, scope string, ttl time.Dur
 		return "", errors.New("resource is required")
 	}
 	if ttl <= 0 {
-		ttl = defaultTokenTTL
+		ttl = defaultAccessTokenTTL
 	}
 	nonce, err := randomToken(24)
 	if err != nil {
@@ -1837,7 +2231,8 @@ func parseOAuthAccessToken(token, secret, expectedResource string) (string, erro
 	if expectedResource = normalizeResourceURL(expectedResource); expectedResource != "" && normalizeResourceURL(string(resourceBytes)) != expectedResource {
 		return "", errors.New("OAuth access token has unexpected resource")
 	}
-	if _, err := base64.RawURLEncoding.DecodeString(parts[3]); err != nil {
+	scopeBytes, err := base64.RawURLEncoding.DecodeString(parts[3])
+	if err != nil || string(scopeBytes) != oidc.ScopeOpenID {
 		return "", errors.New("invalid OAuth access token scope")
 	}
 	return string(decodedUser), nil

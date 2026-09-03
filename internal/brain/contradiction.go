@@ -67,34 +67,39 @@ func (b *Brain) DetectContradictions(ctx context.Context, nsID int64, fact *mode
 
 		cr, llmErr := b.reasoner.ReasonContradiction(ctx, *fact.Entity, *fact.Property, oldValue, newValue)
 		if llmErr != nil {
-			continue
+			return detected, autoResolved, fmt.Errorf("classify facts %d and %d: %w", ef.ID, fact.ID, llmErr)
+		}
+		if cr == nil {
+			return detected, autoResolved, fmt.Errorf("classify facts %d and %d: empty result", ef.ID, fact.ID)
 		}
 		if err := validateConfidence(cr.Confidence); err != nil {
-			continue
+			return detected, autoResolved, fmt.Errorf("classify facts %d and %d: %w", ef.ID, fact.ID, err)
 		}
 
 		switch cr.Classification {
 		case reasoner.ClassificationReplacement:
 			if cr.Confidence >= 0.9 {
 				if err := b.autoSupersede(ctx, nsID, ef.ID, fact.ID, *fact.Entity, *fact.Property, oldValue, newValue, cr.Confidence); err != nil {
-					continue
+					return detected, autoResolved, err
 				}
 				detected++
 				autoResolved++
 			} else {
 				if err := b.recordContradiction(ctx, nsID, ef.ID, fact.ID, *fact.Entity, *fact.Property, oldValue, newValue, cr.Confidence, "structured"); err != nil {
-					continue
+					return detected, autoResolved, err
 				}
 				detected++
 			}
 
 		case reasoner.ClassificationContradiction:
 			if err := b.recordContradiction(ctx, nsID, ef.ID, fact.ID, *fact.Entity, *fact.Property, oldValue, newValue, cr.Confidence, "structured"); err != nil {
-				continue
+				return detected, autoResolved, err
 			}
 			detected++
 
 		case reasoner.ClassificationCompatible:
+		default:
+			return detected, autoResolved, fmt.Errorf("classify facts %d and %d: unsupported classification %q", ef.ID, fact.ID, cr.Classification)
 		}
 	}
 
@@ -122,13 +127,27 @@ func (b *Brain) autoSupersede(ctx context.Context, nsID, oldFactID, newFactID in
 	}
 
 	resolution := "superseded"
-	_, err = tx.Exec(ctx,
-		`INSERT INTO contradictions (namespace_id, old_fact_id, new_fact_id, entity, property, old_value, new_value, confidence, method, resolved, resolution, resolved_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'auto', TRUE, $9, $10)`,
-		nsID, oldFactID, newFactID, entity, property, oldValue, newValue, confidence, resolution, now,
+	updated, err := tx.Exec(ctx,
+		`UPDATE contradictions
+		 SET confidence = $4, method = 'auto', resolved = TRUE, resolution = $5, resolved_at = $6
+		 WHERE namespace_id = $1 AND old_fact_id = $2 AND new_fact_id = $3 AND resolved = FALSE`,
+		nsID, oldFactID, newFactID, confidence, resolution, now,
 	)
 	if err != nil {
-		return fmt.Errorf("insert auto-supersede contradiction: %w", err)
+		return fmt.Errorf("resolve existing auto-supersede contradiction: %w", err)
+	}
+	if updated.RowsAffected() == 0 {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO contradictions (namespace_id, old_fact_id, new_fact_id, entity, property, old_value, new_value, confidence, method, resolved, resolution, resolved_at)
+			 SELECT $1, $2, $3, $4, $5, $6, $7, $8, 'auto', TRUE, $9, $10
+			 WHERE NOT EXISTS (
+			   SELECT 1 FROM contradictions
+			   WHERE namespace_id = $1 AND old_fact_id = $2 AND new_fact_id = $3
+			 )`,
+			nsID, oldFactID, newFactID, entity, property, oldValue, newValue, confidence, resolution, now,
+		); err != nil {
+			return fmt.Errorf("insert auto-supersede contradiction: %w", err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit auto-supersede: %w", err)
@@ -140,7 +159,11 @@ func (b *Brain) autoSupersede(ctx context.Context, nsID, oldFactID, newFactID in
 func (b *Brain) recordContradiction(ctx context.Context, nsID, oldFactID, newFactID int64, entity, property, oldValue, newValue string, confidence float32, method string) error {
 	_, err := b.pool.Exec(ctx,
 		`INSERT INTO contradictions (namespace_id, old_fact_id, new_fact_id, entity, property, old_value, new_value, confidence, method)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		 SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9
+		 WHERE NOT EXISTS (
+		   SELECT 1 FROM contradictions
+		   WHERE namespace_id = $1 AND old_fact_id = $2 AND new_fact_id = $3
+		 )`,
 		nsID, oldFactID, newFactID, entity, property, oldValue, newValue, confidence, method,
 	)
 	if err != nil {

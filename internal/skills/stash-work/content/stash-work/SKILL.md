@@ -4,7 +4,7 @@ description: Resume a shared Stash project and execute bounded work with goals, 
 license: Apache-2.0
 metadata:
   author: Stash
-  version: "2.0.0"
+  version: "2.2.0"
 ---
 
 # Stash Work
@@ -13,10 +13,11 @@ Use Stash as the durable record for AI project work. Human work may remain autho
 
 ## Resume the project
 
-1. Call `resume_project` with the exact project namespace, a stable `agent_id`, and the small set of capabilities available in this session.
-2. Continue this agent's active item first. Otherwise choose one of the returned runnable items whose `required_capabilities` it can satisfy.
-3. Call `resume_work` for that item. Read the shared goal path, parent plan component, owned scopes, current action, pending conditions, relevant memory, resource summaries, prerequisite results, and blockers.
-4. Continue the same item instead of creating a replacement. Search only when the bounded project response does not identify the intended work.
+1. Use this flow only for an existing Stash work item or when the user asked for a shared Work Plan. Do not call Stash for unrelated ordinary work.
+2. If an exact work item ID is supplied, skip `resume_project`. Otherwise call it once with the exact project namespace, a stable `agent_id`, and the small set of capabilities available in this session.
+3. Continue this agent's active item first. Otherwise choose one returned runnable item whose `required_capabilities` it can satisfy.
+4. Call `resume_work` once for that item. Read the shared goal path, parent plan component, owned scopes, current action, pending conditions, relevant memory, resource summaries, prerequisite results, and blockers.
+5. Continue the same item instead of creating a replacement. Resume again only after a conflict, stale-state response, handoff, or explicit refresh request.
 
 Keep `context_digest` and send it as `known_context_digest` on later resume calls. An unchanged view returns a small receipt. See [the protocol](references/protocol.md) for recovery and connector details.
 
@@ -51,17 +52,22 @@ Use a new action key for each logical mutation. Reuse it only to retry the exact
 
 ## Preserve observed progress
 
-- Call `checkpoint_work` after every meaningful action with a short summary, the observed result, and exactly one concrete `next_action`.
+- Do not call Stash after routine shell commands, file reads, or edits.
+- Call `checkpoint_work` only before interruption, lease risk, or when a partial result must survive for another agent. Include one concrete `next_action`.
 - Call `renew_work_lease` before a long action could cross the lease deadline.
-- Use `remember_work` for durable decisions, corrections, failure lessons, and outcome facts. It does not prove completion. If you omit it, Stash still keeps one bounded result memory automatically on a successful `finish_work` or `handoff_work`, and when a lease expires it preserves the latest checkpoint for the next agent.
-- Call `resume_project` again when project state may have changed.
+- Resume again only when Stash reports a conflict or stale state.
+
+## Required memory check
+
+- Combine related durable details into one `remember_work` call for a distinct decision, correction, failure, or lesson. Final results are already saved by `finish_work` or `handoff_work`; omit routine narration.
+- `finish_work` or `handoff_work`: accept the result only when the response says `result_memory_linked: true`.
 
 ## Prove and finish the result
 
 1. Exercise each completion condition through its named path. Keep source review, tests, builds, HTTP, UI, devices, and deployment as separate observations when the condition distinguishes them.
-2. Call `submit_work_evidence` for what was observed and retain its evidence ID.
-3. Call `verify_work_condition` with that evidence ID. Use `waived` only with an explicit reason and supporting evidence.
-4. Call `finish_work` only after every required condition has accepted evidence and every blocker is finished.
+2. Use one `submit_work_evidence` call for every condition proved by the same observation.
+3. Put the successfully proved pending IDs in `finish_work.passed_condition_ids`; it accepts those conditions only when this attempt supplied linked evidence. Use `verify_work_condition` only for an explicit waiver or when acceptance must be recorded before finish.
+4. Confirm every blocker is finished and `result_memory_linked: true` is present in the response.
 
 Read [evidence guidance](references/evidence.md) before claiming a condition passed.
 

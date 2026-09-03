@@ -46,17 +46,19 @@ func New(ctx context.Context) (*Context, error) {
 	logger := buildLogger(cfg)
 
 	authProvider, err := auth.Init(ctx, auth.Config{
-		Mode:           cfg.AuthMode,
-		Issuer:         cfg.AuthIssuer,
-		ClientID:       cfg.AuthClientID,
-		MCPClientID:    cfg.AuthMCPClientID,
-		ClientSecret:   cfg.AuthClientSecret,
-		RedirectURL:    cfg.AuthRedirectURL,
-		APISecret:      cfg.AuthAPISecret,
-		MCPResourceURL: cfg.AuthMCPResourceURL,
-		CookieSecure:   cfg.AuthCookieSecure,
-		APITokenTTL:    cfg.AuthTokenTTL,
-		StdioToken:     cfg.AuthStdioToken,
+		Mode:            cfg.AuthMode,
+		Issuer:          cfg.AuthIssuer,
+		ClientID:        cfg.AuthClientID,
+		MCPClientID:     cfg.AuthMCPClientID,
+		ClientSecret:    cfg.AuthClientSecret,
+		RedirectURL:     cfg.AuthRedirectURL,
+		APISecret:       cfg.AuthAPISecret,
+		MCPResourceURL:  cfg.AuthMCPResourceURL,
+		CookieSecure:    cfg.AuthCookieSecure,
+		APITokenTTL:     cfg.AuthTokenTTL,
+		AccessTokenTTL:  cfg.AuthAccessTokenTTL,
+		RefreshTokenTTL: cfg.AuthRefreshTokenTTL,
+		StdioToken:      cfg.AuthStdioToken,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("initialize authentication: %w", err)

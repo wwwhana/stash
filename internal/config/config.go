@@ -48,17 +48,19 @@ type Config struct {
 	MCPToolTimeout time.Duration `env:"STASH_MCP_TOOL_TIMEOUT" envDefault:"2m"`
 
 	// Authentication
-	AuthMode           string        `env:"STASH_AUTH_MODE" envDefault:"none"`
-	AuthIssuer         string        `env:"STASH_AUTH_ISSUER" envDefault:""`
-	AuthClientID       string        `env:"STASH_AUTH_CLIENT_ID" envDefault:""`
-	AuthMCPClientID    string        `env:"STASH_AUTH_MCP_CLIENT_ID" envDefault:""`
-	AuthClientSecret   string        `env:"STASH_AUTH_CLIENT_SECRET" envDefault:""`
-	AuthRedirectURL    string        `env:"STASH_AUTH_REDIRECT_URL" envDefault:""`
-	AuthAPISecret      string        `env:"STASH_AUTH_API_SECRET" envDefault:""`
-	AuthMCPResourceURL string        `env:"STASH_AUTH_MCP_RESOURCE_URL" envDefault:""`
-	AuthCookieSecure   bool          `env:"STASH_AUTH_COOKIE_SECURE" envDefault:"true"`
-	AuthTokenTTL       time.Duration `env:"STASH_AUTH_TOKEN_TTL" envDefault:"720h"`
-	AuthStdioToken     string        `env:"STASH_AUTH_STDIO_TOKEN" envDefault:""`
+	AuthMode            string        `env:"STASH_AUTH_MODE" envDefault:"none"`
+	AuthIssuer          string        `env:"STASH_AUTH_ISSUER" envDefault:""`
+	AuthClientID        string        `env:"STASH_AUTH_CLIENT_ID" envDefault:""`
+	AuthMCPClientID     string        `env:"STASH_AUTH_MCP_CLIENT_ID" envDefault:""`
+	AuthClientSecret    string        `env:"STASH_AUTH_CLIENT_SECRET" envDefault:""`
+	AuthRedirectURL     string        `env:"STASH_AUTH_REDIRECT_URL" envDefault:""`
+	AuthAPISecret       string        `env:"STASH_AUTH_API_SECRET" envDefault:""`
+	AuthMCPResourceURL  string        `env:"STASH_AUTH_MCP_RESOURCE_URL" envDefault:""`
+	AuthCookieSecure    bool          `env:"STASH_AUTH_COOKIE_SECURE" envDefault:"true"`
+	AuthTokenTTL        time.Duration `env:"STASH_AUTH_TOKEN_TTL" envDefault:"720h"`
+	AuthAccessTokenTTL  time.Duration `env:"STASH_AUTH_ACCESS_TOKEN_TTL" envDefault:"1h"`
+	AuthRefreshTokenTTL time.Duration `env:"STASH_AUTH_REFRESH_TOKEN_TTL" envDefault:"720h"`
+	AuthStdioToken      string        `env:"STASH_AUTH_STDIO_TOKEN" envDefault:""`
 	// Admin maintenance accepts either an authenticated OIDC subject listed
 	// here or the separate static token below. Keep this independent from the
 	// MCP API secret so a maintenance credential cannot sign user sessions.
@@ -76,6 +78,8 @@ type Config struct {
 	AuthOAuthResourceURL     string        `env:"STASH_AUTH_OAUTH_RESOURCE_URL" envDefault:""`
 	AuthOAuthCookieSecureRaw string        `env:"STASH_AUTH_OAUTH_COOKIE_SECURE" envDefault:""`
 	AuthOAuthTokenTTL        time.Duration `env:"STASH_AUTH_OAUTH_TOKEN_TTL" envDefault:"0s"`
+	AuthOAuthAccessTokenTTL  time.Duration `env:"STASH_AUTH_OAUTH_ACCESS_TOKEN_TTL" envDefault:"0s"`
+	AuthOAuthRefreshTokenTTL time.Duration `env:"STASH_AUTH_OAUTH_REFRESH_TOKEN_TTL" envDefault:"0s"`
 	AuthOAuthStdioToken      string        `env:"STASH_AUTH_OAUTH_STDIO_TOKEN" envDefault:""`
 
 	// Consolidation
@@ -145,6 +149,12 @@ func (c *Config) applyAuthAliases() {
 	if c.AuthOAuthTokenTTL > 0 {
 		c.AuthTokenTTL = c.AuthOAuthTokenTTL
 	}
+	if c.AuthOAuthAccessTokenTTL > 0 {
+		c.AuthAccessTokenTTL = c.AuthOAuthAccessTokenTTL
+	}
+	if c.AuthOAuthRefreshTokenTTL > 0 {
+		c.AuthRefreshTokenTTL = c.AuthOAuthRefreshTokenTTL
+	}
 }
 
 // Validate rejects configurations that would otherwise fail much later during
@@ -201,6 +211,18 @@ func (c *Config) Validate() error {
 	}
 	if c.MCPToolTimeout <= 0 {
 		return fmt.Errorf("STASH_MCP_TOOL_TIMEOUT must be greater than zero")
+	}
+	if c.AuthTokenTTL < 0 {
+		return fmt.Errorf("STASH_AUTH_TOKEN_TTL must not be negative")
+	}
+	if c.AuthAccessTokenTTL < 0 || c.AuthAccessTokenTTL > time.Hour {
+		return fmt.Errorf("STASH_AUTH_ACCESS_TOKEN_TTL must not be negative or greater than 1h")
+	}
+	if c.AuthRefreshTokenTTL < 0 {
+		return fmt.Errorf("STASH_AUTH_REFRESH_TOKEN_TTL must not be negative")
+	}
+	if c.AuthRefreshTokenTTL > 0 && c.AuthAccessTokenTTL > 0 && c.AuthRefreshTokenTTL < c.AuthAccessTokenTTL {
+		return fmt.Errorf("STASH_AUTH_REFRESH_TOKEN_TTL must not be shorter than STASH_AUTH_ACCESS_TOKEN_TTL")
 	}
 	if c.ConsolidationBatchSize <= 0 {
 		return fmt.Errorf("STASH_CONSOLIDATION_BATCH_SIZE must be greater than zero")

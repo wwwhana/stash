@@ -59,6 +59,16 @@ test('the common state store returns isolated mutable state', () => {
     assert.notStrictEqual(first.agentGuide, '');
 });
 
+test('the agent guide avoids routine Stash call churn', () => {
+    const guide = createStateStore().agentGuide;
+
+    assert.match(guide, /Ordinary unrelated work makes no Stash calls/);
+    assert.match(guide, /skip `resume_project`/);
+    assert.match(guide, /`finish_work\.passed_condition_ids`/);
+    assert.doesNotMatch(guide, /checkpoint_work` after each meaningful action/);
+    assert.doesNotMatch(guide, /call `verify_work_condition`\./);
+});
+
 test('the theme view-model exposes a single preference for every screen', () => {
     const theme = createThemeViewModel();
     assert.deepEqual(theme.themeOptions.map(option => option.value), ['system', 'light', 'dark']);

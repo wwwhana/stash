@@ -4,7 +4,7 @@ Tool names may carry a client-specific MCP prefix. Match them by the final Stash
 
 ## Start or resume a session
 
-1. `resume_project(namespace, agent_id?, capabilities?, known_context_digest?)` is the universal Web MCP entry point. It returns the shared goal, this agent's active work, at most three runnable candidates, project counts, one next action, and a digest.
+1. If an exact work item ID is supplied, skip the project lookup. Otherwise `resume_project(namespace, agent_id?, capabilities?, known_context_digest?)` returns the shared goal, this agent's active work, at most three runnable candidates, project counts, one next action, and a digest.
 2. Continue active work first. Otherwise choose one candidate whose required capabilities are available.
 3. `resume_work(work_item_id, detail="brief", known_context_digest?)` returns the focused goal path, parent plan component, owned scopes, next action, pending conditions, relevant memory, linked resource summaries, final prerequisite results, and blockers.
 4. Search or create work only when these bounded responses do not already contain the intended outcome.
@@ -48,17 +48,20 @@ Read references with `list_work_resources`, `get_work_resource`, `stash://work/{
 
 These calls require the same `attempt_id`, private `lease_token`, and a stable action key unique to that mutation:
 
-- `checkpoint_work` records a summary, observed result, and one next action, then extends the lease.
+- `checkpoint_work` records a recoverable partial result and one next action before interruption, lease risk, or handoff; it is not a per-command log.
 - `renew_work_lease` extends the lease when no new result exists.
 - `submit_work_evidence` stores an observed result and its condition links.
-- `verify_work_condition` accepts a passed or evidence-backed waived condition.
+- `verify_work_condition` explicitly accepts or waives a condition. Passed conditions normally skip this call by naming successfully proved pending IDs in `finish_work.passed_condition_ids`; waivers remain explicit.
 - `spawn_work` decomposes newly discovered work.
-- `finish_work` stores the final result and completes verified work.
-- `handoff_work` stores the current result and next action, then releases unfinished work.
+- `remember_work` is required for a decision, correction, failure, or lesson.
+- `finish_work` accepts the pending condition IDs explicitly named in `passed_condition_ids` only when current-attempt evidence is linked, stores the final result, verifies its memory link, and completes the work.
+- `handoff_work` stores the current result and next action, verifies its memory link, then releases unfinished work.
+
+Treat either terminal call as accepted only when its response contains `result_memory_linked: true`.
 
 ## Recover in a fresh session
 
-`resume_project` → resume the same active item or choose one candidate → `resume_work` → stop if another live lease exists → `prepare_work` only if needed → `claim_work` → checkpoint and verify observations → `finish_work` or `handoff_work`.
+When the item ID is known, start with `resume_work`; otherwise use `resume_project` once to select the item. Then stop if another live lease exists → `prepare_work` only if needed → `claim_work` → submit batched evidence → `finish_work` or `handoff_work`. Checkpoint only when the result must survive an interruption.
 
 Keep the same project and work item. Missing chat history or an unavailable old token is not a reason to create replacements.
 

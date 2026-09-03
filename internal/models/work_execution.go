@@ -8,18 +8,20 @@ import (
 // WorkAttempt is one leased execution of a durable work item. The lease token
 // is deliberately absent because the database stores only its hash.
 type WorkAttempt struct {
-	ID             int64      `db:"id" json:"id"`
-	WorkItemID     int64      `db:"work_item_id" json:"work_item_id"`
-	WorktreeID     *int64     `db:"worktree_id" json:"worktree_id,omitempty"`
-	AttemptNumber  int        `db:"attempt_number" json:"attempt_number"`
-	AgentID        string     `db:"agent_id" json:"agent_id"`
-	PrincipalID    string     `db:"principal_id" json:"principal_id"`
-	Status         string     `db:"status" json:"status"`
-	LeaseExpiresAt time.Time  `db:"lease_expires_at" json:"lease_expires_at"`
-	StartedAt      time.Time  `db:"started_at" json:"started_at"`
-	EndedAt        *time.Time `db:"ended_at" json:"ended_at,omitempty"`
-	CreatedAt      time.Time  `db:"created_at" json:"created_at"`
-	UpdatedAt      time.Time  `db:"updated_at" json:"updated_at"`
+	ID                 int64      `db:"id" json:"id"`
+	WorkItemID         int64      `db:"work_item_id" json:"work_item_id"`
+	WorktreeID         *int64     `db:"worktree_id" json:"worktree_id,omitempty"`
+	AttemptNumber      int        `db:"attempt_number" json:"attempt_number"`
+	AgentID            string     `db:"agent_id" json:"agent_id"`
+	PrincipalID        string     `db:"principal_id" json:"principal_id"`
+	Status             string     `db:"status" json:"status"`
+	LeaseExpiresAt     time.Time  `db:"lease_expires_at" json:"lease_expires_at"`
+	StartedAt          time.Time  `db:"started_at" json:"started_at"`
+	EndedAt            *time.Time `db:"ended_at" json:"ended_at,omitempty"`
+	CreatedAt          time.Time  `db:"created_at" json:"created_at"`
+	UpdatedAt          time.Time  `db:"updated_at" json:"updated_at"`
+	ResultMemoryLinked bool       `db:"-" json:"result_memory_linked,omitempty"`
+	ResultMemorySource string     `db:"-" json:"result_memory_source,omitempty"`
 }
 
 // WorkAttemptLease is returned only when an attempt starts. Callers must keep

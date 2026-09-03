@@ -65,6 +65,18 @@ var (
 			Help: "Number of errors encountered during consolidation",
 		}, []string{},
 	)
+	lastRunPendingStageInputs = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "consolidation_last_run_pending_stage_inputs",
+			Help: "Number of unprocessed inputs across consolidation stages after the latest run",
+		},
+	)
+	lastRunErrors = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "consolidation_last_run_errors",
+			Help: "Number of errors reported by the latest consolidation run",
+		},
+	)
 	httpRequests = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "stash_http_requests_total",
@@ -128,6 +140,12 @@ var (
 			Help: "Tracked work execution transitions by action and result",
 		}, []string{"action", "result"},
 	)
+	workResultMemoryCoverage = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "stash_work_result_memory_coverage_total",
+			Help: "Terminal work results with a verified result-memory link",
+		}, []string{"action", "source"},
+	)
 )
 
 // Observation carries the metrics that should be exported for a run.
@@ -142,6 +160,7 @@ type Observation struct {
 	LLMCalls           int
 	Duration           time.Duration
 	Errors             int
+	PendingStageInputs int
 }
 
 // RecordConsolidation exports the provided observation to Prometheus.
@@ -157,6 +176,8 @@ func RecordConsolidation(obs Observation) {
 	llmCalls.WithLabelValues().Add(float64(obs.LLMCalls))
 	duration.WithLabelValues().Observe(obs.Duration.Seconds())
 	errorsTotal.WithLabelValues().Add(float64(obs.Errors))
+	lastRunPendingStageInputs.Set(float64(obs.PendingStageInputs))
+	lastRunErrors.Set(float64(obs.Errors))
 }
 
 // RecordHTTP records one completed HTTP request. Route values should be stable
@@ -209,6 +230,18 @@ func RecordNamespaceAuthorization(result string) {
 // limited to the server's fixed action and result vocabulary.
 func RecordWorkExecution(action, result string) {
 	workExecutionTransitions.WithLabelValues(stableLabel(action, "unknown"), stableLabel(result, "unknown")).Inc()
+}
+
+// RecordWorkResultMemory records the verified result-memory link returned by a
+// terminal work action. Both labels use a closed vocabulary.
+func RecordWorkResultMemory(action, source string) {
+	if action != "finish" && action != "handoff" {
+		action = "unknown"
+	}
+	if source != "existing" && source != "automatic" {
+		source = "unknown"
+	}
+	workResultMemoryCoverage.WithLabelValues(action, source).Inc()
 }
 
 func stableLabel(value, fallback string) string {

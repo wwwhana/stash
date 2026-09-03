@@ -76,6 +76,47 @@ func (b *Brain) RememberWithStatus(ctx context.Context, namespaceSlug, content s
 	return result, nil
 }
 
+// QueueRemember durably stores a raw memory without calling the embedding
+// provider in the request path. The background embedding worker is woken after
+// the row is committed, so hook callers only wait for PostgreSQL.
+func (b *Brain) QueueRemember(ctx context.Context, namespaceSlug, content string, occurredAt *time.Time) (RememberResult, error) {
+	var result RememberResult
+	if err := validateContent(content); err != nil {
+		return result, err
+	}
+	if err := validatePath(namespaceSlug); err != nil {
+		return result, err
+	}
+
+	nsID, err := b.resolveNamespaceID(ctx, namespaceSlug)
+	if err != nil {
+		return result, err
+	}
+
+	queuedAt := time.Now().UTC()
+	occurred := queuedAt
+	if occurredAt != nil {
+		occurred = *occurredAt
+	}
+
+	err = b.pool.QueryRow(ctx,
+		`INSERT INTO episodes (
+			namespace_id, content, embedding, embedding_model, occurred_at,
+			embedding_attempts, embedding_retry_at, embedding_updated_at
+		 ) VALUES ($1, $2, NULL, $3, $4, 0, $5, now()) RETURNING id`,
+		nsID, content, b.embedder.Model(), occurred, queuedAt,
+	).Scan(&result.ID)
+	if err != nil {
+		return RememberResult{}, fmt.Errorf("queue episode embedding: %w", err)
+	}
+
+	result.Indexed = false
+	result.IndexingStatus = "pending"
+	result.RetryAt = &queuedAt
+	b.WakeEmbeddingRetries()
+	return result, nil
+}
+
 func (b *Brain) insertPendingEpisode(_ context.Context, namespaceID int64, content string, occurred time.Time, cause error) (RememberResult, error) {
 	result := RememberResult{
 		Indexed:        false,

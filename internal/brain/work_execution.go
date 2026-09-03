@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/alash3al/stash/internal/models"
+	"github.com/alash3al/stash/internal/observability"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -67,8 +68,9 @@ type WorkCheckpointInput struct {
 // WorkFinishInput deliberately has no NextAction. Completion clears the
 // persisted continuation point in the same transaction.
 type WorkFinishInput struct {
-	Summary string `json:"summary"`
-	Result  string `json:"result"`
+	Summary            string  `json:"summary"`
+	Result             string  `json:"result"`
+	PassedConditionIDs []int64 `json:"passed_condition_ids,omitempty"`
 }
 
 // WorkEvidenceInput records an observable result without constraining callers
@@ -190,6 +192,22 @@ func validateWorkFinishInput(input WorkFinishInput) (WorkFinishInput, error) {
 	if err := validateContent(input.Result); err != nil {
 		return WorkFinishInput{}, fmt.Errorf("brain: work completion result: %w", err)
 	}
+	if len(input.PassedConditionIDs) > 100 {
+		return WorkFinishInput{}, fmt.Errorf("brain: work completion accepts at most 100 condition IDs")
+	}
+	seen := make(map[int64]struct{}, len(input.PassedConditionIDs))
+	conditionIDs := make([]int64, 0, len(input.PassedConditionIDs))
+	for _, conditionID := range input.PassedConditionIDs {
+		if conditionID <= 0 {
+			return WorkFinishInput{}, fmt.Errorf("brain: passed condition IDs must be positive")
+		}
+		if _, ok := seen[conditionID]; ok {
+			continue
+		}
+		seen[conditionID] = struct{}{}
+		conditionIDs = append(conditionIDs, conditionID)
+	}
+	input.PassedConditionIDs = conditionIDs
 	return input, nil
 }
 
@@ -379,6 +397,26 @@ func storeWorkActionReceipt(ctx context.Context, tx pgx.Tx, workItemID int64, at
 	)
 	if err != nil {
 		return fmt.Errorf("store work action receipt: %w", err)
+	}
+	return nil
+}
+
+func updateWorkActionReceiptResponse(ctx context.Context, tx pgx.Tx, workItemID int64, actionKey string, response any) error {
+	data, err := json.Marshal(response)
+	if err != nil {
+		return fmt.Errorf("marshal updated work action response: %w", err)
+	}
+	result, err := tx.Exec(ctx,
+		`UPDATE work_action_receipts
+		 SET response = $3
+		 WHERE work_item_id = $1 AND action_key = $2`,
+		workItemID, workActionKeyDigest(actionKey), data,
+	)
+	if err != nil {
+		return fmt.Errorf("update work action receipt response: %w", err)
+	}
+	if result.RowsAffected() != 1 {
+		return fmt.Errorf("update work action receipt response: receipt not found")
 	}
 	return nil
 }
@@ -1708,8 +1746,33 @@ func (b *Brain) HandoffWorkAttemptForPrincipal(ctx context.Context, attemptID in
 		if err := decodeWorkActionResponse(receipt, &replay); err != nil {
 			return nil, err
 		}
+		memoryCoverageRepaired := false
+		if !replay.ResultMemoryLinked {
+			memorySource, err := b.saveAutomaticWorkOutcomeTx(
+				ctx, tx, leased.NamespaceID, leased.Attempt.WorkItemID, attemptID, leased.Attempt.StartedAt,
+				input.Summary, input.Result, input.NextAction, "handoff",
+			)
+			if err != nil {
+				return nil, err
+			}
+			if memorySource == "" {
+				return nil, fmt.Errorf("brain: handoff result memory was not linked")
+			}
+			replay.ResultMemoryLinked = true
+			replay.ResultMemorySource = memorySource
+			if err := updateWorkActionReceiptResponse(ctx, tx, leased.Attempt.WorkItemID, actionKey, &replay); err != nil {
+				return nil, err
+			}
+			memoryCoverageRepaired = true
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return nil, fmt.Errorf("commit work handoff replay: %w", err)
+		}
+		if memoryCoverageRepaired {
+			if replay.ResultMemorySource == workResultMemorySourceAutomatic {
+				b.WakeEmbeddingRetries()
+			}
+			observability.RecordWorkResultMemory("handoff", replay.ResultMemorySource)
 		}
 		return &replay, nil
 	}
@@ -1751,16 +1814,23 @@ func (b *Brain) HandoffWorkAttemptForPrincipal(ctx context.Context, attemptID in
 	if err := setAvailableWorkItemStatus(ctx, tx, leased.NamespaceID, leased.Attempt.WorkItemID); err != nil {
 		return nil, err
 	}
-	automaticMemorySaved, err := b.saveAutomaticWorkOutcomeTx(
+	resultMemorySource, err := b.saveAutomaticWorkOutcomeTx(
 		ctx, tx, leased.NamespaceID, leased.Attempt.WorkItemID, attemptID, leased.Attempt.StartedAt,
 		input.Summary, input.Result, checkpoint.NextAction, "handoff",
 	)
 	if err != nil {
 		return nil, err
 	}
+	if resultMemorySource == "" {
+		return nil, fmt.Errorf("brain: handoff result memory was not linked")
+	}
+	attempt.ResultMemoryLinked = true
+	attempt.ResultMemorySource = resultMemorySource
 	if err := insertWorkExecutionEvent(ctx, tx, leased.NamespaceID, leased.Attempt.WorkItemID, &attemptID, "work.attempt.handed_off", workActionKeyDigest(actionKey), map[string]any{
-		"checkpoint_id": checkpoint.ID,
-		"next_action":   checkpoint.NextAction,
+		"checkpoint_id":        checkpoint.ID,
+		"next_action":          checkpoint.NextAction,
+		"result_memory_linked": true,
+		"result_memory_source": resultMemorySource,
 	}); err != nil {
 		return nil, err
 	}
@@ -1770,9 +1840,10 @@ func (b *Brain) HandoffWorkAttemptForPrincipal(ctx context.Context, attemptID in
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit work handoff: %w", err)
 	}
-	if automaticMemorySaved {
+	if resultMemorySource == workResultMemorySourceAutomatic {
 		b.WakeEmbeddingRetries()
 	}
+	observability.RecordWorkResultMemory("handoff", resultMemorySource)
 	return attempt, nil
 }
 
@@ -1825,8 +1896,33 @@ func (b *Brain) FinishWorkAttemptForPrincipal(ctx context.Context, attemptID int
 		if err := decodeWorkActionResponse(receipt, &replay); err != nil {
 			return nil, err
 		}
+		memoryCoverageRepaired := false
+		if !replay.ResultMemoryLinked {
+			memorySource, err := b.saveAutomaticWorkOutcomeTx(
+				ctx, tx, leased.NamespaceID, leased.Attempt.WorkItemID, attemptID, leased.Attempt.StartedAt,
+				input.Summary, input.Result, "", "finish",
+			)
+			if err != nil {
+				return nil, err
+			}
+			if memorySource == "" {
+				return nil, fmt.Errorf("brain: finished result memory was not linked")
+			}
+			replay.ResultMemoryLinked = true
+			replay.ResultMemorySource = memorySource
+			if err := updateWorkActionReceiptResponse(ctx, tx, leased.Attempt.WorkItemID, actionKey, &replay); err != nil {
+				return nil, err
+			}
+			memoryCoverageRepaired = true
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return nil, fmt.Errorf("commit work completion replay: %w", err)
+		}
+		if memoryCoverageRepaired {
+			if replay.ResultMemorySource == workResultMemorySourceAutomatic {
+				b.WakeEmbeddingRetries()
+			}
+			observability.RecordWorkResultMemory("finish", replay.ResultMemorySource)
 		}
 		return &replay, nil
 	}
@@ -1835,6 +1931,48 @@ func (b *Brain) FinishWorkAttemptForPrincipal(ctx context.Context, attemptID int
 	}
 	if err := lockWorkGraph(ctx, tx, leased.NamespaceID); err != nil {
 		return nil, err
+	}
+	acceptedConditionIDs := make([]int64, 0, len(input.PassedConditionIDs))
+	if len(input.PassedConditionIDs) > 0 {
+		rows, err := tx.Query(ctx,
+			`UPDATE work_completion_conditions condition
+			 SET status = 'passed', waiver_reason = '', verified_by_attempt_id = $2,
+			     verified_at = clock_timestamp(), updated_at = now()
+			 WHERE condition.work_item_id = $1
+			   AND condition.id = ANY($3)
+			   AND condition.superseded_at IS NULL
+			   AND condition.status IN ('pending', 'passed')
+			   AND EXISTS (
+			     SELECT 1
+			     FROM work_condition_evidence linked
+			     JOIN work_evidence evidence ON evidence.id = linked.evidence_id
+			     WHERE linked.condition_id = condition.id
+			       AND linked.work_item_id = condition.work_item_id
+			       AND evidence.work_item_id = condition.work_item_id
+			       AND evidence.attempt_id = $2
+			   )
+			 RETURNING condition.id`,
+			leased.Attempt.WorkItemID, attemptID, input.PassedConditionIDs,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("accept evidence-backed work conditions: %w", err)
+		}
+		for rows.Next() {
+			var conditionID int64
+			if err := rows.Scan(&conditionID); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("read accepted work condition: %w", err)
+			}
+			acceptedConditionIDs = append(acceptedConditionIDs, conditionID)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("read accepted work conditions: %w", err)
+		}
+		rows.Close()
+		if len(acceptedConditionIDs) != len(input.PassedConditionIDs) {
+			return nil, fmt.Errorf("brain: passed condition IDs must name active conditions with evidence from this attempt")
+		}
 	}
 	var requiredCount, incompleteRequired int64
 	if err := tx.QueryRow(ctx,
@@ -1927,13 +2065,18 @@ func (b *Brain) FinishWorkAttemptForPrincipal(ctx context.Context, attemptID int
 	); err != nil {
 		return nil, fmt.Errorf("record plan task completer: %w", err)
 	}
-	automaticMemorySaved, err := b.saveAutomaticWorkOutcomeTx(
+	resultMemorySource, err := b.saveAutomaticWorkOutcomeTx(
 		ctx, tx, leased.NamespaceID, leased.Attempt.WorkItemID, attemptID, leased.Attempt.StartedAt,
 		input.Summary, input.Result, "", "finish",
 	)
 	if err != nil {
 		return nil, err
 	}
+	if resultMemorySource == "" {
+		return nil, fmt.Errorf("brain: finished result memory was not linked")
+	}
+	attempt.ResultMemoryLinked = true
+	attempt.ResultMemorySource = resultMemorySource
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO work_execution_states (work_item_id, current_next_action)
 		 VALUES ($1, '')
@@ -1942,9 +2085,15 @@ func (b *Brain) FinishWorkAttemptForPrincipal(ctx context.Context, attemptID int
 	); err != nil {
 		return nil, fmt.Errorf("clear completed work next action: %w", err)
 	}
-	if err := insertWorkExecutionEvent(ctx, tx, leased.NamespaceID, leased.Attempt.WorkItemID, &attemptID, "work.attempt.completed", workActionKeyDigest(actionKey), map[string]any{
-		"checkpoint_id": checkpoint.ID,
-	}); err != nil {
+	completedPayload := map[string]any{
+		"checkpoint_id":        checkpoint.ID,
+		"result_memory_linked": true,
+		"result_memory_source": resultMemorySource,
+	}
+	if len(acceptedConditionIDs) > 0 {
+		completedPayload["accepted_condition_ids"] = acceptedConditionIDs
+	}
+	if err := insertWorkExecutionEvent(ctx, tx, leased.NamespaceID, leased.Attempt.WorkItemID, &attemptID, "work.attempt.completed", workActionKeyDigest(actionKey), completedPayload); err != nil {
 		return nil, err
 	}
 	if err := storeWorkActionReceipt(ctx, tx, leased.Attempt.WorkItemID, &attemptID, "finish", actionKey, requestHash, &attemptID, attempt); err != nil {
@@ -1953,9 +2102,10 @@ func (b *Brain) FinishWorkAttemptForPrincipal(ctx context.Context, attemptID int
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit work completion: %w", err)
 	}
-	if automaticMemorySaved {
+	if resultMemorySource == workResultMemorySourceAutomatic {
 		b.WakeEmbeddingRetries()
 	}
+	observability.RecordWorkResultMemory("finish", resultMemorySource)
 	return attempt, nil
 }
 

@@ -113,6 +113,9 @@ func TestWorkExecutionStateMachinePostgres(t *testing.T) {
 					if attempt.Status != "handed_off" {
 						t.Fatalf("handoff status = %q, want handed_off", attempt.Status)
 					}
+					if !attempt.ResultMemoryLinked || attempt.ResultMemorySource != workResultMemorySourceAutomatic {
+						t.Fatalf("handoff result memory = %#v", attempt)
+					}
 					return startWorkExecutionAttempt(t, b, ctx, first.Attempt.WorkItemID, "agent-b")
 				},
 			},
@@ -159,16 +162,11 @@ func TestWorkExecutionStateMachinePostgres(t *testing.T) {
 				}
 
 				second := tt.endAttempt(t, b, ctx, first)
-				evidence := submitWorkExecutionEvidence(t, b, ctx, second, []int64{condition.ID}, "completion proof", fmt.Sprintf("evidence-%d", second.Attempt.ID))
-				verified, err := b.VerifyWorkCondition(ctx, second.Attempt.ID, second.LeaseToken, condition.ID, "passed", []int64{evidence.ID}, "", fmt.Sprintf("verify-%d", second.Attempt.ID))
-				if err != nil {
-					t.Fatalf("VerifyWorkCondition: %v", err)
-				}
-				if verified.Status != "passed" {
-					t.Fatalf("condition status = %q, want passed", verified.Status)
-				}
+				submitWorkExecutionEvidence(t, b, ctx, second, []int64{condition.ID}, "completion proof", fmt.Sprintf("evidence-%d", second.Attempt.ID))
 				completed, err := b.FinishWorkAttempt(ctx, second.Attempt.ID, second.LeaseToken, WorkFinishInput{
-					Summary: "work finished", Result: "all required checks passed",
+					Summary:            "work finished",
+					Result:             "all required checks passed",
+					PassedConditionIDs: []int64{condition.ID},
 				}, fmt.Sprintf("finish-%d", second.Attempt.ID))
 				if err != nil {
 					t.Fatalf("FinishWorkAttempt: %v", err)
@@ -176,6 +174,20 @@ func TestWorkExecutionStateMachinePostgres(t *testing.T) {
 				if completed.Status != "completed" {
 					t.Fatalf("completed attempt status = %q, want completed", completed.Status)
 				}
+				if !completed.ResultMemoryLinked || completed.ResultMemorySource != workResultMemorySourceAutomatic {
+					t.Fatalf("completed result memory = %#v", completed)
+				}
+				assertWorkExecutionRowCount(t, b, ctx, 1,
+					`SELECT count(*) FROM work_completion_conditions
+					 WHERE id = $1 AND status = 'passed' AND verified_by_attempt_id = $2`,
+					condition.ID, second.Attempt.ID,
+				)
+				assertWorkExecutionRowCount(t, b, ctx, 1,
+					`SELECT count(*) FROM work_events
+					 WHERE work_item_id = $1 AND attempt_id = $2 AND event_type = 'work.attempt.completed'
+					   AND payload->'accepted_condition_ids' @> to_jsonb(ARRAY[$3::bigint])`,
+					item.ID, second.Attempt.ID, condition.ID,
+				)
 				assertWorkExecutionRowCount(t, b, ctx, 1,
 					`SELECT count(*) FROM work_item_memory_links link
 					 JOIN work_events event ON event.work_item_id = link.work_item_id
@@ -218,6 +230,7 @@ func TestWorkExecutionStateMachinePostgres(t *testing.T) {
 			if _, err := b.VerifyWorkCondition(ctx, attempt.Attempt.ID, attempt.LeaseToken, condition.ID, "passed", nil, "", fmt.Sprintf("empty-evidence-%d", attempt.Attempt.ID)); err == nil || !strings.Contains(err.Error(), "requires evidence") {
 				t.Fatalf("verification without evidence error = %v", err)
 			}
+			submitWorkExecutionEvidence(t, b, ctx, attempt, []int64{condition.ID}, "linked evidence without an acceptance decision", fmt.Sprintf("pending-evidence-%d", attempt.Attempt.ID))
 			if _, err := b.FinishWorkAttempt(ctx, attempt.Attempt.ID, attempt.LeaseToken, WorkFinishInput{Summary: "too early", Result: "condition is pending"}, fmt.Sprintf("early-finish-%d", attempt.Attempt.ID)); !errors.Is(err, ErrWorkConditionsIncomplete) {
 				t.Fatalf("pending condition completion error = %v, want %v", err, ErrWorkConditionsIncomplete)
 			}
@@ -926,7 +939,8 @@ func TestWorkExecutionStateMachinePostgres(t *testing.T) {
 					if err != nil {
 						t.Fatalf("replayed HandoffWorkAttempt: %v", err)
 					}
-					if first.ID != second.ID || first.Status != "handed_off" || second.Status != "handed_off" {
+					if first.ID != second.ID || first.Status != "handed_off" || second.Status != "handed_off" ||
+						!first.ResultMemoryLinked || !second.ResultMemoryLinked || first.ResultMemorySource != second.ResultMemorySource {
 						t.Fatalf("handoff replay changed result: first=%#v second=%#v", first, second)
 					}
 					changed := input
@@ -961,7 +975,8 @@ func TestWorkExecutionStateMachinePostgres(t *testing.T) {
 					if err != nil {
 						t.Fatalf("replayed FinishWorkAttempt: %v", err)
 					}
-					if first.ID != second.ID || first.Status != "completed" || second.Status != "completed" {
+					if first.ID != second.ID || first.Status != "completed" || second.Status != "completed" ||
+						!first.ResultMemoryLinked || !second.ResultMemoryLinked || first.ResultMemorySource != second.ResultMemorySource {
 						t.Fatalf("finish replay changed result: first=%#v second=%#v", first, second)
 					}
 					changed := input
@@ -974,7 +989,7 @@ func TestWorkExecutionStateMachinePostgres(t *testing.T) {
 				},
 			},
 			{
-				name: "explicit memory avoids automatic duplicate",
+				name: "decision memory still gets a result memory",
 				run: func(t *testing.T, b *Brain, ctx context.Context, namespaceID int64) {
 					item, _ := prepareWorkExecutionItem(t, b, ctx, namespaceID, "explicit memory")
 					attempt := startWorkExecutionAttempt(t, b, ctx, item.ID, "memory-agent")
@@ -982,14 +997,70 @@ func TestWorkExecutionStateMachinePostgres(t *testing.T) {
 					if _, err := b.RememberForWork(ctx, item.ID, "explicit decision", "decision", fmt.Sprintf("remember-%d", attempt.Attempt.ID)); err != nil {
 						t.Fatalf("RememberForWork: %v", err)
 					}
-					if _, err := b.HandoffWorkAttempt(ctx, attempt.Attempt.ID, attempt.LeaseToken, WorkCheckpointInput{
+					handedOff, err := b.HandoffWorkAttempt(ctx, attempt.Attempt.ID, attempt.LeaseToken, WorkCheckpointInput{
 						Summary: "paused", Result: "explicit memory exists", NextAction: "continue from the decision",
-					}, fmt.Sprintf("handoff-explicit-%d", attempt.Attempt.ID)); err != nil {
+					}, fmt.Sprintf("handoff-explicit-%d", attempt.Attempt.ID))
+					if err != nil {
 						t.Fatalf("HandoffWorkAttempt: %v", err)
+					}
+					if !handedOff.ResultMemoryLinked || handedOff.ResultMemorySource != workResultMemorySourceAutomatic {
+						t.Fatalf("handoff result memory = %#v", handedOff)
+					}
+					assertWorkExecutionRowCount(t, b, ctx, 2,
+						`SELECT count(*) FROM work_item_memory_links WHERE work_item_id = $1`, item.ID)
+					assertWorkExecutionRowCount(t, b, ctx, 1,
+						`SELECT count(*) FROM work_events WHERE attempt_id = $1 AND event_type = 'work.memory.auto_saved'`,
+						attempt.Attempt.ID)
+				},
+			},
+			{
+				name: "explicit result memory avoids automatic duplicate",
+				run: func(t *testing.T, b *Brain, ctx context.Context, namespaceID int64) {
+					item, _ := prepareWorkExecutionItem(t, b, ctx, namespaceID, "explicit result memory")
+					attempt := startWorkExecutionAttempt(t, b, ctx, item.ID, "result-memory-agent")
+					b.embedder = failingWorkEmbedder{}
+					if _, err := b.RememberForWork(ctx, item.ID, "explicit result", "result", fmt.Sprintf("remember-result-%d", attempt.Attempt.ID)); err != nil {
+						t.Fatalf("RememberForWork: %v", err)
+					}
+					handedOff, err := b.HandoffWorkAttempt(ctx, attempt.Attempt.ID, attempt.LeaseToken, WorkCheckpointInput{
+						Summary: "paused", Result: "explicit result exists", NextAction: "continue from the result",
+					}, fmt.Sprintf("handoff-result-%d", attempt.Attempt.ID))
+					if err != nil {
+						t.Fatalf("HandoffWorkAttempt: %v", err)
+					}
+					if !handedOff.ResultMemoryLinked || handedOff.ResultMemorySource != workResultMemorySourceExisting {
+						t.Fatalf("handoff result memory = %#v", handedOff)
 					}
 					assertWorkExecutionRowCount(t, b, ctx, 1,
 						`SELECT count(*) FROM work_item_memory_links WHERE work_item_id = $1`, item.ID)
 					assertWorkExecutionRowCount(t, b, ctx, 0,
+						`SELECT count(*) FROM work_events WHERE attempt_id = $1 AND event_type = 'work.memory.auto_saved'`,
+						attempt.Attempt.ID)
+				},
+			},
+			{
+				name: "deleted result memory is replaced automatically",
+				run: func(t *testing.T, b *Brain, ctx context.Context, namespaceID int64) {
+					item, _ := prepareWorkExecutionItem(t, b, ctx, namespaceID, "deleted result memory")
+					attempt := startWorkExecutionAttempt(t, b, ctx, item.ID, "deleted-memory-agent")
+					b.embedder = failingWorkEmbedder{}
+					remembered, err := b.RememberForWork(ctx, item.ID, "result removed before handoff", "result", fmt.Sprintf("remember-deleted-%d", attempt.Attempt.ID))
+					if err != nil {
+						t.Fatalf("RememberForWork: %v", err)
+					}
+					if _, err := b.pool.Exec(ctx, `UPDATE episodes SET deleted_at = now() WHERE id = $1`, remembered.ID); err != nil {
+						t.Fatalf("delete result memory: %v", err)
+					}
+					handedOff, err := b.HandoffWorkAttempt(ctx, attempt.Attempt.ID, attempt.LeaseToken, WorkCheckpointInput{
+						Summary: "paused", Result: "deleted result replaced", NextAction: "continue safely",
+					}, fmt.Sprintf("handoff-deleted-result-%d", attempt.Attempt.ID))
+					if err != nil {
+						t.Fatalf("HandoffWorkAttempt: %v", err)
+					}
+					if !handedOff.ResultMemoryLinked || handedOff.ResultMemorySource != workResultMemorySourceAutomatic {
+						t.Fatalf("handoff result memory = %#v", handedOff)
+					}
+					assertWorkExecutionRowCount(t, b, ctx, 1,
 						`SELECT count(*) FROM work_events WHERE attempt_id = $1 AND event_type = 'work.memory.auto_saved'`,
 						attempt.Attempt.ID)
 				},

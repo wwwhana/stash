@@ -75,7 +75,9 @@ func TestInstrumentHTTPSuppressesAccessLogAboveDebugLevel(t *testing.T) {
 }
 
 func TestConsolidationMetricsDoNotExposeNamespaceLabels(t *testing.T) {
-	RecordConsolidation(Observation{Namespace: "/sso/private/customer", EventsProcessed: 1})
+	RecordConsolidation(Observation{
+		Namespace: "/sso/private/customer", EventsProcessed: 1, PendingStageInputs: 7, Errors: 2,
+	})
 	metrics, err := prometheus.DefaultGatherer.Gather()
 	if err != nil {
 		t.Fatalf("gather metrics: %v", err)
@@ -89,6 +91,31 @@ func TestConsolidationMetricsDoNotExposeNamespaceLabels(t *testing.T) {
 				t.Fatalf("%s still exposes labels: %v", family.GetName(), metric.GetLabel())
 			}
 		}
+	}
+	if got, ok := metricGaugeValue(metrics, "consolidation_last_run_pending_stage_inputs"); !ok || got != 7 {
+		t.Fatalf("pending stage-input gauge = %v, %v; want 7, true", got, ok)
+	}
+	if got, ok := metricGaugeValue(metrics, "consolidation_last_run_errors"); !ok || got != 2 {
+		t.Fatalf("latest consolidation-error gauge = %v, %v; want 2, true", got, ok)
+	}
+}
+
+func TestWorkResultMemoryMetricUsesBoundedLabels(t *testing.T) {
+	RecordWorkResultMemory("finish", "automatic")
+	RecordWorkResultMemory("attacker-action", "attacker-source")
+	metrics, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatalf("gather metrics: %v", err)
+	}
+	if !metricHasLabels(metrics, "stash_work_result_memory_coverage_total", map[string]string{
+		"action": "finish", "source": "automatic",
+	}) {
+		t.Fatal("verified result-memory metric was not recorded")
+	}
+	if !metricHasLabels(metrics, "stash_work_result_memory_coverage_total", map[string]string{
+		"action": "unknown", "source": "unknown",
+	}) {
+		t.Fatal("unexpected result-memory labels were not bounded")
 	}
 }
 
@@ -152,4 +179,13 @@ func metricHasLabels(metrics []*dto.MetricFamily, name string, labels map[string
 		}
 	}
 	return false
+}
+
+func metricGaugeValue(metrics []*dto.MetricFamily, name string) (float64, bool) {
+	for _, family := range metrics {
+		if family.GetName() == name && len(family.GetMetric()) > 0 {
+			return family.GetMetric()[0].GetGauge().GetValue(), true
+		}
+	}
+	return 0, false
 }
