@@ -117,29 +117,26 @@
 
   <main class="stash-main">
     <header class="stash-topbar">
-      <div><h1>{{ pageTitle }}</h1><small>{{ rootLabel }}</small></div>
+      <div><h1>{{ pageTitle }}</h1></div>
       <div class="stash-top-actions">
         <label class="stash-root-select"><span>루트 객체</span><select v-model="rootSlug" @change="changeRoot"><option v-for="item in rootOptions" :key="item.slug" :value="item.slug">{{ item.label }}</option></select></label>
-        <button type="button" class="stash-button" @click="authPanelOpen = !authPanelOpen">접근</button>
-        <select class="stash-button" aria-label="테마" :value="themePreference" @change="changeTheme($event.target.value)"><option value="system">시스템</option><option value="light">밝게</option><option value="dark">어둡게</option></select>
+        <a v-if="canLogin && !auth.authenticated" class="stash-button is-primary" href="/auth/login">로그인</a>
+        <button v-else-if="auth.authenticated" type="button" class="stash-button" @click="authPanelOpen = !authPanelOpen">{{ auth.user || '로그인됨' }}</button>
+        <select class="stash-theme-select" aria-label="테마" :value="themePreference" @change="changeTheme($event.target.value)"><option value="system">시스템</option><option value="light">밝게</option><option value="dark">어둡게</option></select>
       </div>
     </header>
 
     <section v-if="authPanelOpen" class="stash-token-panel">
-      <h3>접근 설정</h3>
-      <p v-if="auth.auth_mode === 'token' && !auth.authenticated">stash mcp token으로 발급한 토큰을 입력하세요.</p>
-      <p v-else-if="auth.auth_mode !== 'none' && !auth.authenticated">로그인 후 API를 사용할 수 있습니다.</p>
-      <p v-else>세션은 브라우저 쿠키로 유지됩니다.</p>
-      <div class="stash-token-row"><input v-model="apiTokenInput" type="password" placeholder="API 토큰(선택)"><button type="button" class="stash-button is-primary" @click="useApiToken">적용</button></div>
+      <h3>{{ auth.user || '로그인됨' }}</h3>
+      <p>{{ usesApiToken ? '저장한 API 토큰으로 연결되어 있습니다.' : '현재 브라우저 세션으로 연결되어 있습니다.' }}</p>
+      <div class="stash-token-actions"><button type="button" class="stash-button" :disabled="tokenLoading" @click="issueToken">{{ tokenLoading ? '발급 중…' : '새 토큰 발급' }}</button><a class="stash-button is-quiet" href="/auth/logout" @click.prevent="logout">로그아웃</a></div>
       <div class="stash-token-issued" v-if="issuedToken"><code>{{ issuedToken }}</code><button type="button" class="stash-button" @click="copyIssuedToken">토큰 복사</button></div>
-      <button v-if="auth.authenticated" type="button" class="stash-button" :disabled="tokenLoading" @click="issueToken">새 토큰 발급</button>
-      <a v-if="canLogin && !auth.authenticated" class="stash-button" href="/auth/login">로그인</a>
       <div v-if="tokenError" class="stash-error">{{ tokenError }}</div>
     </section>
 
     <section class="stash-surface">
       <div class="stash-root-summary">
-        <div><p class="stash-kicker">루트 객체</p><h2>{{ rootName }}</h2><p>{{ rootSlug }} · 목표와 작업, 근거를 한 범위에서 봅니다.</p></div>
+        <div><p class="stash-kicker">현재 범위</p><h2>{{ rootName }}</h2><p>{{ rootSlug }}</p></div>
         <div class="stash-counts" aria-label="루트 요약"><div class="stash-count"><strong>{{ rootCounts.goal }}</strong><span>목표</span></div><div class="stash-count"><strong>{{ rootCounts.work }}</strong><span>작업</span></div><div class="stash-count"><strong>{{ rootCounts.memory }}</strong><span>기억</span></div><div class="stash-count"><strong>{{ rootCounts.resource }}</strong><span>자료</span></div></div>
       </div>
       <div v-if="error" class="stash-error" role="alert">{{ error }} <a v-if="canLogin && !auth.authenticated" href="/auth/login">로그인</a></div>
@@ -177,7 +174,7 @@
           </template>
 
           <template v-else-if="route.route === 'plan'">
-            <div class="stash-toolbar"><label class="stash-field is-search"><span>작업자</span><input v-model="planActor" placeholder="작업자 이름" @input="syncURL"></label><button type="button" class="stash-button" @click="loadRoute">새로고침</button></div><div v-if="planRootGoal" class="stash-root-summary"><div><p class="stash-kicker">공통 목표</p><h2>{{ planRootGoal.content }}</h2></div><span class="stash-status">{{ progress(planRootGoal.progress) }}</span></div><div v-if="!plan.components.length" class="stash-empty"><strong>등록된 구성 요소가 없습니다.</strong></div><div v-else class="stash-plan-grid"><article v-for="component in plan.components" :key="component.id" class="stash-plan-component"><header><div><h3>{{ component.issue_key || '#' + component.id }} · {{ component.title }}</h3><p>{{ component.description || '완료 조건이 없습니다.' }}</p></div><span class="stash-status" :data-status="component.status">{{ statusLabel(component.status) }}</span></header><ul class="stash-plan-tasks"><li v-for="task in component.tasks || []" :key="task.id" class="stash-plan-task"><button type="button" @click="selectObject('work', task)"><strong>{{ task.issue_key || '#' + task.id }}</strong> {{ task.title }}</button><small>{{ statusLabel(task.status) }}</small></li><li v-if="!(component.tasks || []).length" class="stash-plan-task"><small>하위 작업 없음</small></li></ul></article></div><div v-if="plan.decisions.length" class="stash-plan-decisions"><div v-for="decision in plan.decisions" :key="decision.id" class="stash-plan-decision"><strong>{{ decision.title }}</strong><div>{{ decision.rationale }}</div></div></div>
+            <div class="stash-toolbar"><label class="stash-field is-search"><span>작업자</span><input v-model="planActor" placeholder="작업자 이름" @input="syncURL"></label><button type="button" class="stash-button" @click="loadRoute">새로고침</button></div><div v-if="planRootGoal" class="stash-plan-goal"><span>공통 목표</span><strong>{{ planRootGoal.content }}</strong><span class="stash-status">{{ progress(planRootGoal.progress) }}</span></div><div v-if="!plan.components.length" class="stash-empty"><strong>등록된 구성 요소가 없습니다.</strong></div><div v-else class="stash-plan-grid"><article v-for="component in plan.components" :key="component.id" class="stash-plan-component"><header><div><h3>{{ component.issue_key || '#' + component.id }} · {{ component.title }}</h3><p>{{ component.description || '완료 조건이 없습니다.' }}</p></div><span class="stash-status" :data-status="component.status">{{ statusLabel(component.status) }}</span></header><ul class="stash-plan-tasks"><li v-for="task in component.tasks || []" :key="task.id" class="stash-plan-task"><button type="button" @click="selectObject('work', task)"><strong>{{ task.issue_key || '#' + task.id }}</strong> {{ task.title }}</button><small>{{ statusLabel(task.status) }}</small></li><li v-if="!(component.tasks || []).length" class="stash-plan-task"><small>하위 작업 없음</small></li></ul></article></div><div v-if="plan.decisions.length" class="stash-plan-decisions"><div v-for="decision in plan.decisions" :key="decision.id" class="stash-plan-decision"><strong>{{ decision.title }}</strong><div>{{ decision.rationale }}</div></div></div>
           </template>
 
           <template v-else-if="isListRoute">
@@ -224,10 +221,10 @@
                 error: '',
                 auth: { auth_mode: 'none', authenticated: false, user: '' },
                 authPanelOpen: false,
-                apiTokenInput: token,
                 issuedToken: '',
                 tokenLoading: false,
                 tokenError: '',
+                apiAuthenticationExpired: null,
                 loadGeneration: 0
             };
         },
@@ -250,9 +247,9 @@
                 const match = this.rootOptions.find(item => item.slug === this.rootSlug);
                 return match ? text(match.name || match.label).replace(` · ${match.slug}`, '') : (this.rootSlug === '/' ? '기본 공간' : this.rootSlug.split('/').pop());
             },
-            rootLabel() { return `${this.rootName} · ${this.rootSlug}`; },
             themePreference() { return document.documentElement.dataset.stashThemePreference || 'system'; },
-            canLogin() { return ['oauth', 'oidc'].includes(text(this.auth && this.auth.auth_mode)); },
+            canLogin() { return ['oauth', 'oidc', 'token'].includes(text(this.auth && this.auth.auth_mode)); },
+            usesApiToken() { return Boolean(text(api.token)); },
             rootGoal() {
                 const tree = this.map.goal_tree || {};
                 return (tree.goals || []).find(goal => number(goal.id) === number(tree.root_goal_id)) || null;
@@ -324,9 +321,14 @@
         },
         mounted() {
             window.addEventListener('popstate', this.handlePopState);
+            this.apiAuthenticationExpired = () => this.markAuthenticationExpired();
+            api.markAuthenticationExpired = this.apiAuthenticationExpired;
             this.bootstrap();
         },
-        beforeUnmount() { window.removeEventListener('popstate', this.handlePopState); },
+        beforeUnmount() {
+            window.removeEventListener('popstate', this.handlePopState);
+            if (api.markAuthenticationExpired === this.apiAuthenticationExpired) delete api.markAuthenticationExpired;
+        },
         methods: {
             statusLabel(value) { return statusNames[text(value)] || text(value) || '상태 없음'; },
             kindLabel(value) { return kindNames[value] || value || '객체'; },
@@ -463,10 +465,26 @@
                 return item.summary || item.description || item.verification_plan || item.value || item.property || item.uri || (this.listKind === 'resource' ? '' : item.slug) || '';
             },
             changeTheme(value) { try { localStorage.setItem('stash.theme', ['system', 'light', 'dark'].includes(value) ? value : 'system'); } catch (_) {} if (root.stashConsoleApplyTheme) root.stashConsoleApplyTheme(); },
-            useApiToken() { api.token = text(this.apiTokenInput); try { sessionStorage.setItem('stash.apiToken', api.token); } catch (_) {} this.authPanelOpen = false; this.loadRoute(); },
+            markAuthenticationExpired() {
+                api.token = '';
+                api.sessionId = '';
+                try { sessionStorage.removeItem('stash.apiToken'); } catch (_) {}
+                this.auth = { ...(this.auth || {}), authenticated: false, user: '' };
+                this.authPanelOpen = false;
+                this.issuedToken = '';
+                this.tokenError = '로그인이 만료되었습니다. 다시 로그인하세요.';
+            },
+            logout() {
+                api.token = '';
+                api.sessionId = '';
+                try { sessionStorage.removeItem('stash.apiToken'); } catch (_) {}
+                this.authPanelOpen = false;
+                this.issuedToken = '';
+                window.location.assign('/auth/logout');
+            },
             async issueToken() {
                 if (this.tokenLoading) return; this.tokenLoading = true; this.tokenError = '';
-                try { const response = await fetch('/auth/token', { method: 'POST', credentials: 'same-origin', headers: { Accept: 'application/json' } }); const body = await response.json().catch(() => ({})); if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`); this.issuedToken = text(body.token); this.apiTokenInput = this.issuedToken; this.useApiToken(); } catch (error) { this.tokenError = text(error && error.message) || '토큰을 발급하지 못했습니다.'; } finally { this.tokenLoading = false; }
+                try { const response = await fetch('/auth/token', { method: 'POST', credentials: 'same-origin', headers: { Accept: 'application/json' } }); const body = await response.json().catch(() => ({})); if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`); this.issuedToken = text(body.token); this.authPanelOpen = true; } catch (error) { this.tokenError = text(error && error.message) || '토큰을 발급하지 못했습니다.'; } finally { this.tokenLoading = false; }
             },
             async copyIssuedToken() { if (!this.issuedToken || !navigator.clipboard) return; try { await navigator.clipboard.writeText(this.issuedToken); } catch (_) {} }
         }

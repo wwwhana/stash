@@ -1,10 +1,10 @@
 # 웹 화면 구조
 
-기존 화면은 Alpine.js와 일반 JavaScript 모듈로 동작한다. 기능을 한 번에 갈아엎지 않고, 상태가 많은 화면부터 Vue 3 컴포넌트로 옮긴다.
+기존 화면은 Alpine.js와 일반 JavaScript 모듈로 동작했다. 현재 사용자가 여는 작업 화면은 Vue 3으로 통합되어 있으며, 기존 모듈은 기능을 옮기는 동안 유지한다.
 
 ## Vue 모니터
 
-Vue 3/Vite로 옮긴 작업 관제는 `/ui/monitor`에서 확인한다. 이전 Alpine 화면은 임시 점검용 `/ui/monitor-alpine`에 남겨 둔다.
+Vue 3/Vite로 옮긴 작업 관제는 `/ui/monitor`에서 확인한다. `/ui/monitor-vue`와 `/ui/monitor-alpine`은 기존 주소를 위한 호환 경로이며 같은 Vue 화면을 연다.
 
 ```bash
 cd webui-vue
@@ -18,7 +18,7 @@ npm run build
 http://127.0.0.1:8080/ui/monitor
 ```
 
-프로젝트·검색·상태·에이전트 필터와 선택 작업 상세는 URL 쿼리와 함께 유지된다. 테마는 `stash.theme` 설정과 시스템 색상 설정을 따른다. MCP는 Stash API 토큰을 사용하고, OIDC는 브라우저 로그인에만 쓴다.
+프로젝트·검색·상태·에이전트 필터와 선택 작업 상세는 URL 쿼리와 함께 유지된다. 테마는 `stash.theme` 설정과 시스템 색상 설정을 따른다. 원격 MCP는 OAuth 인증 코드로 발급한 리소스 전용 접근 토큰이나 Stash API 토큰을 사용하고, 화면은 브라우저 세션을 사용한다.
 
 ## 옮기는 순서
 

@@ -7,7 +7,7 @@ const template = `
       <div>
         <p class="vue-monitor-kicker">STASH / MONITOR</p>
         <h1>작업 관제</h1>
-        <p class="vue-monitor-subtitle">프로젝트의 작업과 에이전트 상태를 한 화면에서 확인합니다.</p>
+        <p class="vue-monitor-subtitle">작업과 에이전트 상태</p>
       </div>
       <div class="vue-monitor-header-actions">
         <a class="vue-monitor-login" href="/">전체 화면</a>

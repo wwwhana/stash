@@ -392,12 +392,33 @@ func (p *Provider) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *Provider) HandleLogin(w http.ResponseWriter, r *http.Request) {
+	if p == nil {
+		http.Error(w, "authentication is disabled", http.StatusNotFound)
+		return
+	}
+	if p.Mode() == "stdio" {
+		http.Error(w, "browser login is not available for STDIO authentication", http.StatusNotImplemented)
+		return
+	}
+	if r.Method == http.MethodPost {
+		p.handleTokenLogin(w, r)
+		return
+	}
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	if p == nil {
-		http.Error(w, "authentication is disabled", http.StatusNotFound)
+	if p.Mode() == "token" {
+		writeTokenLoginPage(w, false, false)
+		return
+	}
+	provider := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("provider")))
+	if provider != "" && provider != "oidc" && provider != "token" {
+		http.Error(w, "unsupported login provider", http.StatusBadRequest)
+		return
+	}
+	if provider == "token" || !p.browserLoginConfigured() {
+		writeTokenLoginPage(w, false, p.browserLoginConfigured())
 		return
 	}
 	if p.verifier == nil || p.oauth2Config.ClientID == "" {
@@ -413,6 +434,53 @@ func (p *Provider) HandleLogin(w http.ResponseWriter, r *http.Request) {
 
 	url := p.oauth2Config.AuthCodeURL(state, oauth2.SetAuthURLParam("nonce", nonce))
 	http.Redirect(w, r, url, http.StatusFound)
+}
+
+func (p *Provider) browserLoginConfigured() bool {
+	return p != nil && p.oauthMode() && p.verifier != nil && strings.TrimSpace(p.oauth2Config.ClientID) != ""
+}
+
+func (p *Provider) handleTokenLogin(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	if err := r.ParseForm(); err != nil {
+		writeTokenLoginPage(w, true, p.browserLoginConfigured())
+		return
+	}
+	rawToken := strings.TrimSpace(r.PostFormValue("token"))
+	subject, expiresAt, err := parseStashTokenClaims(rawToken, p.config.APISecret)
+	if err != nil {
+		writeTokenLoginPage(w, true, p.browserLoginConfigured())
+		return
+	}
+	p.setSessionCookie(w, subject, expiresAt)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func writeTokenLoginPage(w http.ResponseWriter, failed, oauthEnabled bool) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if failed {
+		w.WriteHeader(http.StatusUnauthorized)
+	}
+	message := "발급한 토큰으로 로그인하세요."
+	if failed {
+		message = "토큰이 올바르지 않거나 만료되었습니다."
+	}
+	_, _ = io.WriteString(w, `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Stash 로그인</title><style>
+:root{color-scheme:light dark;--bg:#eef2f7;--surface:#fff;--ink:#182235;--muted:#667085;--border:#d7dee8;--accent:#5b5bd6;--danger:#c83c56}*{box-sizing:border-box}body{min-height:100vh;margin:0;display:grid;place-items:center;padding:24px;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}@media(prefers-color-scheme:dark){:root{--bg:#0d131b;--surface:#151d27;--ink:#f4f7fb;--muted:#a8b5c7;--border:#2e3b4a;--accent:#a5b0ff;--danger:#ff8a9b}}main{width:min(420px,100%);padding:28px;border:1px solid var(--border);border-radius:16px;background:var(--surface);box-shadow:0 16px 40px #0002}h1{margin:0 0 6px;font-size:22px;letter-spacing:-.04em}p{margin:0 0 20px;color:var(--muted)}label{display:grid;gap:7px;font-weight:700}input{width:100%;min-height:42px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:transparent;color:var(--ink);font:inherit}input:focus{outline:3px solid color-mix(in srgb,var(--accent) 32%,transparent);border-color:var(--accent)}button{width:100%;min-height:42px;margin-top:14px;border:0;border-radius:10px;background:var(--accent);color:#fff;font:inherit;font-weight:800;cursor:pointer}.error{margin:-4px 0 14px;color:var(--danger);font-size:13px}a{display:block;margin-top:16px;color:var(--muted);text-align:center;text-decoration:none}
+</style></head><body><main><h1>Stash 로그인</h1><p>`+message+`</p>`)
+	_, _ = io.WriteString(w, `<form method="post" action="/auth/login"><label for="stash-token">토큰</label><input id="stash-token" name="token" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" required autofocus placeholder="stash_api_…">`)
+	if failed {
+		_, _ = io.WriteString(w, `<div class="error" role="alert">토큰을 확인하고 다시 시도하세요.</div>`)
+	}
+	_, _ = io.WriteString(w, `<button type="submit">토큰으로 로그인</button></form>`)
+	if oauthEnabled {
+		_, _ = io.WriteString(w, `<a href="/auth/login?provider=oidc">계정으로 로그인</a>`)
+	}
+	_, _ = io.WriteString(w, `<a href="/">돌아가기</a></main></body></html>`)
 }
 
 func (p *Provider) HandleCallback(w http.ResponseWriter, r *http.Request) {
@@ -1776,35 +1844,40 @@ func parseOAuthAccessToken(token, secret, expectedResource string) (string, erro
 }
 
 func parseStashToken(token, secret string) (string, error) {
+	user, _, err := parseStashTokenClaims(token, secret)
+	return user, err
+}
+
+func parseStashTokenClaims(token, secret string) (string, time.Time, error) {
 	if secret == "" {
-		return "", errors.New("API secret is not configured")
+		return "", time.Time{}, errors.New("API secret is not configured")
 	}
 	if !strings.HasPrefix(token, apiTokenPrefix) {
-		return "", errors.New("invalid API token prefix")
+		return "", time.Time{}, errors.New("invalid API token prefix")
 	}
 	parts := strings.Split(strings.TrimPrefix(token, apiTokenPrefix), ".")
 	if len(parts) != 4 {
-		return "", errors.New("invalid API token format")
+		return "", time.Time{}, errors.New("invalid API token format")
 	}
 	payload := strings.Join(parts[:3], ".")
 	expected, err := hex.DecodeString(sign(payload, secret))
 	if err != nil {
-		return "", errors.New("invalid API token signature")
+		return "", time.Time{}, errors.New("invalid API token signature")
 	}
 	provided, err := hex.DecodeString(parts[3])
 	if err != nil || subtle.ConstantTimeCompare(provided, expected) != 1 {
-		return "", errors.New("invalid API token signature")
+		return "", time.Time{}, errors.New("invalid API token signature")
 	}
 
 	decodedUser, err := base64.RawURLEncoding.DecodeString(parts[0])
 	if err != nil || len(decodedUser) == 0 {
-		return "", errors.New("invalid API token user")
+		return "", time.Time{}, errors.New("invalid API token user")
 	}
-	expiresAt, err := strconv.ParseInt(parts[1], 10, 64)
-	if err != nil || expiresAt <= time.Now().Unix() {
-		return "", errors.New("API token expired")
+	expiresUnix, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil || expiresUnix <= time.Now().Unix() {
+		return "", time.Time{}, errors.New("API token expired")
 	}
-	return string(decodedUser), nil
+	return string(decodedUser), time.Unix(expiresUnix, 0), nil
 }
 
 func sign(payload, secret string) string {

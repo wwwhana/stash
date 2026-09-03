@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alash3al/stash/internal/auth"
 	"github.com/alash3al/stash/internal/bootstrap"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -71,6 +72,54 @@ func TestStashSkillsStreamableHTTPEndToEnd(t *testing.T) {
 	}](t, readResponse)
 	if len(read.Contents) != 1 || read.Contents[0].URI != stashWorkSkillURI || read.Contents[0].MIMEType != "text/markdown" || !strings.Contains(read.Contents[0].Text, "name: stash-work") {
 		t.Fatalf("resources/read result = %#v", read)
+	}
+}
+
+func TestStashSkillsHTTPTransportAnswersHeadProbe(t *testing.T) {
+	handler := newStashHTTPHandler(&bootstrap.Context{})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodHead, "/mcp", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("HEAD /mcp status = %d, want %d", response.Code, http.StatusOK)
+	}
+	if response.Body.Len() != 0 {
+		t.Fatalf("HEAD /mcp body = %q, want empty", response.Body.String())
+	}
+	if got := response.Header().Get("Allow"); got != "GET, POST, DELETE" {
+		t.Fatalf("HEAD /mcp Allow = %q", got)
+	}
+	if got := response.Header().Get("Content-Type"); got != "text/event-stream" {
+		t.Fatalf("HEAD /mcp Content-Type = %q", got)
+	}
+}
+
+func TestStashSkillsHTTPTransportAnswersHeaderlessGetProbe(t *testing.T) {
+	handler := newStashHTTPHandler(&bootstrap.Context{})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/mcp", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("GET /mcp probe status = %d, want %d", response.Code, http.StatusOK)
+	}
+	if response.Body.Len() != 0 {
+		t.Fatalf("GET /mcp probe body = %q, want empty", response.Body.String())
+	}
+	if got := response.Header().Get("Content-Type"); got != "text/event-stream" {
+		t.Fatalf("GET /mcp probe Content-Type = %q", got)
+	}
+}
+
+func TestStashSkillsHTTPTransportKeepsProbesBehindAuthentication(t *testing.T) {
+	provider, err := auth.Init(context.Background(), auth.Config{Mode: "token", APISecret: "test-secret"})
+	if err != nil {
+		t.Fatalf("init token auth: %v", err)
+	}
+	handler := newStashHTTPHandler(&bootstrap.Context{Auth: provider})
+	for _, method := range []string{http.MethodHead, http.MethodGet} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(method, "/mcp", nil))
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("%s /mcp probe status = %d, want %d", method, response.Code, http.StatusUnauthorized)
+		}
 	}
 }
 

@@ -85,6 +85,82 @@ func TestTokenEndpointRequiresPost(t *testing.T) {
 	}
 }
 
+func TestTokenLoginSetsSessionCookie(t *testing.T) {
+	p := &Provider{config: Config{Mode: "token", APISecret: "test-secret"}}
+	token, err := GenerateAPIToken("subject-1", "test-secret", time.Hour)
+	if err != nil {
+		t.Fatalf("generate API token: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(url.Values{"token": {token}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	p.HandleLogin(rec, req)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
+		t.Fatalf("token login status=%d location=%q body=%s", rec.Code, rec.Header().Get("Location"), rec.Body.String())
+	}
+	setCookie := rec.Result().Cookies()
+	if len(setCookie) != 1 || setCookie[0].Name != sessionCookieName || setCookie[0].Value == "" {
+		t.Fatalf("token login cookies = %#v", setCookie)
+	}
+	verify := httptest.NewRequest(http.MethodGet, "/", nil)
+	verify.AddCookie(setCookie[0])
+	if user, err := p.VerifyRequest(verify); err != nil || user != "subject-1" {
+		t.Fatalf("token login session = %q, %v", user, err)
+	}
+
+	queryToken := httptest.NewRecorder()
+	queryRequest := httptest.NewRequest(http.MethodPost, "/auth/login?token="+url.QueryEscape(token), strings.NewReader(""))
+	queryRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	p.HandleLogin(queryToken, queryRequest)
+	if queryToken.Code != http.StatusUnauthorized || len(queryToken.Result().Cookies()) != 0 {
+		t.Fatalf("query token login status=%d cookies=%#v", queryToken.Code, queryToken.Result().Cookies())
+	}
+}
+
+func TestTokenLoginRejectsInvalidTokenAndRendersForm(t *testing.T) {
+	p := &Provider{config: Config{Mode: "token", APISecret: "test-secret"}}
+	get := httptest.NewRecorder()
+	p.HandleLogin(get, httptest.NewRequest(http.MethodGet, "/auth/login", nil))
+	if get.Code != http.StatusOK || !strings.Contains(get.Body.String(), `name="token"`) {
+		t.Fatalf("token login page status=%d body=%s", get.Code, get.Body.String())
+	}
+
+	post := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader("token=not-a-token"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	p.HandleLogin(post, req)
+	if post.Code != http.StatusUnauthorized || !strings.Contains(post.Body.String(), "토큰을 확인하고 다시 시도하세요") {
+		t.Fatalf("invalid token login status=%d body=%s", post.Code, post.Body.String())
+	}
+	if len(post.Result().Cookies()) != 0 {
+		t.Fatalf("invalid token login set cookies: %#v", post.Result().Cookies())
+	}
+}
+
+func TestOAuthLoginDefaultsToBrowserRedirect(t *testing.T) {
+	p := newLocalOAuthProvider()
+	p.oauth2Config.Endpoint.AuthURL = "https://auth.example.com/application/o/authorize/"
+	rec := httptest.NewRecorder()
+	p.HandleLogin(rec, httptest.NewRequest(http.MethodGet, "/auth/login", nil))
+	if rec.Code != http.StatusFound {
+		t.Fatalf("OAuth login status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	location := rec.Header().Get("Location")
+	if !strings.HasPrefix(location, p.oauth2Config.Endpoint.AuthURL) || !strings.Contains(location, "client_id=authentik-stash") || !strings.Contains(location, "state=") {
+		t.Fatalf("OAuth login location = %q", location)
+	}
+}
+
+func TestOAuthLoginCanUseTokenFormExplicitly(t *testing.T) {
+	p := newLocalOAuthProvider()
+	p.oauth2Config.Endpoint.AuthURL = "https://auth.example.com/application/o/authorize/"
+	rec := httptest.NewRecorder()
+	p.HandleLogin(rec, httptest.NewRequest(http.MethodGet, "/auth/login?provider=token", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `name="token"`) || !strings.Contains(rec.Body.String(), `provider=oidc`) {
+		t.Fatalf("explicit token login status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestHandleGenerateTokenReportsBearerExpiry(t *testing.T) {
 	p := &Provider{config: Config{APISecret: "test-secret", APITokenTTL: 2 * time.Hour}}
 	session, err := generateSessionToken("subject-1", "test-secret", time.Now().Add(time.Hour))

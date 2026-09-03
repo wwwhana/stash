@@ -1,4 +1,4 @@
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { createMcpClient, pageItems } from './mcp-client.js';
 
 const statusLabels = {
@@ -50,7 +50,6 @@ export function createMonitorViewModel(options = {}) {
   const windowRef = options.window || window;
   const fetchImpl = options.fetch || windowRef.fetch.bind(windowRef);
   const historyRef = options.history || windowRef.history;
-  const client = options.client || createMcpClient(fetchImpl);
   const route = readRoute(windowRef.location);
   const projects = ref([]);
   const project = ref(route.project);
@@ -63,6 +62,11 @@ export function createMonitorViewModel(options = {}) {
   const loading = ref(false);
   const error = ref('');
   const auth = ref({ auth_mode: 'none', authenticated: false, user: '' });
+  const onAuthenticationExpired = () => {
+    auth.value = { ...auth.value, authenticated: false, user: '' };
+  };
+  const client = options.client || createMcpClient(fetchImpl, { onAuthenticationExpired });
+  if (typeof client.setAuthenticationExpiredHandler === 'function') client.setAuthenticationExpiredHandler(onAuthenticationExpired);
 
   const allItems = computed(() => {
     const source = [...(map.value.work_items || []), ...(map.value.unassigned_work || [])];
@@ -144,9 +148,11 @@ export function createMonitorViewModel(options = {}) {
     }
   }
   function changeProject() { focus.value = ''; load(); }
+  function handlePopState() { load(); }
 
   watch([query, status, agent], () => syncRoute(routeState(), historyRef, windowRef.location));
-  onMounted(() => { load(); windowRef.addEventListener('popstate', load); });
+  onMounted(() => { load(); windowRef.addEventListener('popstate', handlePopState); });
+  onUnmounted(() => windowRef.removeEventListener('popstate', handlePopState));
 
   return {
     projects, project, query, status, agent, map, selected, loading, error, auth,

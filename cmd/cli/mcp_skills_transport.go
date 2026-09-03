@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -53,10 +54,10 @@ func (w *noStoreResponseWriter) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter
 }
 
-// stashSkillsHTTPTransport handles only the SEP-2640 request methods that
-// mcp-go v0.49.0 cannot register. Every other request is restored byte-for-byte
-// and passed to Streamable HTTP so its session, notification, batch, and SSE
-// behavior stays authoritative.
+// stashSkillsHTTPTransport handles the SEP-2640 methods that mcp-go v0.49.0
+// cannot register and a harmless HEAD probe. Every other request is restored
+// byte-for-byte and passed to Streamable HTTP so its session, notification,
+// batch, and SSE behavior stays authoritative.
 type stashSkillsHTTPTransport struct {
 	next            http.Handler
 	sessionResolver server.SessionIdManagerResolver
@@ -80,6 +81,24 @@ func newStashSkillsHTTPTransport(next http.Handler, sessionResolver server.Sessi
 func (t *stashSkillsHTTPTransport) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w = &noStoreResponseWriter{ResponseWriter: w}
 	r = r.WithContext(withStashSkillsTransport(r.Context()))
+	if r.Method == http.MethodHead {
+		// Keep the endpoint discoverable to HTTP probes without opening an SSE
+		// stream or exposing any MCP data.
+		w.Header().Set("Allow", "GET, POST, DELETE")
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if r.Method == http.MethodGet && r.Header.Get(server.HeaderKeySessionID) == "" &&
+		!strings.Contains(strings.ToLower(r.Header.Get("Accept")), "text/event-stream") {
+		// A headerless GET is the lightweight probe used by local MCP clients.
+		// A real stream always advertises text/event-stream and still reaches
+		// mcp-go unchanged.
+		w.Header().Set("Allow", "GET, POST, DELETE")
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	if r.Method != http.MethodPost {
 		t.next.ServeHTTP(w, r)
 		return

@@ -5,6 +5,55 @@
 }(typeof globalThis !== 'undefined' ? globalThis : this, function () {
     'use strict';
 
+    function parseSSEEvent(event) {
+        const data = event.split(/\r?\n/)
+            .filter(line => line.startsWith('data:'))
+            .map(line => line.slice(5).replace(/^ /, ''))
+            .join('\n')
+            .trim();
+        if (!data || data === '[DONE]') return null;
+        return JSON.parse(data);
+    }
+
+    function parseSSEText(text) {
+        for (const event of String(text || '').split(/\r\n\r\n|\n\n|\r\r/)) {
+            const parsed = parseSSEEvent(event);
+            if (parsed !== null) return parsed;
+        }
+        throw new Error('MCP SSE 응답이 비어 있습니다.');
+    }
+
+    async function readMCPResponse(response) {
+        const contentType = (response.headers.get('content-type') || '').toLowerCase();
+        if (!contentType.includes('text/event-stream')) return response.json();
+
+        const reader = response.body && typeof response.body.getReader === 'function' ? response.body.getReader() : null;
+        if (!reader) return parseSSEText(await response.text());
+
+        const decoder = new TextDecoder();
+        let buffer = '';
+        try {
+            while (true) {
+                const chunk = await reader.read();
+                buffer += decoder.decode(chunk.value || new Uint8Array(), { stream: !chunk.done });
+                let boundary;
+                while ((boundary = /\r\n\r\n|\n\n|\r\r/.exec(buffer)) !== null) {
+                    const event = buffer.slice(0, boundary.index);
+                    buffer = buffer.slice(boundary.index + boundary[0].length);
+                    const parsed = parseSSEEvent(event);
+                    if (parsed !== null) {
+                        try { await reader.cancel(); } catch (_) { /* the response may already be closed */ }
+                        return parsed;
+                    }
+                }
+                if (chunk.done) break;
+            }
+            return parseSSEText(buffer);
+        } finally {
+            if (typeof reader.releaseLock === 'function') reader.releaseLock();
+        }
+    }
+
     function createApiClient() {
         return {
             adminHeaders() {
@@ -129,7 +178,7 @@
                 if (notification || !returnResponse) {
                     return null;
                 }
-                return res.json();
+                return readMCPResponse(res);
             }
         };
     }
