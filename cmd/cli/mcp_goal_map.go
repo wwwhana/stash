@@ -10,6 +10,7 @@ import (
 )
 
 func registerGoalMapTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
+	registerMemoryDetailTool(mcpServer, bc)
 	mcpServer.AddTool(mcp.NewTool("set_project_goal",
 		mcp.WithDescription("Select one active top-level goal as the shared project outcome. Its child goals form the outcome tree seen by every agent."),
 		mcp.WithNumber("goal_id", mcp.Required()),
@@ -45,6 +46,10 @@ func registerGoalMapTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 	mcpServer.AddTool(mcp.NewTool("get_goal_map",
 		mcp.WithDescription("Owner-facing overview of shared goals, work, linked resources, memory, agents, blockers, and results. Worker agents should use resume_project and resume_work instead."),
 		mcp.WithString("namespace", mcp.Description("Exact project namespace path")),
+		mcp.WithBoolean("paged", mcp.Description("Return a bounded page for interactive clients")),
+		mcp.WithNumber("offset", mcp.DefaultNumber(0)),
+		mcp.WithNumber("limit", mcp.DefaultNumber(100)),
+		mcp.WithString("snapshot", mcp.Description("Snapshot from the previous page; restart if it changes")),
 		mcp.WithBoolean("include_done", mcp.Description("Include completed and canceled work cards"), mcp.DefaultBool(true)),
 		mcp.WithReadOnlyHintAnnotation(true),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -55,6 +60,9 @@ func registerGoalMapTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 		goalMap, err := bc.Brain.GetGoalMap(ctx, namespaceID, request.GetBool("include_done", true))
 		if err != nil {
 			return nil, err
+		}
+		if request.GetBool("paged", false) || request.GetInt("offset", 0) > 0 {
+			return goalMapPageResult(bc, goalMap, request.GetInt("offset", 0), request.GetInt("limit", 100), request.GetString("snapshot", ""))
 		}
 		return jsonToolResult(bc, goalMap)
 	})

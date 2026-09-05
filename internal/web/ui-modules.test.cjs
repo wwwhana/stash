@@ -25,6 +25,7 @@ test('the HTML loads every view-model before Alpine starts', () => {
         '/search-utils.js',
         '/work-graph-layout.js',
         '/goal-map-layout.js',
+        '/console-i18n.js',
         '/route-state.js',
         '/state-store.js',
         '/theme-view-model.js',

@@ -180,7 +180,7 @@ func TestGoalMapWorkCompletionRollsIntoProjectGoalPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetGoalMap: %v", err)
 	}
-	if len(goalMap.GoalTree.Goals) != 3 || len(goalMap.WorkItems) != 2 {
+	if len(goalMap.GoalTree.Goals) != 4 || len(goalMap.WorkItems) != 2 {
 		t.Fatalf("goal map counts = goals:%d work:%d", len(goalMap.GoalTree.Goals), len(goalMap.WorkItems))
 	}
 	seen := map[int64]string{}

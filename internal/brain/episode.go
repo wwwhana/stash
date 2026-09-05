@@ -308,16 +308,20 @@ func (b *Brain) RestoreEpisode(ctx context.Context, episodeID int64) error {
 // GetEpisode returns a single episode by ID.
 func (b *Brain) GetEpisode(ctx context.Context, episodeID int64) (*models.Episode, error) {
 	var e models.Episode
+	var embedding *pgvector.Vector
 	err := b.pool.QueryRow(ctx,
-		`SELECT id, namespace_id, content, embedding, embedding_model, occurred_at, created_at, deleted_at
+		`SELECT id, namespace_id, content, embedding, COALESCE(embedding_model, ''), occurred_at, created_at, deleted_at
 		 FROM episodes WHERE id = $1 AND deleted_at IS NULL`,
 		episodeID,
-	).Scan(&e.ID, &e.NamespaceID, &e.Content, &e.Embedding, &e.EmbeddingModel, &e.OccurredAt, &e.CreatedAt, &e.DeletedAt)
+	).Scan(&e.ID, &e.NamespaceID, &e.Content, &embedding, &e.EmbeddingModel, &e.OccurredAt, &e.CreatedAt, &e.DeletedAt)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, ErrEpisodeNotFound
 		}
 		return nil, fmt.Errorf("get episode: %w", err)
+	}
+	if embedding != nil {
+		e.Embedding = *embedding
 	}
 	return &e, nil
 }

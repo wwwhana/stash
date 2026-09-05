@@ -107,6 +107,7 @@ type WorktreeLink struct {
 // WorkMemorySnapshot carries the bounded content needed to resume linked
 // memory without requiring a second, potentially unauthorized ID lookup.
 type WorkMemorySnapshot struct {
+	Derived          bool      `json:"derived,omitempty"`
 	WorkItemID       int64     `json:"work_item_id"`
 	MemoryType       string    `json:"memory_type"`
 	MemoryID         int64     `json:"memory_id"`

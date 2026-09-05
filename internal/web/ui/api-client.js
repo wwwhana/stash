@@ -101,6 +101,10 @@
             },
 
             toolValue(data) {
+                if (data && data.error) throw new Error(data.error.message || '요청을 처리하지 못했습니다.');
+                if (data && data.result && data.result.isError) {
+                    throw new Error((data.result.content || []).filter(item => item.type === 'text').map(item => item.text).join('\n') || '요청을 처리하지 못했습니다.');
+                }
                 if (data && data.result && data.result.content && data.result.content.length > 0) {
                     try {
                         return JSON.parse(data.result.content[0].text);

@@ -1,6 +1,8 @@
 (function (root) {
     'use strict';
 
+    if (root.StashI18n) document.documentElement.lang = root.StashI18n.detectLocale(root);
+
     root.process = root.process || { env: { NODE_ENV: 'production' } };
 
     const applyTheme = () => {

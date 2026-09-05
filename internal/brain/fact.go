@@ -8,6 +8,7 @@ import (
 	"github.com/alash3al/stash/internal/models"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/pgvector/pgvector-go"
 )
 
 // QueryFacts returns facts across namespaces matching the given slug paths, within an optional time range.
@@ -26,7 +27,7 @@ func (b *Brain) QueryFactsFiltered(ctx context.Context, namespaceSlugs []string,
 
 	page = b.sanitizePage(page)
 
-	query := `SELECT id, namespace_id, content, embedding, embedding_model, confidence,
+	query := `SELECT id, namespace_id, content, embedding, COALESCE(embedding_model, ''), confidence,
 	          entity, property, value, valid_from, valid_until, created_at, updated_at, deleted_at
 	          FROM facts WHERE namespace_id = ANY($1) AND deleted_at IS NULL AND valid_until IS NULL`
 	args := []any{nsIDs}
@@ -66,13 +67,17 @@ func (b *Brain) QueryFactsFiltered(ctx context.Context, namespaceSlugs []string,
 	var facts []models.Fact
 	for rows.Next() {
 		var f models.Fact
+		var embedding *pgvector.Vector
 		if err := rows.Scan(
-			&f.ID, &f.NamespaceID, &f.Content, &f.Embedding, &f.EmbeddingModel,
+			&f.ID, &f.NamespaceID, &f.Content, &embedding, &f.EmbeddingModel,
 			&f.Confidence, &f.Entity, &f.Property, &f.Value,
 			&f.ValidFrom, &f.ValidUntil,
 			&f.CreatedAt, &f.UpdatedAt, &f.DeletedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan fact: %w", err)
+		}
+		if embedding != nil {
+			f.Embedding = *embedding
 		}
 		facts = append(facts, f)
 	}
@@ -143,13 +148,14 @@ func (b *Brain) RestoreFact(ctx context.Context, factID int64) error {
 // GetFact returns a single fact by ID.
 func (b *Brain) GetFact(ctx context.Context, factID int64) (*models.Fact, error) {
 	var f models.Fact
+	var embedding *pgvector.Vector
 	err := b.pool.QueryRow(ctx,
-		`SELECT id, namespace_id, content, embedding, embedding_model, confidence,
+		`SELECT id, namespace_id, content, embedding, COALESCE(embedding_model, ''), confidence,
 			 entity, property, value, valid_from, valid_until, created_at, updated_at, deleted_at
 			 FROM facts WHERE id = $1 AND deleted_at IS NULL AND valid_until IS NULL`,
 		factID,
 	).Scan(
-		&f.ID, &f.NamespaceID, &f.Content, &f.Embedding, &f.EmbeddingModel,
+		&f.ID, &f.NamespaceID, &f.Content, &embedding, &f.EmbeddingModel,
 		&f.Confidence, &f.Entity, &f.Property, &f.Value,
 		&f.ValidFrom, &f.ValidUntil,
 		&f.CreatedAt, &f.UpdatedAt, &f.DeletedAt,
@@ -159,6 +165,9 @@ func (b *Brain) GetFact(ctx context.Context, factID int64) (*models.Fact, error)
 			return nil, ErrFactNotFound
 		}
 		return nil, fmt.Errorf("get fact: %w", err)
+	}
+	if embedding != nil {
+		f.Embedding = *embedding
 	}
 	return &f, nil
 }

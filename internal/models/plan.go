@@ -36,11 +36,24 @@ type WorkPlanExecutionContext struct {
 // session. The WorkItem issue key is the stable component identifier.
 type WorkPlanComponent struct {
 	WorkItem
-	TechnicalDetails string              `db:"technical_details" json:"technical_details"`
-	OwnedPaths       []string            `db:"owned_paths" json:"owned_paths"`
-	Tasks            []WorkPlanTask      `json:"tasks"`
-	Needs            []WorkPlanReference `json:"needs"`
-	Links            []WorkPlanReference `json:"links"`
+	ExecutionProgress *WorkProgress       `json:"execution_progress,omitempty"`
+	TechnicalDetails  string              `db:"technical_details" json:"technical_details"`
+	OwnedPaths        []string            `db:"owned_paths" json:"owned_paths"`
+	Tasks             []WorkPlanTask      `json:"tasks"`
+	Needs             []WorkPlanReference `json:"needs"`
+	Links             []WorkPlanReference `json:"links"`
+}
+
+// WorkProgress describes execution only. Goal completion keeps its existing
+// evidence and contributor checks.
+type WorkProgress struct {
+	Total    int     `json:"total"`
+	Done     int     `json:"done"`
+	Canceled int     `json:"canceled"`
+	Blocked  int     `json:"blocked"`
+	Active   int     `json:"active"`
+	Progress float64 `json:"progress"`
+	Status   string  `json:"status"`
 }
 
 // WorkPlanDecision records a decision that changes the plan before work starts.

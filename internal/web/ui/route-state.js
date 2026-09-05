@@ -1,8 +1,8 @@
 (function (root, factory) {
-    const api = factory();
+    const api = factory(typeof module === 'object' && module.exports ? require('./console-i18n.js') : root.StashI18n);
     if (typeof module === 'object' && module.exports) module.exports = api;
     else root.StashRouteState = api;
-}(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+}(typeof globalThis !== 'undefined' ? globalThis : this, function (i18n) {
     'use strict';
 
     const routePaths = Object.freeze({
@@ -13,6 +13,7 @@
         graph: '/ui/work-graph',
         worktrees: '/ui/git',
         list_namespaces: '/ui/namespaces',
+        list_memories: '/ui/memories',
         query_facts: '/ui/facts',
         list_hypotheses: '/ui/hypotheses',
         list_goals: '/ui/goals',
@@ -20,18 +21,19 @@
         maintenance: '/ui/maintenance'
     });
     const routeTitles = Object.freeze({
-        'goal-map': '목표·지식 지도',
-        plan: '작업 계획',
-        monitor: '작업 관제',
-        board: '이슈 보드',
-        graph: '작업 흐름',
-        worktrees: 'Git 연결',
-        list_namespaces: '네임스페이스',
-        query_facts: '사실',
-        list_hypotheses: '가설',
-        list_goals: '목표',
-        agent: '에이전트 규칙',
-        maintenance: '임베딩 관리'
+        'goal-map': 'nav.overview',
+        plan: 'nav.plan',
+        monitor: 'nav.monitor',
+        board: 'nav.board',
+        graph: 'nav.graph',
+        worktrees: 'nav.git',
+        list_namespaces: 'nav.workspaces',
+        list_memories: 'nav.memories',
+        query_facts: 'nav.facts',
+        list_hypotheses: 'nav.hypotheses',
+        list_goals: 'nav.goals',
+        agent: 'nav.agent',
+        maintenance: 'nav.maintenance'
     });
     const pathRoutes = new Map(Object.entries(routePaths).map(([route, path]) => [path, route]));
     const compatibilityPaths = new Set(['/ui/monitor-vue', '/ui/monitor-alpine']);
@@ -125,6 +127,7 @@
             if (value.detail) params.set('detail', '1');
         } else if (selected === 'monitor') {
             setText(params, 'project', value.project);
+            if (!value.project) setNamespace(params, value.namespace);
             setText(params, 'q', value.query);
             setText(params, 'status', value.status);
             setText(params, 'agent', value.agent);
@@ -140,16 +143,25 @@
             setText(params, 'focus', value.focus);
             if (value.detail) params.set('detail', '1');
         } else if (selected === 'worktrees') {
+            setNamespace(params, value.namespace);
+            setText(params, 'q', value.query);
             setOffset(params, value.offset);
-        } else if (['query_facts', 'list_hypotheses', 'list_goals'].includes(selected)) {
+            setText(params, 'focus', value.focus);
+            if (value.detail) params.set('detail', '1');
+        } else if (['list_memories', 'query_facts', 'list_hypotheses', 'list_goals'].includes(selected)) {
             setNamespace(params, value.namespace);
             setText(params, 'q', value.query);
             setText(params, 'status', value.status);
             setOffset(params, value.offset);
             setText(params, 'focus', value.focus);
             if (value.detail) params.set('detail', '1');
+            if (selected === 'list_memories') setText(params, 'memory', value.memoryType);
         } else if (selected === 'list_namespaces') {
+            setNamespace(params, value.namespace);
+            setText(params, 'q', value.query);
             setOffset(params, value.offset);
+            setText(params, 'focus', value.focus);
+            if (value.detail) params.set('detail', '1');
         }
         if (['goal-map', 'monitor', 'graph', 'board'].includes(selected)) {
             const issueID = positiveInteger(value.issueID);
@@ -159,8 +171,8 @@
         return routePaths[selected] + (query ? '?' + query : '');
     }
 
-    function routeTitle(route) {
-        return routeTitles[route] || routeTitles['goal-map'];
+    function routeTitle(route, locale = 'ko') {
+        return i18n.translate(locale, routeTitles[route] || routeTitles['goal-map']);
     }
 
     return { routePaths, readRoute, buildRoute, routeTitle };

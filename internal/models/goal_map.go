@@ -47,15 +47,16 @@ type GoalMapMemory struct {
 // GoalMapWork adds the small live execution summary needed by the owner-facing
 // map. Full attempt history remains available from resume_work.
 type GoalMapWork struct {
-	ID       int64   `json:"id"`
-	GoalID   *int64  `json:"goal_id,omitempty"`
-	ParentID *int64  `json:"parent_id,omitempty"`
-	IssueKey string  `json:"issue_key"`
-	Title    string  `json:"title"`
-	Status   string  `json:"status"`
-	Priority int     `json:"priority"`
-	Position float64 `json:"position"`
-	Owner    string  `json:"owner,omitempty"`
+	ExecutionProgress *WorkProgress `json:"execution_progress,omitempty"`
+	ID                int64         `json:"id"`
+	GoalID            *int64        `json:"goal_id,omitempty"`
+	ParentID          *int64        `json:"parent_id,omitempty"`
+	IssueKey          string        `json:"issue_key"`
+	Title             string        `json:"title"`
+	Status            string        `json:"status"`
+	Priority          int           `json:"priority"`
+	Position          float64       `json:"position"`
+	Owner             string        `json:"owner,omitempty"`
 
 	AgentID              string     `json:"agent_id,omitempty"`
 	AttemptStatus        string     `json:"attempt_status,omitempty"`
@@ -106,6 +107,7 @@ type GoalMapTree struct {
 
 // GoalMapEdge is a typed relation between memory, work, and goal nodes.
 type GoalMapEdge struct {
+	Derived  bool   `json:"derived,omitempty"`
 	Key      string `json:"key"`
 	From     string `json:"from"`
 	To       string `json:"to"`

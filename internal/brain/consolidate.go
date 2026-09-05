@@ -230,7 +230,7 @@ func (b *Brain) countPendingConsolidationStageInputs(ctx context.Context, nsID i
 			(SELECT count(*) FROM facts, progress
 			 WHERE facts.namespace_id = $1 AND facts.deleted_at IS NULL AND facts.valid_until IS NULL
 			   AND facts.id > progress.last_hypothesis_fact_id)
-	`).Scan(&pending)
+	`, nsID).Scan(&pending)
 	if err != nil {
 		return 0, err
 	}

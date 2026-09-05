@@ -21,8 +21,6 @@ var (
 )
 
 const goalMapMemoryContentLimit = 256
-const goalMapRootCandidateLimit = 20
-const goalMapResourceLimit = 200
 
 const (
 	goalBriefContentLimit = 512
@@ -179,8 +177,13 @@ func (b *Brain) GetProjectGoalTree(ctx context.Context, namespaceID int64) (*mod
 	if err != nil {
 		return nil, err
 	}
+	return b.getGoalTree(ctx, namespaceID, rootID, false)
+}
+
+// The owner can browse independent outcomes without selecting a shared root.
+func (b *Brain) getGoalTree(ctx context.Context, namespaceID int64, rootID *int64, includeIndependent bool) (*models.GoalTree, error) {
 	tree := &models.GoalTree{RootGoalID: rootID, Goals: make([]models.GoalProgress, 0)}
-	if rootID == nil {
+	if rootID == nil && !includeIndependent {
 		return tree, nil
 	}
 
@@ -191,7 +194,7 @@ func (b *Brain) GetProjectGoalTree(ctx context.Context, namespaceID int64) (*mod
 		           goal.created_at, goal.updated_at, goal.deleted_at,
 		           0 AS depth, ARRAY[goal.id]::bigint[] AS path
 		    FROM goals goal
-		    WHERE goal.id = $1 AND goal.namespace_id = $2 AND goal.deleted_at IS NULL
+		    WHERE (goal.id = $1 OR ($3 AND goal.parent_id IS NULL)) AND goal.namespace_id = $2 AND goal.deleted_at IS NULL
 		    UNION ALL
 		    SELECT child.id, child.namespace_id, child.parent_id, child.content, child.status,
 		           child.priority, child.notes, child.completed_at, child.abandoned_at,
@@ -206,7 +209,7 @@ func (b *Brain) GetProjectGoalTree(ctx context.Context, namespaceID int64) (*mod
 		       completed_at, abandoned_at, created_at, updated_at, deleted_at, depth, path
 		FROM goal_tree
 		ORDER BY depth, priority DESC, id`,
-		*rootID, namespaceID,
+		rootID, namespaceID, includeIndependent,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("read project goal tree: %w", err)
@@ -226,7 +229,7 @@ func (b *Brain) GetProjectGoalTree(ctx context.Context, namespaceID int64) (*mod
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("read project goal tree rows: %w", err)
 	}
-	if len(tree.Goals) == 0 {
+	if len(tree.Goals) == 0 && rootID != nil {
 		return nil, ErrProjectGoalNotSet
 	}
 
@@ -557,7 +560,11 @@ func goalMapEdgeDirection(ownerKey, memoryKey, relation string) (string, string)
 // one project namespace. Progress always includes completed work even when the
 // caller hides completed work cards.
 func (b *Brain) GetGoalMap(ctx context.Context, namespaceID int64, includeDone bool) (*models.GoalMap, error) {
-	tree, err := b.GetProjectGoalTree(ctx, namespaceID)
+	rootID, err := b.ProjectGoalRootID(ctx, namespaceID)
+	if err != nil {
+		return nil, err
+	}
+	tree, err := b.getGoalTree(ctx, namespaceID, rootID, true)
 	if err != nil {
 		return nil, err
 	}
@@ -575,8 +582,7 @@ func (b *Brain) GetGoalMap(ctx context.Context, namespaceID int64, includeDone b
 			`SELECT `+goalColumns+`
 			 FROM goals
 			 WHERE namespace_id = $1 AND parent_id IS NULL AND status = 'active' AND deleted_at IS NULL
-			 ORDER BY priority DESC, created_at, id
-			 LIMIT $2`, namespaceID, goalMapRootCandidateLimit+1,
+			 ORDER BY priority DESC, created_at, id`, namespaceID,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("list project goal candidates: %w", err)
@@ -586,10 +592,7 @@ func (b *Brain) GetGoalMap(ctx context.Context, namespaceID int64, includeDone b
 		if err != nil {
 			return nil, fmt.Errorf("scan project goal candidates: %w", err)
 		}
-		if len(candidates) > goalMapRootCandidateLimit {
-			candidates = candidates[:goalMapRootCandidateLimit]
-			result.RootCandidatesTruncated = true
-		}
+
 		for _, goal := range candidates {
 			result.RootCandidates = append(result.RootCandidates, compactGoalBrief(models.GoalProgress{Goal: goal}))
 		}
@@ -629,10 +632,18 @@ func (b *Brain) GetGoalMap(ctx context.Context, namespaceID int64, includeDone b
 	if err != nil {
 		return nil, err
 	}
+	progressByID, err := b.componentProgress(ctx, namespaceID)
+	if err != nil {
+		return nil, err
+	}
 	monitorByID := make(map[int64]models.GoalMapWork, len(items))
 	itemIDs := make([]int64, 0, len(items))
 	for _, item := range items {
-		monitorByID[item.ID] = compactGoalMapWork(item)
+		entry := compactGoalMapWork(item)
+		if progress, ok := progressByID[item.ID]; ok {
+			entry.ExecutionProgress = &progress
+		}
+		monitorByID[item.ID] = entry
 		itemIDs = append(itemIDs, item.ID)
 	}
 	if len(itemIDs) > 0 {
@@ -689,6 +700,7 @@ func (b *Brain) GetGoalMap(ctx context.Context, namespaceID int64, includeDone b
 	workSet := make(map[int64]struct{}, len(items))
 	for _, item := range items {
 		monitored := monitorByID[item.ID]
+		workSet[item.ID] = struct{}{}
 		if item.GoalID == nil {
 			result.UnassignedWork = append(result.UnassignedWork, monitored)
 			continue
@@ -698,13 +710,12 @@ func (b *Brain) GetGoalMap(ctx context.Context, namespaceID int64, includeDone b
 			continue
 		}
 		result.WorkItems = append(result.WorkItems, monitored)
-		workSet[item.ID] = struct{}{}
 		result.Edges = append(result.Edges, models.GoalMapEdge{
 			Key: goalMapNodeKey("work-goal", item.ID), From: goalMapNodeKey("work", item.ID),
 			To: goalMapNodeKey("goal", *item.GoalID), Relation: "contributes_to",
 		})
 	}
-	for _, item := range result.WorkItems {
+	for _, item := range append(append([]models.GoalMapWork{}, result.WorkItems...), result.UnassignedWork...) {
 		if item.ParentID == nil {
 			continue
 		}
@@ -765,8 +776,8 @@ func (b *Brain) GetGoalMap(ctx context.Context, namespaceID int64, includeDone b
 			 JOIN work_resources resource ON resource.id = linked.resource_id
 			 WHERE linked.work_item_id = ANY($1) AND linked.namespace_id = $2
 			   AND resource.namespace_id = $2 AND resource.deleted_at IS NULL
-			 ORDER BY linked.created_at, linked.id LIMIT $3`,
-			workIDs, namespaceID, goalMapResourceLimit,
+			 ORDER BY linked.created_at, linked.id`,
+			workIDs, namespaceID,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("list goal map resources: %w", err)
@@ -811,7 +822,7 @@ func (b *Brain) GetGoalMap(ctx context.Context, namespaceID int64, includeDone b
 		result.ResourcesTruncated = result.ResourceTotal > len(result.Resources)
 	}
 
-	if len(goalIDs) == 0 {
+	if len(goalIDs) == 0 && len(itemIDs) == 0 {
 		return result, nil
 	}
 	ownerRows, err := b.pool.Query(ctx,
@@ -853,7 +864,7 @@ func (b *Brain) GetGoalMap(ctx context.Context, namespaceID int64, includeDone b
 		)
 		SELECT owner_type, owner_id, memory_type, memory_id, relation, content, status, content_truncated, created_at
 		FROM snapshots ORDER BY created_at, owner_type, owner_id, memory_type, memory_id`,
-		goalIDs, mapKeys(workSet), goalMapMemoryContentLimit, namespaceID,
+		goalIDs, itemIDs, goalMapMemoryContentLimit, namespaceID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("read goal map memory: %w", err)
@@ -891,6 +902,9 @@ func (b *Brain) GetGoalMap(ctx context.Context, namespaceID int64, includeDone b
 		return nil, fmt.Errorf("read goal map memory rows: %w", err)
 	}
 	ownerRows.Close()
+	if err := b.appendGoalMapFactSources(ctx, namespaceID, result); err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 

@@ -1376,8 +1376,8 @@ func (b *Brain) ListWorkItemMemoryLinks(ctx context.Context, workItemID int64) (
 		return nil, err
 	}
 	rows, err := b.pool.Query(ctx,
-		`SELECT work_item_id, memory_type, memory_id, relation, created_at
-		 FROM work_item_memory_links
+		`SELECT work_item_id, memory_type, memory_id, relation, created_at, derived
+		 FROM work_item_memory_context
 		 WHERE work_item_id = $1
 		 ORDER BY created_at, memory_type, memory_id`, workItemID,
 	)
@@ -1388,7 +1388,7 @@ func (b *Brain) ListWorkItemMemoryLinks(ctx context.Context, workItemID int64) (
 	links := make([]models.WorkItemMemoryLink, 0)
 	for rows.Next() {
 		var link models.WorkItemMemoryLink
-		if err := rows.Scan(&link.WorkItemID, &link.MemoryType, &link.MemoryID, &link.Relation, &link.CreatedAt); err != nil {
+		if err := rows.Scan(&link.WorkItemID, &link.MemoryType, &link.MemoryID, &link.Relation, &link.CreatedAt, &link.Derived); err != nil {
 			return nil, fmt.Errorf("scan work item memory link: %w", err)
 		}
 		links = append(links, link)

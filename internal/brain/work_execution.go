@@ -2244,7 +2244,7 @@ func (b *Brain) GetWorkResumeBundle(ctx context.Context, workItemID int64, recen
 		    (SELECT count(*) FROM work_item_worktrees linked
 		     JOIN worktrees tree ON tree.id = linked.worktree_id
 		     WHERE linked.work_item_id = $1 AND tree.namespace_id = $2 AND tree.deleted_at IS NULL),
-		    (SELECT count(*) FROM work_item_memory_links linked
+		    (SELECT count(*) FROM work_item_memory_context linked
 		     WHERE linked.work_item_id = $1
 		       AND (
 		           (linked.memory_type = 'episode' AND EXISTS (
@@ -2466,43 +2466,43 @@ func (b *Brain) GetWorkResumeBundle(ctx context.Context, workItemID int64, recen
 		`WITH snapshots AS (
 		    SELECT linked.work_item_id, linked.memory_type, linked.memory_id, linked.relation,
 		           left(memory.content, $4) AS content, 'recorded'::text AS status,
-		           char_length(memory.content) > $4 AS content_truncated, linked.created_at AS linked_at
-		    FROM work_item_memory_links linked
+		           char_length(memory.content) > $4 AS content_truncated, linked.created_at AS linked_at, linked.derived
+		    FROM work_item_memory_context linked
 		    JOIN episodes memory ON linked.memory_type = 'episode' AND memory.id = linked.memory_id
 		    WHERE linked.work_item_id = $1 AND memory.namespace_id = $2 AND memory.deleted_at IS NULL
 		    UNION ALL
 		    SELECT linked.work_item_id, linked.memory_type, linked.memory_id, linked.relation,
 		           left(memory.content, $4), 'active'::text,
-		           char_length(memory.content) > $4, linked.created_at
-		    FROM work_item_memory_links linked
+		           char_length(memory.content) > $4, linked.created_at, linked.derived
+		    FROM work_item_memory_context linked
 		    JOIN facts memory ON linked.memory_type = 'fact' AND memory.id = linked.memory_id
 		    WHERE linked.work_item_id = $1 AND memory.namespace_id = $2
 		      AND memory.deleted_at IS NULL AND memory.valid_until IS NULL
 		    UNION ALL
 		    SELECT linked.work_item_id, linked.memory_type, linked.memory_id, linked.relation,
 		           left(memory.content, $4), memory.status,
-		           char_length(memory.content) > $4, linked.created_at
-		    FROM work_item_memory_links linked
+		           char_length(memory.content) > $4, linked.created_at, linked.derived
+		    FROM work_item_memory_context linked
 		    JOIN hypotheses memory ON linked.memory_type = 'hypothesis' AND memory.id = linked.memory_id
 		    WHERE linked.work_item_id = $1 AND memory.namespace_id = $2 AND memory.deleted_at IS NULL
 		    UNION ALL
 		    SELECT linked.work_item_id, linked.memory_type, linked.memory_id, linked.relation,
 		           left(memory.content, $4), 'recorded'::text,
-		           char_length(memory.content) > $4, linked.created_at
-		    FROM work_item_memory_links linked
+		           char_length(memory.content) > $4, linked.created_at, linked.derived
+		    FROM work_item_memory_context linked
 		    JOIN failures memory ON linked.memory_type = 'failure' AND memory.id = linked.memory_id
 		    WHERE linked.work_item_id = $1 AND memory.namespace_id = $2 AND memory.deleted_at IS NULL
 		    UNION ALL
 		    SELECT linked.work_item_id, linked.memory_type, linked.memory_id, linked.relation,
 		           left(memory.content, $4), memory.status,
-		           char_length(memory.content) > $4, linked.created_at
-		    FROM work_item_memory_links linked
+		           char_length(memory.content) > $4, linked.created_at, linked.derived
+		    FROM work_item_memory_context linked
 		    JOIN goals memory ON linked.memory_type = 'goal' AND memory.id = linked.memory_id
 		    WHERE linked.work_item_id = $1 AND memory.namespace_id = $2 AND memory.deleted_at IS NULL
 		)
-		SELECT work_item_id, memory_type, memory_id, relation, content, status, content_truncated, linked_at
+		SELECT work_item_id, memory_type, memory_id, relation, content, status, content_truncated, linked_at, derived
 		FROM snapshots
-		ORDER BY linked_at DESC, memory_type, memory_id
+		ORDER BY derived, linked_at DESC, memory_type, memory_id
 		LIMIT $3`,
 		workItemID, namespaceID, memoryLimit, resumeMemoryContentLimit,
 	)
@@ -2513,7 +2513,7 @@ func (b *Brain) GetWorkResumeBundle(ctx context.Context, workItemID int64, recen
 		var link models.WorkMemorySnapshot
 		if err := memoryRows.Scan(
 			&link.WorkItemID, &link.MemoryType, &link.MemoryID, &link.Relation,
-			&link.Content, &link.Status, &link.ContentTruncated, &link.LinkedAt,
+			&link.Content, &link.Status, &link.ContentTruncated, &link.LinkedAt, &link.Derived,
 		); err != nil {
 			memoryRows.Close()
 			return nil, fmt.Errorf("scan memory link for resume: %w", err)

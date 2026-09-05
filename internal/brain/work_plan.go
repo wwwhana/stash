@@ -1251,6 +1251,15 @@ func (b *Brain) GetWorkPlan(ctx context.Context, namespaceID int64) (*models.Wor
 		return nil, err
 	}
 	plan.Decisions = decisions
+	progressByID, err := b.componentProgress(ctx, namespaceID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range plan.Components {
+		if progress, ok := progressByID[plan.Components[i].ID]; ok {
+			plan.Components[i].ExecutionProgress = &progress
+		}
+	}
 	if len(plan.Components) == 0 {
 		plan.Warnings = append(plan.Warnings, models.WorkPlanWarning{Code: "no_components"})
 	}

@@ -249,6 +249,7 @@ type WorkEvent struct {
 
 // WorkItemMemoryLink connects operational work to durable memory entities.
 type WorkItemMemoryLink struct {
+	Derived    bool      `json:"derived,omitempty"`
 	WorkItemID int64     `db:"work_item_id" json:"work_item_id"`
 	MemoryType string    `db:"memory_type" json:"memory_type"`
 	MemoryID   int64     `db:"memory_id" json:"memory_id"`

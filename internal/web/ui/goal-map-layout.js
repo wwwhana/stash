@@ -160,7 +160,9 @@
         const tree = goalMap.goal_tree && typeof goalMap.goal_tree === 'object' ? goalMap.goal_tree : {};
 
         const workMatches = (item, withQuery) => {
-            if (status && item.status !== status) return false;
+            const expires = Date.parse(item.lease_expires_at || '');
+            const displayStatus = item.attempt_status === 'active' && expires <= Date.now() ? 'expired' : item.status;
+            if (status && displayStatus !== status) return false;
             const owner = String(item.agent_id || item.owner || '').trim();
             if (agent && owner !== agent) return false;
             return !withQuery || includesText([

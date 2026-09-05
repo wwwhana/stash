@@ -70,6 +70,9 @@ func jsonToolResult(bc *bootstrap.Context, value any, pageOffset ...int) (*mcp.C
 	}
 
 	mcpResponseLimited.Inc()
+	if goalMap, ok := value.(*models.GoalMap); ok {
+		return goalMapPageResult(bc, goalMap, 0, 100, "")
+	}
 	if chunk, ok, err := fitMCPWorkGraphChunk(value, maxBytes, mcpWorkGraphPageOptions{}); err != nil {
 		return nil, err
 	} else if ok {

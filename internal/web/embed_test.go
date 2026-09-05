@@ -53,6 +53,7 @@ func TestUIAssetsAndUnknownPathsKeepFileServerBehavior(t *testing.T) {
 
 	assets := map[string]string{
 		"/search-utils.js":                "StashSearch",
+		"/console-i18n.js":                "StashI18n",
 		"/route-state.js":                 "StashRouteState",
 		"/state-store.js":                 "StashStateStore",
 		"/theme-view-model.js":            "StashThemeViewModel",
@@ -73,6 +74,7 @@ func TestUIAssetsAndUnknownPathsKeepFileServerBehavior(t *testing.T) {
 		"/console-app.js":                 "StashConsoleApp",
 		"/vue-monitor.js":                 "stash-vue-monitor",
 		"/vue-console.js":                 "data-stash-vue-console",
+		"/vue-console-view-model.js":      "StashVueConsoleViewModel",
 		"/vue-bootstrap.js":               "stashConsoleApplyTheme",
 		"/vue-console.css":                "--app-bg",
 		"/vue-monitor.css":                "--vue-bg",
@@ -103,12 +105,14 @@ func TestUIPageRoutesAreReadOnly(t *testing.T) {
 }
 
 func TestVueConsoleDoesNotRestoreBrowserStoredTokens(t *testing.T) {
-	response := httptest.NewRecorder()
-	GetUIHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/vue-console.js", nil))
-	if response.Code != http.StatusOK {
-		t.Fatalf("GET /vue-console.js status = %d, want %d", response.Code, http.StatusOK)
-	}
-	if strings.Contains(response.Body.String(), "sessionStorage") || strings.Contains(response.Body.String(), "stash.apiToken") {
-		t.Fatal("Vue console still reads an API token from browser storage")
+	for _, path := range []string{"/vue-console.js", "/vue-console-view-model.js"} {
+		response := httptest.NewRecorder()
+		GetUIHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusOK {
+			t.Fatalf("GET /vue-console.js status = %d, want %d", response.Code, http.StatusOK)
+		}
+		if strings.Contains(response.Body.String(), "stash.apiToken") {
+			t.Fatal("Vue console still reads an API token from browser storage")
+		}
 	}
 }

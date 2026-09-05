@@ -24,6 +24,7 @@ var uiPageFiles = map[string]string{
 	"/ui/work-graph":     "vue-console.html",
 	"/ui/git":            "vue-console.html",
 	"/ui/namespaces":     "vue-console.html",
+	"/ui/memories":       "vue-console.html",
 	"/ui/facts":          "vue-console.html",
 	"/ui/hypotheses":     "vue-console.html",
 	"/ui/goals":          "vue-console.html",
