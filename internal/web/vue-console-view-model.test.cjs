@@ -86,6 +86,14 @@ test('work, goals and typed memories have bidirectional detail links without dup
     state.selectObject('goal', { id: 1, content: '공통 목표', status: 'active' });
     assert.match(state.selectedFields.find(field => field.label === '진행 상황').value, /2개 중 1개/);
     assert.equal(state.goalProgressLabel({ status: 'active' }), '연결된 작업 없음');
+    state.map.work_items = [{ id: 4, title: '상위 작업' }, { id: 5, parent_id: 4, title: '세부 작업' }];
+    state.map.edges = [{ from: 'work:5', to: 'work:4', relation: 'part_of' }];
+    state.selectObject('work', state.map.work_items[1]);
+    assert.equal(state.selectedParent.item.id, 4);
+    assert.equal(state.selectedConnections.length, 0);
+    state.selectObject('work', state.map.work_items[0]);
+    assert.equal(state.selectedChildren.length, 1);
+    assert.equal(state.selectedConnections.length, 0);
 });
 
 test('all namespace pages and shortened MCP pages remain reachable', async () => {
@@ -233,15 +241,19 @@ test('ticketless memory browsing preserves type, scope, and original-memory IDs'
 });
 
 test('a standalone fact detail connects its original episode without a work item', async () => {
+    let releaseMap;
     const fact = { key: 'memory:fact:1', memory_type: 'fact', memory_id: 1, content: '사실' };
     const episode = { key: 'memory:episode:2', memory_type: 'episode', memory_id: 2, content: '원본 경험' };
     const { state } = setup('/ui/memories?namespace=/personal', async tool => {
+        if (tool === 'get_goal_map') return new Promise(resolve => { releaseMap = resolve; });
         if (tool === 'get_memory') return { content: '사실 전체', snapshot: 'original', has_more: false };
         if (tool === 'get_memory_context') return { memories: [fact, episode], edges: [{ key: 'source', from: fact.key, to: episode.key, relation: 'derived_from', derived: true }] };
         return {};
     });
-    state.selectObject('memory', fact);
+    const selection = state.selectObject('memory', fact);
     await state.openDetail();
+    releaseMap({});
+    await selection;
     assert.equal(state.selected.item.content, '사실 전체');
     assert.equal(state.selectedConnections[0].item.content, '원본 경험');
     assert.match(state.selectedConnections[0].label, /원본 경험/);
@@ -284,4 +296,142 @@ test('language changes presentation and persists without refetching or losing wo
     window.localStorage.setItem = () => { throw new Error('storage denied'); };
     state.changeLocale('en');
     assert.equal(state.locale, 'en');
+});
+
+test('memory list appears before related context is requested and task details retain their scope', async () => {
+    const calls = [];
+    const { state } = setup('/ui/memories?namespace=/projects/demo', async (tool, args) => {
+        calls.push({ tool, args });
+        if (tool === 'list_memories') return [{ memory_type: 'fact', memory_id: 3, content: '근거' }];
+        if (tool === 'get_work_item') return { id: 2, title: '작업', description: '이 작업의 목적', plan_context: { owned_scopes: ['docs'], outcome: '전체 목적' } };
+        return map;
+    });
+    await state.loadRoute();
+    assert.deepEqual(calls.map(call => call.tool), ['list_memories']);
+    await state.selectObject('memory', state.listItems[0]);
+    assert.deepEqual(calls.map(call => call.tool), ['list_memories', 'get_goal_map']);
+    assert.equal(state.selectedConnections[0].kind, 'work');
+    await state.selectObject('work', state.allWork[0]);
+    assert.equal(calls.at(-1).args.namespace, '/projects/demo');
+    assert.equal(calls.at(-1).args.include_context, true);
+    assert.equal(state.selectedFields.find(field => field.label === '작업 목적').value, '이 작업의 목적');
+    assert.equal(state.selectedFields.find(field => field.label === '담당 범위').value, 'docs');
+});
+
+test('a work selection opened from memories survives a direct reload', async () => {
+    const { state } = setup('/ui/memories?namespace=/projects/demo&focus=work:2', async tool => {
+        if (tool === 'get_goal_map') return map;
+        if (tool === 'get_work_item') return { id: 2, title: '작업', description: '선택한 작업의 목적', plan_context: { owned_scopes: ['docs'] } };
+        return [{ id: 3, memory_type: 'fact', content: '기억' }];
+    });
+    await state.loadRoute();
+    await new Promise(setImmediate);
+    assert.equal(state.selected.key, 'work:2');
+    assert.equal(state.selected.item.description, '선택한 작업의 목적');
+    assert.deepEqual(state.selected.item.plan_context.owned_scopes, ['docs']);
+});
+
+test('visible work refresh preserves selection, filters and URL, and failures retain current data', async () => {
+    let fail = false, requests = 0, status = 'doing';
+    const { state, window } = setup('/ui/monitor?namespace=/projects/demo&q=작업', async tool => {
+        requests++;
+        if (fail) throw new TypeError('Failed to fetch');
+        if (tool === 'get_work_item') return { id: 2, description: '상세 목적' };
+        return { ...map, work_items: [{ ...map.work_items[0], status }] };
+    });
+    state.authChecked = true; state.authLoading = false;
+    await state.loadRoute();
+    await state.selectObject('work', state.allWork[0]);
+    const selected = state.selected, url = window.location.href;
+    state.route.detail = true;
+    status = 'done';
+    await state.refreshVisible();
+    assert.equal(state.selected, selected);
+    assert.equal(state.selected.item.status, 'done');
+    assert.equal(state.selected.item.description, '상세 목적');
+    assert.equal(state.route.detail, true);
+    assert.equal(state.filters.query, '작업');
+    assert.equal(window.location.href, url);
+    assert.equal(state.refreshRevision, 1);
+    fail = true;
+    await state.refreshVisible();
+    assert.equal(state.error, '');
+    assert.equal(state.refreshError, 'refresh.failed');
+    assert.equal(state.selected.item.status, 'done');
+    fail = false;
+    await state.refreshVisible();
+    assert.equal(state.refreshError, '');
+    const before = requests;
+    window.document.visibilityState = 'hidden';
+    await state.refreshVisible();
+    assert.equal(requests, before);
+    window.document.visibilityState = 'visible';
+    window.document.activeElement = { matches: () => true };
+    await state.refreshVisible();
+    assert.equal(requests, before);
+});
+
+test('late context and background requests cannot change a new workspace', async () => {
+    let release;
+    const { state } = setup('/ui/memories?namespace=/old', async (tool, args) => {
+        if (args.namespace === '/old' && tool === 'get_goal_map') return new Promise(resolve => { release = resolve; });
+        return [];
+    });
+    await state.loadRoute();
+    const pending = state.selectObject('memory', { memory_type: 'fact', memory_id: 3 });
+    state.rootSlug = '/new';
+    await state.changeRoot();
+    release(map);
+    await pending;
+    assert.equal(state.rootSlug, '/new');
+    assert.equal(state.selected, null);
+    assert.equal(state.map.goal_tree.goals.length, 0);
+    assert.equal(state.selectionLoading, false);
+});
+
+test('background board updates keep loaded pages and use current work status', async () => {
+    const { state } = setup('/ui/issues?namespace=/projects/demo&offset=100', async tool => {
+        assert.equal(tool, 'get_goal_map');
+        return { ...map, work_items: [{ id: 2, title: '변경', status: 'done' }] };
+    });
+    state.listKind = 'work'; state.listItems = [{ id: 2, title: '작업', status: 'doing' }, { id: 4, title: '두 번째 페이지', status: 'ready' }];
+    state.page = { nextOffset: 200, hasMore: true };
+    await state.loadRoute(false, true);
+    assert.equal(state.listItems.length, 2);
+    assert.equal(state.page.nextOffset, 200);
+    assert.equal(state.route.offset, 100);
+    assert.equal(state.boardItems.find(item => item.id === 2).status, 'done');
+    const currentMap = state.map;
+    state.fetchGoalMap = async () => { throw new TypeError('Failed to fetch'); };
+    for (const route of ['board', 'plan', 'graph']) {
+        state.route.route = route;
+        await state.loadRoute(false, true);
+        assert.equal(state.map, currentMap);
+        assert.equal(state.listItems.length, 2);
+        assert.equal(state.refreshError, 'refresh.failed');
+    }
+});
+
+test('Git registration validates input, writes to the selected space and reloads the registered folder', async () => {
+    const calls = [], saved = { id: 8, repository: 'stash', worktree_path: '/work/stash', branch: 'main' };
+    const { state } = setup('/ui/git?namespace=/projects/demo', async (tool, args) => {
+        calls.push({ tool, args });
+        return tool === 'register_worktree' ? saved : [saved];
+    });
+    await state.registerGitFolder();
+    assert.equal(calls.length, 0);
+    assert.equal(state.gitError, 'git.required');
+    state.gitForm = { repository: ' stash ', worktree_path: ' /work/stash ', branch: 'main' };
+    state.filters.query = '이전 검색';
+    await state.registerGitFolder();
+    assert.deepEqual(calls[0], { tool: 'register_worktree', args: { repository: 'stash', worktree_path: '/work/stash', branch: 'main', namespace: '/projects/demo', status: 'unknown' } });
+    assert.equal(calls[1].tool, 'list_worktrees');
+    assert.equal(state.selected.item.worktree_path, '/work/stash');
+    assert.equal(state.gitFormOpen, false);
+    assert.equal(state.filters.query, '');
+    assert.equal(state.statusLabel('unknown'), '미확인');
+    assert.equal(state.statusLabel('dirty'), '변경 있음');
+    state.locale = 'en';
+    assert.equal(state.statusLabel('unknown'), 'Not checked');
+    assert.equal(state.statusLabel('dirty'), 'Has changes');
 });

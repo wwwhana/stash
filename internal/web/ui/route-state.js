@@ -163,6 +163,7 @@
             setText(params, 'focus', value.focus);
             if (value.detail) params.set('detail', '1');
         }
+        if (['agent', 'maintenance'].includes(selected)) setNamespace(params, value.namespace || value.project);
         if (['goal-map', 'monitor', 'graph', 'board'].includes(selected)) {
             const issueID = positiveInteger(value.issueID);
             if (issueID) params.set('issue', String(issueID));

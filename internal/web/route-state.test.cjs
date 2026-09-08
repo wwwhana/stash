@@ -106,3 +106,12 @@ test('the console restores routes and exposes real navigation links', () => {
     assert.match(app, /window\.addEventListener\('popstate'/);
     assert.match(app, /await this\.restoreRoute\(\)/);
 });
+
+test('all screens retain the selected workspace across reload and copied links', () => {
+    for (const page of Object.keys(routePaths)) {
+        const route = readRoute(buildRoute(page, { namespace: '/projects/demo', project: '/projects/demo' }));
+        assert.equal(route.project || route.namespace, '/projects/demo', page);
+    }
+    assert.equal(readRoute(buildRoute('agent', { namespace: '/personal' })).namespace, '/personal');
+    assert.equal(readRoute(buildRoute('maintenance', { namespace: '/personal' })).namespace, '/personal');
+});

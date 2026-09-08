@@ -7,6 +7,7 @@
 
     function createViewModel({ api, routeAPI, goalMap, workGraph, search, window, i18n = typeof module === 'object' && module.exports ? require('./console-i18n.js') : window.StashI18n }) {
         const root = window;
+        let refreshTimer;
         const { document, navigator } = window;
         const text = value => String(value == null ? '' : value).trim();
         const number = value => Number.isFinite(Number(value)) ? Number(value) : 0;
@@ -15,7 +16,8 @@
             backlog: 'status.backlog', ready: 'status.ready', active: 'status.doing', doing: 'status.doing', blocked: 'status.blocked',
             review: 'status.review', done: 'status.done', canceled: 'status.canceled', expired: 'status.expired',
             completed: 'status.done', abandoned: 'status.abandoned', proposed: 'status.proposed', testing: 'status.testing',
-            confirmed: 'status.confirmed', rejected: 'status.rejected', recorded: 'status.recorded'
+            confirmed: 'status.confirmed', rejected: 'status.rejected', recorded: 'status.recorded',
+            unknown: 'status.unknown', clean: 'git.clean', dirty: 'git.dirty', missing: 'git.missing', merged: 'git.merged', removed: 'git.removed'
         };
         const kindNames = { goal: 'kind.goal', work: 'kind.work', memory: 'kind.memory', resource: 'kind.resource' };
         const navItems = [
@@ -34,7 +36,7 @@
         };
         const emptyMap = () => ({
             goal_tree: { root_goal_id: null, goals: [] },
-            root_candidates: [], work_items: [], unassigned_work: [], resources: [], memories: [], edges: []
+            attention: [], root_candidates: [], work_items: [], unassigned_work: [], resources: [], memories: [], edges: []
         });
         const emptyPlan = () => ({ goal_tree: { root_goal_id: null, goals: [] }, components: [], decisions: [], warnings: [], validation: null });
         const arrayOf = value => Array.isArray(value) ? value : [];
@@ -49,6 +51,7 @@
                 ...emptyMap(), ...map,
                 goal_tree: normalizeGoalTree(map.goal_tree),
                 root_candidates: arrayOf(map.root_candidates),
+                attention: arrayOf(map.attention),
                 work_items: arrayOf(map.work_items).filter(item => item && typeof item === 'object'),
                 unassigned_work: arrayOf(map.unassigned_work).filter(item => item && typeof item === 'object'),
                 resources: arrayOf(map.resources).filter(item => item && typeof item === 'object'),
@@ -108,7 +111,9 @@
                     listItems: [],
                     listKind: '',
                     page: { hasMore: false, nextOffset: 0 },
-                    contextError: '',
+                    contextError: '', selectionLoading: false, selectionGeneration: 0,
+                    attentionExpanded: false, refreshing: false, refreshError: '', refreshRevision: 0, lastRefreshedAt: 0,
+                    gitFormOpen: false, gitSaving: false, gitError: '', gitForm: { repository: '', worktree_path: '', branch: '' },
                     detailLoading: false, detailError: '', detailGeneration: 0,
                     maintenance: null, maintenanceAction: false, maintenanceNotice: '',
                     copyStatus: 'action.copyGuide',
@@ -135,6 +140,8 @@
                 };
             },
             computed: {
+                attentionItems() { return this.map.attention.map(entry => ({ ...entry, target: this.findByFocus(entry.key) })).filter(entry => entry.target); },
+                lastRefreshLabel() { return this.lastRefreshedAt ? this.t('refresh.updated', { time: new Intl.DateTimeFormat(this.locale, { hour: '2-digit', minute: '2-digit' }).format(this.lastRefreshedAt) }) : ''; },
                 navItems() { return navItems.map(item => ({ ...item, label: this.t(item.label) })); },
                 kindOrder: () => ['goal', 'work', 'memory', 'resource'],
                 kindNames() { return Object.fromEntries(Object.entries(kindNames).map(([kind, label]) => [kind, this.t(label)])); },
@@ -233,8 +240,10 @@
                         if (work.goal_id) edges.push({ from: `work:${work.id}`, to: `goal:${work.goal_id}`, relation: 'contributes_to' });
                     }
                     const seen = new Set();
+                    const hierarchy = new Set([this.selectedParent, ...this.selectedChildren].filter(Boolean).map(item => item.key));
                     return edges.filter(edge => edge.from === key || edge.to === key).flatMap(edge => {
                         const other = edge.from === key ? edge.to : edge.from;
+                        if (edge.relation === 'part_of' && hierarchy.has(other)) return [];
                         const found = this.findByFocus(other);
                         const connectionKey = `${other}:${edge.relation}`;
                         if (!found || seen.has(connectionKey)) return [];
@@ -245,9 +254,14 @@
                 selectedFields() {
                     if (!this.selected) return [];
                     const item = this.selected.item || {}; const fields = [];
+                    const planContext = item.plan_context || {};
+                    const scopes = arrayOf(planContext.owned_scopes || item.owned_paths).filter(Boolean);
                     if (this.selected.kind === 'goal') fields.push({ label: this.t('field.status'), value: this.statusLabel(item.status) }, { label: this.t('field.progress'), value: this.goalProgressLabel(item) }, { label: this.t('field.check'), value: item.completion_mismatch ? this.t('progress.mismatch') : item.ready_to_complete ? this.t('progress.ready') : '' });
                     if (this.selected.kind === 'work') fields.push({ label: this.t('field.workKey'), value: item.issue_key || '#' + item.id }, { label: this.t('field.status'), value: this.statusLabel(this.displayStatus(item)) }, { label: this.t('field.owner'), value: this.agentLabel(item) }, { label: this.t('field.nextAction'), value: item.next_action || this.t('empty.record') }, { label: this.t('field.latestResult'), value: item.latest_result || this.t('empty.record') });
-                    if (this.selected.kind === 'work' && item.description) fields.push({ label: this.t('field.description'), value: item.description });
+                    if (this.selected.kind === 'work') {
+                        fields.splice(3, 0, { label: this.t('field.purpose'), value: item.description || planContext.outcome || this.t('empty.record') }, { label: this.t('field.scope'), value: scopes.join('\n') || this.t('empty.scope') });
+                        if (arrayOf(item.required_capabilities).length) fields.push({ label: this.t('field.capabilities'), value: item.required_capabilities.join(', ') });
+                    }
                     if (this.selected.kind === 'memory') fields.push({ label: this.t('field.status'), value: item.memory_type === 'hypothesis' ? this.statusLabel(item.status) : '' }, { label: this.t('field.content'), value: item.content || '' }, { label: this.t('field.reason'), value: item.reason || '' }, { label: this.t('field.lesson'), value: item.lesson || '' }, { label: this.t('field.verification'), value: item.verification_plan || '' }, { label: this.t('field.preview'), value: item.content_truncated ? this.t('view.memoryPreview') : '' });
                     if (this.selected.kind === 'resource' && item.worktree_path) fields.push({ label: this.t('field.repository'), value: item.repository }, { label: this.t('field.branch'), value: item.branch }, { label: this.t('field.folder'), value: item.worktree_path });
                     if (this.selected.kind === 'resource' && !item.worktree_path) fields.push({ label: this.t('field.source'), value: item.source || this.t('resource.linked') }, { label: this.t('field.authority'), value: item.authority === 'external' ? this.t('field.externalAuthority') : this.t('field.stashAuthority') }, { label: this.t('field.address'), value: item.uri || item.external_id || item.slug || '' }, { label: this.t('field.summary'), value: item.summary || item.description || '' });
@@ -264,14 +278,44 @@
                 api.markAuthenticationExpired = this.apiAuthenticationExpired;
                 this.applyLocale();
                 this.bootstrap();
+                refreshTimer = window.setInterval(this.refreshVisible, 15000);
+                document.addEventListener('visibilitychange', this.refreshVisible);
+                window.addEventListener('focus', this.refreshVisible);
             },
             updated() { this.measureViewport(); },
             beforeUnmount() {
+                window.clearInterval(refreshTimer);
+                document.removeEventListener('visibilitychange', this.refreshVisible);
+                window.removeEventListener('focus', this.refreshVisible);
+                this.loadGeneration++; this.selectionGeneration++; this.detailGeneration++;
                 window.removeEventListener('popstate', this.handlePopState);
                 window.removeEventListener('resize', this.measureViewport);
                 if (api.markAuthenticationExpired === this.apiAuthenticationExpired) delete api.markAuthenticationExpired;
             },
             methods: {
+                refreshVisible() {
+                    if (!this.authChecked || this.authLoading || this.needsLogin || this.loading || this.refreshing || this.selectionLoading || this.detailLoading || this.maintenanceAction || document.visibilityState === 'hidden') return;
+                    if (!['goal-map', 'monitor', 'plan', 'board', 'graph', 'maintenance'].includes(this.route.route)) return;
+                    const focused = document.activeElement;
+                    if (focused && focused.matches('input:not([type=checkbox]), textarea:not([readonly])')) return;
+                    return this.loadRoute(false, true);
+                },
+                async registerGitFolder() {
+                    if (this.gitSaving) return;
+                    const namespace = this.rootSlug;
+                    const form = Object.fromEntries(Object.entries(this.gitForm).map(([key, value]) => [key, text(value)]));
+                    if (!form.repository || !form.worktree_path) { this.gitError = 'git.required'; return; }
+                    this.gitSaving = true; this.gitError = '';
+                    try {
+                        const item = unwrap(await api.invokeTool('register_worktree', { ...form, namespace, status: 'unknown' }));
+                        if (namespace !== this.rootSlug || this.route.route !== 'worktrees') return;
+                        this.gitFormOpen = false; this.gitForm = { repository: '', worktree_path: '', branch: '' };
+                        this.filters.query = '';
+                        await this.searchList();
+                        if (namespace === this.rootSlug && this.route.route === 'worktrees') this.selectObject('resource', item);
+                    } catch (error) { if (namespace === this.rootSlug) this.gitError = i18n.errorMessage(error, 'git.failed'); }
+                    finally { this.gitSaving = false; }
+                },
                 t(key, params) { return i18n.translate(this.locale, key, params); },
                 formatNumber(value) { return new Intl.NumberFormat(this.locale).format(number(value)); },
                 applyLocale() { document.documentElement.lang = this.locale; document.title = this.pageTitle + ' · Stash'; },
@@ -298,7 +342,7 @@
                                 if (!Array.isArray(page.items) || !page.snapshot) return normalizeMap(page);
                                 if (snapshot && snapshot !== page.snapshot) throw new Error('goal_map_changed');
                                 snapshot = page.snapshot; map.goal_tree.root_goal_id = page.root_goal_id || null; map.resource_total = page.resource_total;
-                                const lists = { goal: map.goal_tree.goals, root_candidate: map.root_candidates, work: map.work_items, unassigned_work: map.unassigned_work, memory: map.memories, resource: map.resources, edge: map.edges };
+                                const lists = { goal: map.goal_tree.goals, root_candidate: map.root_candidates, work: map.work_items, unassigned_work: map.unassigned_work, memory: map.memories, resource: map.resources, edge: map.edges, attention: map.attention };
                                 for (const entry of page.items) { if (lists[entry.kind] && entry.value) lists[entry.kind].push(entry.value); }
                                 if (!page.has_more) return normalizeMap(map);
                                 if (page.next_offset <= offset) throw i18n.error('error.mapPage');
@@ -425,7 +469,7 @@
                 async navigate(route) {
                     this.route = routeAPI.readRoute(this.navHref(route));
                     this.syncFiltersFromRoute();
-                    this.selected = null;
+                    this.selected = null; this.selectionGeneration++; this.selectionLoading = false; this.gitFormOpen = false; this.gitError = '';
                     this.syncURL(true);
                     await this.loadRoute();
                 },
@@ -436,7 +480,7 @@
                     this.loadRoute();
                 },
                 async changeRoot() {
-                    this.rootSlug = text(this.rootSlug) || '/'; this.selected = null; this.route = { ...this.route, detail: false, focus: '', issueID: 0, offset: 0 }; this.syncURL(true); await this.loadRoute();
+                    this.rootSlug = text(this.rootSlug) || '/'; this.selectionGeneration++; this.selectionLoading = false; this.gitFormOpen = false; this.gitError = ''; this.selected = null; this.route = { ...this.route, detail: false, focus: '', issueID: 0, offset: 0 }; this.syncURL(true); await this.loadRoute();
                 },
                 resetFilters() {
                     this.filters = { ...this.filters, query: '', status: '', agent: '', memoryType: '', issueType: '', label: '' }; this.kindFilters = { goal: true, work: true, memory: true, resource: true }; this.relations = { blocks: true, part_of: true, relates_to: true }; this.syncURL(); if (this.isListRoute || this.route.route === 'board') return this.searchList();
@@ -449,11 +493,12 @@
                     this.selected = { kind, item, key: mapItemKey(kind, item) };
                     this.route.detail = false;
                     this.syncURL();
+                    return this.loadSelectionContext();
                 },
                 selectMapNode(node) { this.selectObject(node.kind, node.item); },
                 selectGraphNode(node) { this.selectObject('work', node.item || node); },
                 selectListItem(item) { this.selectObject(this.listKind || (item.slug ? 'resource' : 'memory'), item); },
-                clearSelection() { this.detailGeneration++; this.detailError = ''; this.detailLoading = false; this.selected = null; this.route = { ...this.route, detail: false, focus: '', issueID: 0 }; this.syncURL(); },
+                clearSelection() { this.selectionGeneration++; this.selectionLoading = false; this.detailGeneration++; this.detailError = ''; this.detailLoading = false; this.selected = null; this.route = { ...this.route, detail: false, focus: '', issueID: 0 }; this.syncURL(); },
                 openDetail() { if (!this.selected) return; this.route.detail = true; this.syncURL(true); return this.loadMemoryDetail(); },
                 closeDetail() { this.route.detail = false; this.syncURL(true); },
                 findByFocus(focus) {
@@ -473,7 +518,35 @@
                     const memory = /^memory:(fact|episode|hypothesis|failure):(\d+)$/.exec(focus);
                     if (!found && memory && this.route.detail) found = { kind: 'memory', item: { memory_type: memory[1], memory_id: Number(memory[2]) } };
                     this.selected = found ? { ...found, key: mapItemKey(found.kind, found.item) } : null;
+                    if (this.selected) this.loadSelectionContext();
                     if (this.route.detail) this.loadMemoryDetail();
+                },
+                async loadSelectionContext() {
+                    if (!this.selected || this.selected.kind === 'resource') return;
+                    const { key, kind, item } = this.selected, namespace = this.rootSlug, load = this.loadGeneration;
+                    if (this.mapLoaded && kind !== 'work') return;
+                    const generation = ++this.selectionGeneration;
+                    this.selectionLoading = true; this.contextError = '';
+                    const results = await Promise.allSettled([
+                        this.mapLoaded ? Promise.resolve(null) : this.fetchGoalMap(namespace, load),
+                        kind === 'work' ? api.invokeTool('get_work_item', { id: number(item.id), namespace, include_context: true }).then(unwrap) : Promise.resolve(null)
+                    ]);
+                    if (generation !== this.selectionGeneration || load !== this.loadGeneration || namespace !== this.rootSlug || !this.selected || this.selected.key !== key) return;
+                    for (let i = 0; i < results.length; i++) {
+                        const result = results[i];
+                        if (result.status === 'rejected') { this.contextError = i18n.errorMessage(result.reason, 'error.context'); continue; }
+                        if (!result.value) continue;
+                        if (i === 0) {
+                            // A full memory detail may have loaded its source links while this map was pending.
+                            for (const field of ['memories', 'edges']) result.value[field] = [...new Map([...result.value[field], ...this.map[field]].map(entry => [entry.key, entry])).values()];
+                            this.map = result.value; this.mapLoaded = true;
+                        }
+                        else if (number(result.value.id) === number(item.id)) this.selected.item = { ...this.selected.item, ...result.value };
+                        else this.contextError = 'error.context';
+                    }
+                    const found = this.findByFocus(key);
+                    if (found) this.selected.item = { ...found.item, ...this.selected.item };
+                    this.selectionLoading = false;
                 },
                 async fetchNamespaces() {
                     const items = []; let offset = 0;
@@ -510,17 +583,18 @@
                 },
                 async searchList() { this.route.offset = 0; this.clearSelection(); await this.loadRoute(); },
                 async nextPage() { this.route.offset = this.page.nextOffset; this.clearSelection(); await this.loadRoute(true); },
-                async loadRoute(append = false) {
+                async loadRoute(append = false, background = false) {
                     if (this.needsLogin) return;
                     const generation = ++this.loadGeneration;
                     const route = { ...this.route }; const filters = { ...this.filters }; const namespace = this.rootSlug || '/';
-                    this.loading = true; this.error = ''; this.contextError = ''; this.selected = null;
+                    this.refreshing = background; this.refreshError = '';
+                    if (!background) { this.loading = true; this.error = ''; this.contextError = ''; this.selected = null; this.selectionGeneration++; this.selectionLoading = false; }
                     try {
                         let map = emptyMap(), graph = { nodes: [], edges: [] }, plan = emptyPlan(), listItems = [], listKind = '', page = { hasMore: false, nextOffset: 0 }, mapLoaded = false, contextError = '';
                         const mapRoute = ['goal-map', 'monitor'].includes(route.route);
-                        if (mapRoute || ['plan', 'board', 'graph', ...Object.keys(dataTools)].includes(route.route)) {
+                        if (mapRoute || ['plan', 'board', 'graph'].includes(route.route) || dataTools[route.route] && (route.focus || route.issueID)) {
                             try { map = await this.fetchGoalMap(namespace, generation); mapLoaded = true; }
-                            catch (error) { if (mapRoute || error.status === 401) throw error; contextError = 'error.context'; }
+                            catch (error) { if (background || mapRoute || error.status === 401) throw error; contextError = 'error.context'; }
                         }
                         if (route.route === 'maintenance') {
                             const maintenance = await api.adminRequest('/admin/maintenance/embeddings');
@@ -531,6 +605,10 @@
                             plan = normalizePlan(unwrap(await api.invokeTool('get_work_plan', { namespace })));
                         } else if (route.route === 'list_namespaces') {
                             listKind = 'resource'; listItems = this.namespaces;
+                        } else if (background && route.route === 'board' && route.offset > 0) {
+                            // Keep previously loaded pages; current work state comes from the map.
+                            const current = new Map([...map.work_items, ...map.unassigned_work].map(item => [number(item.id), item]));
+                            listItems = this.listItems.map(item => ({ ...item, ...current.get(number(item.id)) })); listKind = 'work'; page = this.page;
                         } else if (dataTools[route.route] || ['board', 'worktrees'].includes(route.route)) {
                             const memoryType = route.route === 'query_facts' ? 'fact' : route.route === 'list_hypotheses' ? 'hypothesis' : '';
                             const tool = memoryType ? 'list_memories' : route.route === 'board' ? 'list_work_items' : route.route === 'worktrees' ? 'list_worktrees' : route.route;
@@ -547,11 +625,20 @@
                         if (generation !== this.loadGeneration) return;
                         if (append) listItems = [...this.listItems, ...listItems];
                         Object.assign(this, { map, graph, plan, listItems, listKind, page, mapLoaded, contextError });
-                        this.restoreFocus();
+                        this.error = '';
+                        if (background) {
+                            if (this.selected && this.selected.kind !== 'memory') {
+                                const found = this.findByFocus(this.selected.key);
+                                if (found) this.selected.item = { ...this.selected.item, ...found.item };
+                            }
+                            this.refreshRevision++;
+                        } else this.restoreFocus();
+                        this.lastRefreshedAt = Date.now();
                         document.title = this.pageTitle + ' · Stash';
                     } catch (error) {
-                        if (generation === this.loadGeneration) this.error = route.route === 'maintenance' && [401, 403, 503].includes(error.status) ? (error.status === 503 ? 'error.adminUnavailable' : 'error.admin') : i18n.errorMessage(error, 'error.page');
-                    } finally { if (generation === this.loadGeneration) this.loading = false; }
+                        if (generation === this.loadGeneration && background) this.refreshError = 'refresh.failed';
+                        else if (generation === this.loadGeneration) this.error = route.route === 'maintenance' && [401, 403, 503].includes(error.status) ? (error.status === 503 ? 'error.adminUnavailable' : 'error.admin') : i18n.errorMessage(error, 'error.page');
+                    } finally { if (generation === this.loadGeneration) { this.loading = false; this.refreshing = false; } }
                 },
                 listItemKey(item) { return mapItemKey(this.listKind, item); },
                 listItemTitle(item) {

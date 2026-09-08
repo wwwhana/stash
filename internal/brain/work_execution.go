@@ -2155,6 +2155,16 @@ func readWorkPlanExecutionContext(ctx context.Context, tx pgx.Tx, workItemID, na
 	return &planContext, nil
 }
 
+// WorkItemPlanContext reads the selected task's scope without resuming or claiming work.
+func (b *Brain) WorkItemPlanContext(ctx context.Context, workItemID, namespaceID int64) (*models.WorkPlanExecutionContext, error) {
+	tx, err := b.pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	return readWorkPlanExecutionContext(ctx, tx, workItemID, namespaceID)
+}
+
 func (b *Brain) GetWorkResumeBundle(ctx context.Context, workItemID int64, recentEventLimit int) (*models.WorkResumeBundle, error) {
 	if recentEventLimit <= 0 {
 		recentEventLimit = defaultResumeEventLimit

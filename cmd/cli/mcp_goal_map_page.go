@@ -54,6 +54,7 @@ func goalMapPageResult(bc *bootstrap.Context, value *models.GoalMap, offset, lim
 	appendEntries("memory", value.Memories)
 	appendEntries("resource", value.Resources)
 	appendEntries("edge", value.Edges)
+	appendEntries("attention", value.Attention)
 	if offset > len(entries) {
 		return nil, fmt.Errorf("offset exceeds the map size")
 	}

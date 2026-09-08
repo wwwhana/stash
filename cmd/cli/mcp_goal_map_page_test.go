@@ -22,6 +22,7 @@ func TestGoalMapPagesRecoverAllKindsAndRejectMixedRevisions(t *testing.T) {
 	}
 	value.UnassignedWork = []models.GoalMapWork{{ID: 81}}
 	value.RootCandidates = []models.GoalBrief{{ID: 82}}
+	value.Attention = []models.GoalMapAttention{{Key: "work:81", Reason: "work_blocked"}}
 	bc := &bootstrap.Context{Config: &config.Config{MCPMaxResponseBytes: 1200}}
 	offset, pages := 0, 0
 	snapshot := ""
@@ -57,7 +58,7 @@ func TestGoalMapPagesRecoverAllKindsAndRejectMixedRevisions(t *testing.T) {
 			t.Fatalf("lost %s: %d", kind, counts[kind])
 		}
 	}
-	if counts["unassigned_work"] != 1 || counts["root_candidate"] != 1 {
+	if counts["unassigned_work"] != 1 || counts["root_candidate"] != 1 || counts["attention"] != 1 {
 		t.Fatal("lost unassigned data")
 	}
 	value.WorkItems[0].Title = "변경됨"

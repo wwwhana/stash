@@ -10,6 +10,7 @@ import (
 
 	"github.com/alash3al/stash/internal/bootstrap"
 	"github.com/alash3al/stash/internal/brain"
+	"github.com/alash3al/stash/internal/models"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -204,6 +205,9 @@ func registerWorkGraphTools(mcpServer *server.MCPServer, bc *bootstrap.Context) 
 	mcpServer.AddTool(mcp.NewTool("get_work_item",
 		mcp.WithDescription("Get one work item and its linked worktrees."),
 		mcp.WithNumber("id", mcp.Required()),
+		mcp.WithString("namespace", mcp.Description("Optional exact namespace for a scoped UI selection")),
+		mcp.WithBoolean("include_context", mcp.Description("Include the selected task's plan purpose and owned scope")),
+		mcp.WithReadOnlyHintAnnotation(true),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		id, err := requiredPositiveID(request, "id")
 		if err != nil {
@@ -215,6 +219,25 @@ func registerWorkGraphTools(mcpServer *server.MCPServer, bc *bootstrap.Context) 
 		}
 		if err := authorizeNamespaceID(ctx, bc, item.NamespaceID); err != nil {
 			return nil, err
+		}
+		if namespace := request.GetString("namespace", ""); namespace != "" {
+			_, namespaceID, err := exactNamespaceID(ctx, bc, namespace)
+			if err != nil {
+				return nil, err
+			}
+			if namespaceID != item.NamespaceID {
+				return nil, fmt.Errorf("work item not found in this workspace")
+			}
+		}
+		if request.GetBool("include_context", false) {
+			planContext, err := bc.Brain.WorkItemPlanContext(ctx, item.ID, item.NamespaceID)
+			if err != nil {
+				return nil, err
+			}
+			return jsonToolResult(bc, struct {
+				*models.WorkItem
+				PlanContext *models.WorkPlanExecutionContext `json:"plan_context,omitempty"`
+			}{item, planContext})
 		}
 		return jsonToolResult(bc, item)
 	})

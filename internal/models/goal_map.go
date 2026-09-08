@@ -117,16 +117,23 @@ type GoalMapEdge struct {
 // GoalMap projects durable memory through executable work into the shared
 // hierarchical outcome. Work items without a goal stay visible as warnings.
 type GoalMap struct {
-	GoalTree                GoalMapTree       `json:"goal_tree"`
-	RootCandidates          []GoalBrief       `json:"root_candidates"`
-	RootCandidatesTruncated bool              `json:"root_candidates_truncated,omitempty"`
-	WorkItems               []GoalMapWork     `json:"work_items"`
-	Resources               []GoalMapResource `json:"resources"`
-	ResourceTotal           int               `json:"resource_total"`
-	ResourcesTruncated      bool              `json:"resources_truncated,omitempty"`
-	Memories                []GoalMapMemory   `json:"memories"`
-	Edges                   []GoalMapEdge     `json:"edges"`
-	UnassignedWork          []GoalMapWork     `json:"unassigned_work"`
+	Attention               []GoalMapAttention `json:"attention,omitempty"`
+	GoalTree                GoalMapTree        `json:"goal_tree"`
+	RootCandidates          []GoalBrief        `json:"root_candidates"`
+	RootCandidatesTruncated bool               `json:"root_candidates_truncated,omitempty"`
+	WorkItems               []GoalMapWork      `json:"work_items"`
+	Resources               []GoalMapResource  `json:"resources"`
+	ResourceTotal           int                `json:"resource_total"`
+	ResourcesTruncated      bool               `json:"resources_truncated,omitempty"`
+	Memories                []GoalMapMemory    `json:"memories"`
+	Edges                   []GoalMapEdge      `json:"edges"`
+	UnassignedWork          []GoalMapWork      `json:"unassigned_work"`
+}
+
+// GoalMapAttention points to existing work or goals that need an owner's action.
+type GoalMapAttention struct {
+	Key    string `json:"key"`
+	Reason string `json:"reason"`
 }
 
 // GoalBrief deliberately omits notes, timestamps, and unrelated goal fields.

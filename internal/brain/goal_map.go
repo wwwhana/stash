@@ -905,6 +905,7 @@ func (b *Brain) GetGoalMap(ctx context.Context, namespaceID int64, includeDone b
 	if err := b.appendGoalMapFactSources(ctx, namespaceID, result); err != nil {
 		return nil, err
 	}
+	result.Attention = goalMapAttention(result, time.Now())
 	return result, nil
 }
 

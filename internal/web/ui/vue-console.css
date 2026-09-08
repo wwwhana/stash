@@ -197,3 +197,17 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,su
 @media (prefers-reduced-motion:reduce) { *,*::before,*::after { transition:none!important; animation:none!important; } }
 
 .stash-login-language { display:flex; justify-content:flex-end; margin-bottom:16px; }
+
+.stash-attention { margin-bottom:22px; padding:14px 16px; border:1px solid var(--app-border); border-radius:9px; background:var(--app-surface); }
+.stash-attention header { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+.stash-attention h2,.stash-git-form h2 { margin:0; font-size:14px; font-weight:600; }
+.stash-attention h2 span { margin-left:5px; color:var(--app-muted); }
+.stash-attention ul { list-style:none; margin:8px 0 0; padding:0; }
+.stash-attention li + li { border-top:1px solid var(--app-border); }
+.stash-attention li button { display:flex; flex-wrap:wrap; justify-content:space-between; width:100%; gap:4px 14px; padding:10px 0; text-align:left; border:0; background:none; }
+.stash-attention li strong { font-size:13px; font-weight:500; overflow-wrap:anywhere; }
+.stash-attention li span { color:var(--app-danger); font-size:12px; }
+.stash-selection-loading { color:var(--app-muted); font-size:12px; }
+.stash-git-actions { display:flex; justify-content:flex-end; margin-bottom:14px; }
+.stash-git-form { display:grid; gap:14px; max-width:520px; margin-bottom:24px; padding:20px; border:1px solid var(--app-border); border-radius:9px; background:var(--app-surface); }
+.stash-git-form .stash-error { margin:0; }
