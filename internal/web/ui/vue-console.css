@@ -120,7 +120,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,su
 .stash-token-issued code { overflow-wrap:anywhere; }
 .stash-token-page { display:grid; gap:18px; max-width:760px; }
 .stash-token-page h2 { margin:0; font-size:22px; font-weight:600; }
-.stash-token-page header p { margin:5px 0 0; color:var(--app-muted); }
+.stash-token-page header p { margin:0; color:var(--app-muted); }
 .stash-token-form { display:flex; align-items:end; gap:10px; padding:16px; border:1px solid var(--app-border); border-radius:9px; background:var(--app-surface); }
 .stash-token-form .stash-field { flex:1; }
 .stash-token-issued-page { display:grid; gap:8px; padding:14px 16px; border:1px solid color-mix(in srgb, var(--app-accent) 35%, var(--app-border)); border-radius:9px; background:var(--app-accent-soft); }
