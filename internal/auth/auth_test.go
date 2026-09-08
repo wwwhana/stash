@@ -321,15 +321,55 @@ func TestPersistentAPITokenCanBeRevoked(t *testing.T) {
 		_, _ = pool.Exec(cleanupCtx, `DELETE FROM auth_tokens WHERE subject = $1`, subject)
 	}()
 	p := &Provider{config: Config{Mode: "token", APISecret: testSigningSecret}, tokenPool: pool}
-	raw, metadata, err := p.issueAPIToken(ctx, subject, "test token")
-	if err != nil || metadata.ID == 0 || raw == "" {
-		t.Fatalf("issue persistent token = %q, %#v, %v", raw, metadata, err)
+	session, err := generateSessionToken(subject, testSigningSecret, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("generate test session: %v", err)
+	}
+	issueRequest := httptest.NewRequest(http.MethodPost, "/auth/token", strings.NewReader(url.Values{"name": {"test token"}}.Encode()))
+	issueRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	issueRequest.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session})
+	issueResponse := httptest.NewRecorder()
+	p.HandleGenerateToken(issueResponse, issueRequest)
+	if issueResponse.Code != http.StatusOK {
+		t.Fatalf("issue status = %d, body = %s", issueResponse.Code, issueResponse.Body.String())
+	}
+	var issued struct {
+		Token     string     `json:"token"`
+		ID        int64      `json:"id"`
+		ExpiresIn int64      `json:"expires_in"`
+		ExpiresAt *time.Time `json:"expires_at"`
+	}
+	if err := json.NewDecoder(issueResponse.Body).Decode(&issued); err != nil {
+		t.Fatalf("decode issue response: %v", err)
+	}
+	if issued.Token == "" || issued.ID == 0 || issued.ExpiresIn != 0 || issued.ExpiresAt != nil {
+		t.Fatalf("unexpected issue response: id=%d expires_in=%d expires_at=%v", issued.ID, issued.ExpiresIn, issued.ExpiresAt)
+	}
+	raw := issued.Token
+	listRequest := httptest.NewRequest(http.MethodGet, "/auth/tokens", nil)
+	listRequest.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session})
+	listResponse := httptest.NewRecorder()
+	p.HandleTokens(listResponse, listRequest)
+	if listResponse.Code != http.StatusOK {
+		t.Fatalf("list status = %d, body = %s", listResponse.Code, listResponse.Body.String())
+	}
+	if strings.Contains(listResponse.Body.String(), raw) {
+		t.Fatal("token list exposed the raw token")
+	}
+	var listed struct {
+		Tokens []APIToken `json:"tokens"`
+	}
+	if err := json.NewDecoder(listResponse.Body).Decode(&listed); err != nil {
+		t.Fatalf("decode list response: %v", err)
+	}
+	if len(listed.Tokens) != 1 || listed.Tokens[0].ID != issued.ID || listed.Tokens[0].Name != "test token" {
+		t.Fatalf("unexpected token list: %#v", listed.Tokens)
 	}
 	if got, err := p.VerifyBearerToken(ctx, raw); err != nil || got != subject {
 		t.Fatalf("verify persistent token = %q, %v", got, err)
 	}
-	request := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/auth/tokens/%d/revoke", metadata.ID), nil)
-	request.Header.Set("Authorization", "Bearer "+raw)
+	request := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/auth/tokens/%d/revoke", issued.ID), nil)
+	request.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session})
 	response := httptest.NewRecorder()
 	p.HandleRevokeToken(response, request)
 	if response.Code != http.StatusOK {
