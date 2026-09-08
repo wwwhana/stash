@@ -5,14 +5,17 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/alash3al/stash/internal/db"
 	"github.com/coreos/go-oidc/v3/oidc"
 	jose "github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
@@ -296,6 +299,44 @@ func TestHandleGenerateTokenReportsBearerExpiry(t *testing.T) {
 	verify.Header.Set("Authorization", "Bearer "+body.Token)
 	if user, err := p.VerifyRequest(verify); err != nil || user != "subject-1" {
 		t.Fatalf("issued token did not verify: %q, %v", user, err)
+	}
+}
+
+func TestPersistentAPITokenCanBeRevoked(t *testing.T) {
+	dsn := strings.TrimSpace(os.Getenv("STASH_TEST_DATABASE_URL"))
+	if dsn == "" {
+		t.Skip("set STASH_TEST_DATABASE_URL to a disposable PostgreSQL database")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	pool, err := db.Open(ctx, dsn, "auth-token-test", 3)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	defer pool.Close()
+	subject := fmt.Sprintf("auth-token-test-%d", time.Now().UnixNano())
+	defer func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cleanupCancel()
+		_, _ = pool.Exec(cleanupCtx, `DELETE FROM auth_tokens WHERE subject = $1`, subject)
+	}()
+	p := &Provider{config: Config{Mode: "token", APISecret: testSigningSecret}, tokenPool: pool}
+	raw, metadata, err := p.issueAPIToken(ctx, subject, "test token")
+	if err != nil || metadata.ID == 0 || raw == "" {
+		t.Fatalf("issue persistent token = %q, %#v, %v", raw, metadata, err)
+	}
+	if got, err := p.VerifyBearerToken(ctx, raw); err != nil || got != subject {
+		t.Fatalf("verify persistent token = %q, %v", got, err)
+	}
+	request := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/auth/tokens/%d/revoke", metadata.ID), nil)
+	request.Header.Set("Authorization", "Bearer "+raw)
+	response := httptest.NewRecorder()
+	p.HandleRevokeToken(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("revoke status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if _, err := p.VerifyBearerToken(ctx, raw); err == nil {
+		t.Fatal("revoked persistent token was accepted")
 	}
 }
 

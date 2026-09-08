@@ -30,6 +30,7 @@ var uiPageFiles = map[string]string{
 	"/ui/goals":          "vue-console.html",
 	"/ui/agent-guide":    "vue-console.html",
 	"/ui/maintenance":    "vue-console.html",
+	"/ui/tokens":         "vue-console.html",
 }
 
 // GetUIHandler returns the HTTP handler for the embedded UI files.

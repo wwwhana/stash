@@ -24,6 +24,8 @@ import (
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	jose "github.com/go-jose/go-jose/v4"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/oauth2"
 )
 
@@ -72,6 +74,7 @@ type Config struct {
 
 type Provider struct {
 	config                Config
+	tokenPool             *pgxpool.Pool
 	oidcProvider          *oidc.Provider
 	oauth2Config          oauth2.Config
 	verifier              *oidc.IDTokenVerifier
@@ -87,6 +90,16 @@ type Provider struct {
 	authorizeRate         fixedWindowRateLimit
 	registerRate          fixedWindowRateLimit
 	tokenRate             fixedWindowRateLimit
+}
+
+// APIToken is the metadata shown in the token management page. The raw token
+// is intentionally absent; it is returned only once from HandleGenerateToken.
+type APIToken struct {
+	ID         int64      `json:"id"`
+	Name       string     `json:"name"`
+	CreatedAt  time.Time  `json:"created_at"`
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
 }
 
 // hmacKeySet adapts a configured OIDC client secret to go-oidc's KeySet
@@ -357,6 +370,14 @@ func Init(ctx context.Context, cfg Config) (*Provider, error) {
 	}, nil
 }
 
+// SetTokenPool connects durable API-token storage after database migrations
+// have run. The provider is fully usable without it for legacy signed tokens.
+func (p *Provider) SetTokenPool(pool *pgxpool.Pool) {
+	if p != nil {
+		p.tokenPool = pool
+	}
+}
+
 // Mode reports the configured authentication profile. An OIDC configuration
 // is kept as "oidc" for status and compatibility, but its HTTP behavior is
 // the OAuth profile required by MCP.
@@ -549,10 +570,13 @@ func (p *Provider) handleTokenLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rawToken := strings.TrimSpace(r.PostFormValue("token"))
-	subject, expiresAt, err := parseStashTokenClaims(rawToken, p.config.APISecret)
+	subject, expiresAt, err := p.verifyAPIToken(r.Context(), rawToken)
 	if err != nil {
 		writeTokenLoginPage(w, true, p.browserLoginConfigured())
 		return
+	}
+	if expiresAt.IsZero() {
+		expiresAt = time.Now().Add(defaultTokenTTL)
 	}
 	p.setSessionCookie(w, subject, expiresAt)
 	w.Header().Set("Cache-Control", "no-store")
@@ -1277,6 +1301,72 @@ func (p *Provider) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(status)
 }
 
+// HandleTokens lists the authenticated user's API-token metadata. Raw token
+// values are never recoverable after issuance.
+func (p *Provider) HandleTokens(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	if p == nil || p.tokenPool == nil {
+		http.Error(w, `{"error":"token management is unavailable"}`, http.StatusServiceUnavailable)
+		return
+	}
+	user, err := p.VerifyRequest(r)
+	if err != nil || user == "" {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+	tokens, err := p.listAPITokens(r.Context(), user)
+	if err != nil {
+		http.Error(w, `{"error":"could not list API tokens"}`, http.StatusServiceUnavailable)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"tokens": tokens})
+}
+
+// HandleRevokeToken revokes one API token belonging to the authenticated user.
+// Repeating the request is safe, which also makes double-clicks harmless.
+func (p *Provider) HandleRevokeToken(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	if err := browserRequestProtection.Check(r); err != nil {
+		http.Error(w, `{"error":"cross-origin request denied"}`, http.StatusForbidden)
+		return
+	}
+	if p == nil || p.tokenPool == nil {
+		http.Error(w, `{"error":"token management is unavailable"}`, http.StatusServiceUnavailable)
+		return
+	}
+	path := strings.TrimPrefix(r.URL.Path, "/auth/tokens/")
+	path = strings.TrimSuffix(path, "/revoke")
+	id, err := strconv.ParseInt(path, 10, 64)
+	if err != nil || id <= 0 || strings.Contains(path, "/") {
+		http.Error(w, `{"error":"invalid API token ID"}`, http.StatusBadRequest)
+		return
+	}
+	user, err := p.VerifyRequest(r)
+	if err != nil || user == "" {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+	if err := p.revokeAPIToken(r.Context(), user, id); err != nil {
+		status := http.StatusNotFound
+		if strings.Contains(err.Error(), "storage is unavailable") {
+			status = http.StatusServiceUnavailable
+		}
+		http.Error(w, `{"error":"could not revoke API token"}`, status)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "revoked": true})
+}
+
 // HandleAuthorizationServerMetadata serves RFC 8414 metadata for the local
 // OAuth broker. When no browser client is configured, the configured issuer
 // remains the external authorization server and clients discover it directly.
@@ -1409,7 +1499,8 @@ func (p *Provider) verifyRequest(r *http.Request, mcp bool) (string, error) {
 		return parseOAuthAccessToken(rawToken, p.config.APISecret, p.configuredResourceURL(r))
 	}
 	if strings.HasPrefix(rawToken, apiTokenPrefix) {
-		return parseStashToken(rawToken, p.config.APISecret)
+		subject, _, err := p.verifyAPIToken(r.Context(), rawToken)
+		return subject, err
 	}
 	if mcp {
 		return "", errors.New("MCP OAuth or API token required")
@@ -1436,7 +1527,8 @@ func (p *Provider) VerifyBearerToken(ctx context.Context, rawToken string) (stri
 		return parseOAuthAccessToken(rawToken, p.config.APISecret, normalizeResourceURL(p.config.MCPResourceURL))
 	}
 	if strings.HasPrefix(rawToken, apiTokenPrefix) {
-		return parseStashToken(rawToken, p.config.APISecret)
+		subject, _, err := p.verifyAPIToken(ctx, rawToken)
+		return subject, err
 	}
 	if strings.HasPrefix(rawToken, sessionTokenPrefix) {
 		return parseSessionToken(rawToken, p.config.APISecret)
@@ -1644,6 +1736,125 @@ func requestBaseURL(r *http.Request) string {
 	return (&url.URL{Scheme: scheme, Host: strings.TrimSpace(r.Host)}).String()
 }
 
+func (p *Provider) verifyAPIToken(ctx context.Context, rawToken string) (string, time.Time, error) {
+	rawToken = strings.TrimSpace(rawToken)
+	if p == nil {
+		return "", time.Time{}, errors.New("authentication is disabled")
+	}
+	if p.tokenPool == nil {
+		return parseStashTokenClaims(rawToken, p.config.APISecret)
+	}
+	hash := sha256.Sum256([]byte(rawToken))
+	var subject string
+	var revokedAt *time.Time
+	err := p.tokenPool.QueryRow(ctx, `
+		SELECT subject, revoked_at
+		FROM auth_tokens
+		WHERE token_hash = $1
+	`, hash[:]).Scan(&subject, &revokedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Tokens issued before durable storage remain valid until their signed
+		// expiry. New opaque tokens never reach this fallback.
+		return parseStashTokenClaims(rawToken, p.config.APISecret)
+	}
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("look up API token: %w", err)
+	}
+	if revokedAt != nil {
+		return "", time.Time{}, errors.New("API token revoked")
+	}
+	// ponytail: update usage inline; split this into an async write only if auth
+	// traffic makes the extra round trip measurable.
+	_, _ = p.tokenPool.Exec(ctx, `
+		UPDATE auth_tokens SET last_used_at = clock_timestamp()
+		WHERE token_hash = $1 AND revoked_at IS NULL
+	`, hash[:])
+	return subject, time.Time{}, nil
+}
+
+func (p *Provider) issueAPIToken(ctx context.Context, subject, name string) (string, APIToken, error) {
+	if p == nil {
+		return "", APIToken{}, errors.New("authentication is disabled")
+	}
+	name = strings.TrimSpace(name)
+	if len(name) > 120 {
+		return "", APIToken{}, errors.New("token name is too long")
+	}
+	if p.tokenPool == nil {
+		ttl := p.config.APITokenTTL
+		if ttl <= 0 {
+			ttl = defaultTokenTTL
+		}
+		token, err := generateStashToken(subject, p.config.APISecret, ttl)
+		return token, APIToken{}, err
+	}
+	secret, err := randomToken(32)
+	if err != nil {
+		return "", APIToken{}, err
+	}
+	token := apiTokenPrefix + secret
+	hash := sha256.Sum256([]byte(token))
+	var metadata APIToken
+	err = p.tokenPool.QueryRow(ctx, `
+		INSERT INTO auth_tokens (subject, name, token_hash)
+		VALUES ($1, $2, $3)
+		RETURNING id, name, created_at, last_used_at, revoked_at
+	`, subject, name, hash[:]).Scan(&metadata.ID, &metadata.Name, &metadata.CreatedAt, &metadata.LastUsedAt, &metadata.RevokedAt)
+	if err != nil {
+		return "", APIToken{}, fmt.Errorf("store API token: %w", err)
+	}
+	return token, metadata, nil
+}
+
+func (p *Provider) listAPITokens(ctx context.Context, subject string) ([]APIToken, error) {
+	if p == nil || p.tokenPool == nil {
+		return []APIToken{}, nil
+	}
+	rows, err := p.tokenPool.Query(ctx, `
+		SELECT id, name, created_at, last_used_at, revoked_at
+		FROM auth_tokens
+		WHERE subject = $1
+		ORDER BY created_at DESC, id DESC
+	`, subject)
+	if err != nil {
+		return nil, fmt.Errorf("list API tokens: %w", err)
+	}
+	defer rows.Close()
+	tokens := make([]APIToken, 0)
+	for rows.Next() {
+		var token APIToken
+		if err := rows.Scan(&token.ID, &token.Name, &token.CreatedAt, &token.LastUsedAt, &token.RevokedAt); err != nil {
+			return nil, fmt.Errorf("read API token: %w", err)
+		}
+		tokens = append(tokens, token)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read API tokens: %w", err)
+	}
+	return tokens, nil
+}
+
+func (p *Provider) revokeAPIToken(ctx context.Context, subject string, id int64) error {
+	if p == nil || p.tokenPool == nil {
+		return errors.New("durable API-token storage is unavailable")
+	}
+	if id <= 0 {
+		return errors.New("invalid API token ID")
+	}
+	result, err := p.tokenPool.Exec(ctx, `
+		UPDATE auth_tokens
+		SET revoked_at = COALESCE(revoked_at, clock_timestamp())
+		WHERE id = $1 AND subject = $2
+	`, id, subject)
+	if err != nil {
+		return fmt.Errorf("revoke API token: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return errors.New("API token not found")
+	}
+	return nil
+}
+
 func (p *Provider) HandleGenerateToken(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -1659,26 +1870,44 @@ func (p *Provider) HandleGenerateToken(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"authentication is disabled"}`, http.StatusNotFound)
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, `{"error":"invalid token request"}`, http.StatusBadRequest)
+		return
+	}
 	user, err := p.VerifyRequest(r)
 	if err != nil || user == "" {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
 
-	ttl := p.config.APITokenTTL
-	if ttl <= 0 {
-		ttl = defaultTokenTTL
-	}
-	token, err := generateStashToken(user, p.config.APISecret, ttl)
+	token, metadata, err := p.issueAPIToken(r.Context(), user, r.FormValue("name"))
 	if err != nil {
-		http.Error(w, `{"error":"token generation is unavailable"}`, http.StatusServiceUnavailable)
+		status := http.StatusServiceUnavailable
+		if strings.Contains(err.Error(), "token name is too long") {
+			status = http.StatusBadRequest
+		}
+		http.Error(w, `{"error":"token generation is unavailable"}`, status)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	response := map[string]any{
 		"token":      token,
 		"token_type": "Bearer",
-		"expires_in": int64(ttl / time.Second),
-	})
+		"expires_in": int64(0),
+	}
+	if metadata.ID == 0 {
+		ttl := p.config.APITokenTTL
+		if ttl <= 0 {
+			ttl = defaultTokenTTL
+		}
+		response["expires_in"] = int64(ttl / time.Second)
+	} else {
+		response["id"] = metadata.ID
+		response["name"] = metadata.Name
+		response["created_at"] = metadata.CreatedAt
+		response["expires_at"] = nil
+	}
+	_ = json.NewEncoder(w).Encode(response)
 }
 
 // HandleOAuthToken implements the authorization_code and refresh_token grants

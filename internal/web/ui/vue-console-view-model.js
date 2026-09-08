@@ -133,8 +133,13 @@
                     auth: { auth_mode: 'none', authenticated: false, user: '' },
                     authPanelOpen: false,
                     issuedToken: '',
+                    tokenName: '',
                     tokenLoading: false,
                     tokenError: '',
+                    authTokens: [],
+                    authTokensLoading: false,
+                    authTokensError: '',
+                    tokenRevokeID: 0,
                     apiAuthenticationExpired: null,
                     loadGeneration: 0
                 };
@@ -295,7 +300,7 @@
             methods: {
                 refreshVisible() {
                     if (!this.authChecked || this.authLoading || this.needsLogin || this.loading || this.refreshing || this.selectionLoading || this.detailLoading || this.maintenanceAction || document.visibilityState === 'hidden') return;
-                    if (!['goal-map', 'monitor', 'plan', 'board', 'graph', 'maintenance'].includes(this.route.route)) return;
+                    if (!['goal-map', 'monitor', 'plan', 'board', 'graph', 'maintenance', 'tokens'].includes(this.route.route)) return;
                     const focused = document.activeElement;
                     if (focused && focused.matches('input:not([type=checkbox]), textarea:not([readonly])')) return;
                     return this.loadRoute(false, true);
@@ -318,6 +323,7 @@
                 },
                 t(key, params) { return i18n.translate(this.locale, key, params); },
                 formatNumber(value) { return new Intl.NumberFormat(this.locale).format(number(value)); },
+                formatDateTime(value) { const date = new Date(value); return Number.isNaN(date.getTime()) ? this.t('empty.record') : new Intl.DateTimeFormat(this.locale, { dateStyle: 'medium', timeStyle: 'short' }).format(date); },
                 applyLocale() { document.documentElement.lang = this.locale; document.title = this.pageTitle + ' · Stash'; },
                 changeLocale(value) {
                     if (!i18n.locales.includes(value)) return;
@@ -599,6 +605,8 @@
                         if (route.route === 'maintenance') {
                             const maintenance = await api.adminRequest('/admin/maintenance/embeddings');
                             if (generation === this.loadGeneration) this.maintenance = maintenance;
+                        } else if (route.route === 'tokens') {
+                            await this.loadAuthTokens();
                         } else if (route.route === 'graph') {
                             graph = normalizeGraph(unwrap(await api.invokeTool('get_work_graph', { project: isProject(namespace) ? namespace : undefined, namespaces: isProject(namespace) ? undefined : namespace, include_done: true, node_limit: 200, edge_limit: 400 })));
                         } else if (route.route === 'plan') {
@@ -657,6 +665,7 @@
                     this.auth = { ...(this.auth || {}), authenticated: false, user: '' };
                     this.authPanelOpen = false;
                     this.issuedToken = '';
+                    this.authTokens = [];
                     this.tokenError = 'error.session';
                 },
                 beginLogin() {
@@ -670,9 +679,26 @@
                     this.issuedToken = '';
                     try { await fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' }); } finally { window.location.assign('/'); }
                 },
+                async loadAuthTokens() {
+                    if (this.authTokensLoading) return;
+                    this.authTokensLoading = true; this.authTokensError = '';
+                    try {
+                        const response = await fetch('/auth/tokens', { credentials: 'same-origin', headers: { Accept: 'application/json' } });
+                        const body = await response.json().catch(() => ({}));
+                        if (!response.ok) throw Object.assign(new Error(body.error || `HTTP ${response.status}`), { status: response.status });
+                        this.authTokens = Array.isArray(body.tokens) ? body.tokens : [];
+                    } catch (error) { this.authTokensError = i18n.errorMessage(error, 'error.tokens'); }
+                    finally { this.authTokensLoading = false; }
+                },
                 async issueToken() {
                     if (this.tokenLoading) return; this.tokenLoading = true; this.tokenError = '';
-                    try { const response = await fetch('/auth/token', { method: 'POST', credentials: 'same-origin', headers: { Accept: 'application/json' } }); const body = await response.json().catch(() => ({})); if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`); this.issuedToken = text(body.token); this.authPanelOpen = true; } catch (error) { this.tokenError = i18n.errorMessage(error, 'error.token'); } finally { this.tokenLoading = false; }
+                    try { const response = await fetch('/auth/token', { method: 'POST', credentials: 'same-origin', headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ name: this.tokenName }) }); const body = await response.json().catch(() => ({})); if (!response.ok) throw Object.assign(new Error(body.error || `HTTP ${response.status}`), { status: response.status }); this.issuedToken = text(body.token); this.tokenName = ''; if (this.route.route !== 'tokens') this.authPanelOpen = true; await this.loadAuthTokens(); } catch (error) { this.tokenError = i18n.errorMessage(error, 'error.token'); } finally { this.tokenLoading = false; }
+                },
+                async revokeToken(token) {
+                    if (!token || this.tokenRevokeID || token.revoked_at) return;
+                    if (!window.confirm(this.t('tokens.confirmRevoke'))) return;
+                    this.tokenRevokeID = number(token.id); this.tokenError = '';
+                    try { const response = await fetch(`/auth/tokens/${encodeURIComponent(token.id)}/revoke`, { method: 'POST', credentials: 'same-origin', headers: { Accept: 'application/json' } }); const body = await response.json().catch(() => ({})); if (!response.ok) throw Object.assign(new Error(body.error || `HTTP ${response.status}`), { status: response.status }); await this.loadAuthTokens(); } catch (error) { this.tokenError = i18n.errorMessage(error, 'error.revokeToken'); } finally { this.tokenRevokeID = 0; }
                 },
                 async copyIssuedToken() { if (!this.issuedToken || !navigator.clipboard) return; try { await navigator.clipboard.writeText(this.issuedToken); } catch (_) {} }
             }

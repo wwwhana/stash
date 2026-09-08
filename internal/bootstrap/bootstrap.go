@@ -68,6 +68,9 @@ func New(ctx context.Context) (*Context, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
+	if authProvider != nil {
+		authProvider.SetTokenPool(pool)
+	}
 	if embeddingReport.DimensionChanged || embeddingReport.ModelChanged || embeddingReport.ReindexQueued > 0 {
 		logger.Warn("embedding reindex queued",
 			"dimension_changed", embeddingReport.DimensionChanged,

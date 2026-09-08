@@ -18,7 +18,8 @@
         list_hypotheses: '/ui/hypotheses',
         list_goals: '/ui/goals',
         agent: '/ui/agent-guide',
-        maintenance: '/ui/maintenance'
+        maintenance: '/ui/maintenance',
+        tokens: '/ui/tokens'
     });
     const routeTitles = Object.freeze({
         'goal-map': 'nav.overview',
@@ -33,7 +34,8 @@
         list_hypotheses: 'nav.hypotheses',
         list_goals: 'nav.goals',
         agent: 'nav.agent',
-        maintenance: 'nav.maintenance'
+        maintenance: 'nav.maintenance',
+        tokens: 'nav.tokens'
     });
     const pathRoutes = new Map(Object.entries(routePaths).map(([route, path]) => [path, route]));
     const compatibilityPaths = new Set(['/ui/monitor-vue', '/ui/monitor-alpine']);
@@ -163,7 +165,7 @@
             setText(params, 'focus', value.focus);
             if (value.detail) params.set('detail', '1');
         }
-        if (['agent', 'maintenance'].includes(selected)) setNamespace(params, value.namespace || value.project);
+        if (['agent', 'maintenance', 'tokens'].includes(selected)) setNamespace(params, value.namespace || value.project);
         if (['goal-map', 'monitor', 'graph', 'board'].includes(selected)) {
             const issueID = positiveInteger(value.issueID);
             if (issueID) params.set('issue', String(issueID));

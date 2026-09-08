@@ -165,7 +165,7 @@ const openAPISpec = `{
       "post": {
         "tags": ["Service"],
         "summary": "MCP 토큰 발급",
-        "description": "현재 로그인한 주체의 Stash 토큰을 한 번 발급합니다. 토큰은 응답에만 포함됩니다.",
+        "description": "현재 로그인한 주체의 API 토큰을 발급합니다. 새 토큰은 폐기할 때까지 유효하며 원문은 응답에만 포함됩니다.",
         "operationId": "authToken",
         "security": [{"bearerAuth": []}],
         "responses": {
@@ -173,6 +173,33 @@ const openAPISpec = `{
           "401": {"$ref": "#/components/responses/Unauthorized"},
           "404": {"description": "인증이 꺼져 있음"},
           "503": {"description": "토큰 발급을 사용할 수 없음"}
+        }
+      }
+    },
+    "/auth/tokens": {
+      "get": {
+        "tags": ["Service"],
+        "summary": "API 토큰 목록",
+        "operationId": "authTokens",
+        "security": [{"bearerAuth": []}],
+        "responses": {
+          "200": {"description": "현재 주체가 발급한 토큰 메타데이터", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ApiTokenList"}}}},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "503": {"description": "토큰 관리가 준비되지 않음"}
+        }
+      }
+    },
+    "/auth/tokens/{id}/revoke": {
+      "post": {
+        "tags": ["Service"],
+        "summary": "API 토큰 폐기",
+        "operationId": "revokeAuthToken",
+        "security": [{"bearerAuth": []}],
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer", "format": "int64"}}],
+        "responses": {
+          "200": {"description": "토큰 폐기 완료", "content": {"application/json": {"schema": {"type": "object", "properties": {"id": {"type": "integer", "format": "int64"}, "revoked": {"type": "boolean"}}}}}},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "404": {"description": "토큰을 찾을 수 없음"}
         }
       }
     },
@@ -221,9 +248,31 @@ const openAPISpec = `{
         "type": "object",
         "required": ["token", "token_type", "expires_in"],
         "properties": {
+          "id": {"type": "integer", "format": "int64"},
+          "name": {"type": "string"},
           "token": {"type": "string"},
           "token_type": {"type": "string", "example": "Bearer"},
-          "expires_in": {"type": "integer", "format": "int64", "description": "유효 시간(초)"}
+          "expires_in": {"type": "integer", "format": "int64", "description": "유효 시간(초). 0이면 폐기할 때까지 유효함"},
+          "expires_at": {"type": "string", "format": "date-time", "nullable": true},
+          "created_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "ApiTokenList": {
+        "type": "object",
+        "required": ["tokens"],
+        "properties": {
+          "tokens": {"type": "array", "items": {"$ref": "#/components/schemas/ApiTokenMetadata"}}
+        }
+      },
+      "ApiTokenMetadata": {
+        "type": "object",
+        "required": ["id", "name", "created_at"],
+        "properties": {
+          "id": {"type": "integer", "format": "int64"},
+          "name": {"type": "string"},
+          "created_at": {"type": "string", "format": "date-time"},
+          "last_used_at": {"type": "string", "format": "date-time", "nullable": true},
+          "revoked_at": {"type": "string", "format": "date-time", "nullable": true}
         }
       },
       "Error": {
