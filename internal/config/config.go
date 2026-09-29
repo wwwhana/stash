@@ -60,6 +60,7 @@ type Config struct {
 	AuthTokenTTL        time.Duration `env:"STASH_AUTH_TOKEN_TTL" envDefault:"720h"`
 	AuthAccessTokenTTL  time.Duration `env:"STASH_AUTH_ACCESS_TOKEN_TTL" envDefault:"1h"`
 	AuthRefreshTokenTTL time.Duration `env:"STASH_AUTH_REFRESH_TOKEN_TTL" envDefault:"720h"`
+	AuthSessionTTL      time.Duration `env:"STASH_AUTH_SESSION_TTL" envDefault:"720h"`
 	AuthStdioToken      string        `env:"STASH_AUTH_STDIO_TOKEN" envDefault:""`
 	// Admin maintenance accepts either an authenticated OIDC subject listed
 	// here or the separate static token below. Keep this independent from the
@@ -217,6 +218,9 @@ func (c *Config) Validate() error {
 	}
 	if c.AuthAccessTokenTTL < 0 || c.AuthAccessTokenTTL > time.Hour {
 		return fmt.Errorf("STASH_AUTH_ACCESS_TOKEN_TTL must not be negative or greater than 1h")
+	}
+	if c.AuthSessionTTL < 0 {
+		return fmt.Errorf("STASH_AUTH_SESSION_TTL must not be negative")
 	}
 	if c.AuthRefreshTokenTTL < 0 {
 		return fmt.Errorf("STASH_AUTH_REFRESH_TOKEN_TTL must not be negative")

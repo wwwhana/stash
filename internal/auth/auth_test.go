@@ -795,8 +795,58 @@ func TestCompleteOIDCLoginFallsBackToIntrospection(t *testing.T) {
 	if authErr != nil {
 		t.Fatalf("complete login error = %v", authErr)
 	}
-	if subject != "subject-1" || gotExpiry.Unix() != expires {
-		t.Fatalf("completed identity = (%q, %v), want subject and expiry", subject, gotExpiry)
+	// The session lifetime is local, not the upstream token's short expiry.
+	if subject != "subject-1" || gotExpiry.Unix() == expires || gotExpiry.Before(time.Now().Add(defaultSessionTTL-time.Minute)) {
+		t.Fatalf("completed identity = (%q, %v), want subject and local session expiry", subject, gotExpiry)
+	}
+}
+
+func TestRenewSessionSlidesOnlyRenewableSessions(t *testing.T) {
+	p := &Provider{config: Config{APISecret: "test-secret", SessionTTL: 10 * time.Hour}}
+	renew := func(token string, bearer bool) *http.Cookie {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/auth/status", nil)
+		req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: token})
+		if bearer {
+			req.Header.Set("Authorization", "Bearer something")
+		}
+		rec := httptest.NewRecorder()
+		p.RenewSession(rec, req)
+		cookies := rec.Result().Cookies()
+		if len(cookies) == 0 {
+			return nil
+		}
+		return cookies[0]
+	}
+
+	fresh, _ := signSessionToken("subject-1", "test-secret", time.Now().Add(9*time.Hour), true)
+	if renew(fresh, false) != nil {
+		t.Fatal("session with more than half its lifetime left was reissued")
+	}
+	aging, _ := signSessionToken("subject-1", "test-secret", time.Now().Add(time.Hour), true)
+	cookie := renew(aging, false)
+	if cookie == nil {
+		t.Fatal("aging renewable session was not reissued")
+	}
+	subject, expiresAt, renewable, err := parseSessionClaims(cookie.Value, "test-secret")
+	if err != nil || subject != "subject-1" || !renewable || expiresAt.Before(time.Now().Add(10*time.Hour-time.Minute)) {
+		t.Fatalf("renewed session = %q %v %v %v", subject, expiresAt, renewable, err)
+	}
+	if renew(aging, true) != nil {
+		t.Fatal("bearer request reissued a session cookie")
+	}
+	fixed, _ := generateSessionToken("subject-1", "test-secret", time.Now().Add(time.Hour))
+	if renew(fixed, false) != nil {
+		t.Fatal("non-renewable session was extended")
+	}
+	if got, err := parseSessionToken(fixed, "test-secret"); err != nil || got != "subject-1" {
+		t.Fatalf("legacy session parse = %q, %v", got, err)
+	}
+	tampered := strings.Replace(fixed, sessionTokenPrefix, sessionTokenPrefix, 1)
+	parts := strings.Split(tampered, ".")
+	forged := strings.Join(append(parts[:2], "r", parts[2]), ".")
+	if _, err := parseSessionToken(forged, "test-secret"); err == nil {
+		t.Fatal("renewable flag was accepted without a matching signature")
 	}
 }
 

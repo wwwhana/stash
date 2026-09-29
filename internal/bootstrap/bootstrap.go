@@ -58,6 +58,7 @@ func New(ctx context.Context) (*Context, error) {
 		APITokenTTL:     cfg.AuthTokenTTL,
 		AccessTokenTTL:  cfg.AuthAccessTokenTTL,
 		RefreshTokenTTL: cfg.AuthRefreshTokenTTL,
+		SessionTTL:      cfg.AuthSessionTTL,
 		StdioToken:      cfg.AuthStdioToken,
 	})
 	if err != nil {

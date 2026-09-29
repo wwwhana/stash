@@ -217,6 +217,7 @@ If tools fail, check `.env`:
 | `STASH_AUTH_TOKEN_TTL` | Lifetime of issued API tokens (default `720h`) |
 | `STASH_AUTH_ACCESS_TOKEN_TTL` | OAuth access-token lifetime (default and maximum `1h`) |
 | `STASH_AUTH_REFRESH_TOKEN_TTL` | OAuth refresh-token lifetime (default `720h`) |
+| `STASH_AUTH_SESSION_TTL` | Browser console session lifetime after login; renewed while in use (default `720h`) |
 | `STASH_AUTH_MCP_RESOURCE_URL` | Required canonical `/mcp` HTTPS URL in OAuth mode; loopback HTTP is allowed locally |
 | `STASH_AUTH_COOKIE_SECURE` | `false` for loopback HTTP; `true` for public HTTPS |
 

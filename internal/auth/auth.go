@@ -40,6 +40,7 @@ const (
 	defaultTokenTTL        = 30 * 24 * time.Hour
 	defaultAccessTokenTTL  = time.Hour
 	defaultRefreshTokenTTL = 30 * 24 * time.Hour
+	defaultSessionTTL      = 30 * 24 * time.Hour
 	authorizationCodeTTL   = 90 * time.Second
 	loginStateTTL          = 10 * time.Minute
 	dynamicClientIdleTTL   = 24 * time.Hour
@@ -69,7 +70,11 @@ type Config struct {
 	APITokenTTL     time.Duration
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
-	StdioToken      string
+	// SessionTTL is the browser console session lifetime after an OIDC login.
+	// It is independent of the upstream ID-token expiry, which is usually only
+	// minutes long and would otherwise sign the user out almost immediately.
+	SessionTTL time.Duration
+	StdioToken string
 }
 
 type Provider struct {
@@ -576,10 +581,13 @@ func (p *Provider) handleTokenLogin(w http.ResponseWriter, r *http.Request) {
 		writeTokenLoginPage(w, true, p.browserLoginConfigured())
 		return
 	}
-	if expiresAt.IsZero() {
-		expiresAt = time.Now().Add(defaultTokenTTL)
+	// A session backed by an unlimited token slides like an OIDC session; one
+	// backed by an expiring token must never outlive that token.
+	renewable := expiresAt.IsZero()
+	if renewable {
+		expiresAt = time.Now().Add(p.sessionTTL())
 	}
-	p.setSessionCookie(w, subject, expiresAt)
+	p.setSessionCookie(w, subject, expiresAt, renewable)
 	w.Header().Set("Cache-Control", "no-store")
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
@@ -706,7 +714,7 @@ func (p *Provider) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	p.setSessionCookie(w, subject, expiresAt)
+	p.setSessionCookie(w, subject, expiresAt, true)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
@@ -774,7 +782,7 @@ func (p *Provider) HandleConsent(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt:       time.Now().Add(authorizationCodeTTL),
 	}
 	p.mu.Unlock()
-	p.setSessionCookie(w, pending.Subject, pending.SessionExpiresAt)
+	p.setSessionCookie(w, pending.Subject, pending.SessionExpiresAt, true)
 	values := url.Values{"code": {code}}
 	if pending.State != "" {
 		values.Set("state", pending.State)
@@ -829,9 +837,9 @@ func (p *Provider) completeOIDCLogin(r *http.Request, providedState string, w ht
 		// introspection result bound to that same client is a safe OAuth
 		// compatibility fallback. Keep the verifier error in the log so the
 		// provider can still be configured for normal OIDC validation later.
-		if subject, expiresAt, introspectionErr := p.introspectLoginAccessToken(providerCtx, token.AccessToken); introspectionErr == nil {
+		if subject, _, introspectionErr := p.introspectLoginAccessToken(providerCtx, token.AccessToken); introspectionErr == nil {
 			log.Printf("OIDC identity token verification failed; accepted introspected access token: %v", err)
-			return subject, expiresAt, nil
+			return subject, time.Now().Add(p.sessionTTL()), nil
 		} else {
 			log.Printf("OIDC identity token verification failed: %v (access-token introspection fallback failed: %v)", err, introspectionErr)
 		}
@@ -845,11 +853,12 @@ func (p *Provider) completeOIDCLogin(r *http.Request, providedState string, w ht
 	if err != nil {
 		return "", time.Time{}, &authHTTPError{http.StatusUnauthorized, "identity token has no stable subject"}
 	}
-	expiresAt := idToken.Expiry
-	if expiresAt.IsZero() || !expiresAt.After(time.Now()) {
+	if idToken.Expiry.IsZero() || !idToken.Expiry.After(time.Now()) {
 		return "", time.Time{}, &authHTTPError{http.StatusUnauthorized, "identity token is expired"}
 	}
-	return subject, expiresAt, nil
+	// The ID token only proves the login moment; the Stash session lifetime
+	// is governed locally so the console does not expire with it.
+	return subject, time.Now().Add(p.sessionTTL()), nil
 }
 
 // verifyIdentityToken accepts the asymmetric algorithms supported by go-oidc
@@ -937,11 +946,40 @@ func loginStateMatches(r *http.Request, providedState string) bool {
 	return subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(providedState)) == 1
 }
 
-func (p *Provider) setSessionCookie(w http.ResponseWriter, subject string, expiresAt time.Time) {
+func (p *Provider) sessionTTL() time.Duration {
+	if p == nil || p.config.SessionTTL <= 0 {
+		return defaultSessionTTL
+	}
+	return p.config.SessionTTL
+}
+
+// RenewSession slides a renewable browser session forward once less than half
+// of its lifetime remains, so an actively used console stays signed in.
+// Bearer credentials and non-renewable sessions are left untouched.
+func (p *Provider) RenewSession(w http.ResponseWriter, r *http.Request) {
+	if p == nil || p.config.APISecret == "" || bearerToken(r) != "" {
+		return
+	}
+	cookie, err := r.Cookie(sessionCookieName)
+	if err != nil {
+		return
+	}
+	subject, expiresAt, renewable, err := parseSessionClaims(strings.TrimSpace(cookie.Value), p.config.APISecret)
+	if err != nil || !renewable {
+		return
+	}
+	ttl := p.sessionTTL()
+	if time.Until(expiresAt) > ttl/2 {
+		return
+	}
+	p.setSessionCookie(w, subject, time.Now().Add(ttl), true)
+}
+
+func (p *Provider) setSessionCookie(w http.ResponseWriter, subject string, expiresAt time.Time, renewable bool) {
 	if p.config.APISecret == "" {
 		return
 	}
-	session, err := generateSessionToken(subject, p.config.APISecret, expiresAt)
+	session, err := signSessionToken(subject, p.config.APISecret, expiresAt, renewable)
 	if err != nil {
 		return
 	}
@@ -1297,6 +1335,7 @@ func (p *Provider) HandleStatus(w http.ResponseWriter, r *http.Request) {
 		if user, err := p.VerifyRequest(r); err == nil && user != "" {
 			status["authenticated"] = true
 			status["user"] = user
+			p.RenewSession(w, r)
 		}
 	}
 	_ = json.NewEncoder(w).Encode(status)
@@ -2407,6 +2446,13 @@ func generateOAuthAccessToken(user, secret, resource, scope string, ttl time.Dur
 }
 
 func generateSessionToken(user, secret string, expiresAt time.Time) (string, error) {
+	return signSessionToken(user, secret, expiresAt, false)
+}
+
+// signSessionToken encodes user.expiry[.r]; the optional "r" marks a session
+// that RenewSession may slide forward. Legacy three-part tokens stay valid
+// and are treated as non-renewable.
+func signSessionToken(user, secret string, expiresAt time.Time, renewable bool) (string, error) {
 	if user == "" {
 		return "", errors.New("user is required")
 	}
@@ -2416,39 +2462,50 @@ func generateSessionToken(user, secret string, expiresAt time.Time) (string, err
 	if !expiresAt.After(time.Now()) {
 		return "", errors.New("session expiry must be in the future")
 	}
-	payload := strings.Join([]string{
+	fields := []string{
 		base64.RawURLEncoding.EncodeToString([]byte(user)),
 		strconv.FormatInt(expiresAt.Unix(), 10),
-	}, ".")
+	}
+	if renewable {
+		fields = append(fields, "r")
+	}
+	payload := strings.Join(fields, ".")
 	return sessionTokenPrefix + payload + "." + sign(payload, secret), nil
 }
 
 func parseSessionToken(token, secret string) (string, error) {
+	user, _, _, err := parseSessionClaims(token, secret)
+	return user, err
+}
+
+func parseSessionClaims(token, secret string) (string, time.Time, bool, error) {
 	if secret == "" {
-		return "", errors.New("API secret is not configured")
+		return "", time.Time{}, false, errors.New("API secret is not configured")
 	}
 	if !strings.HasPrefix(token, sessionTokenPrefix) {
-		return "", errors.New("invalid session token prefix")
+		return "", time.Time{}, false, errors.New("invalid session token prefix")
 	}
 	parts := strings.Split(strings.TrimPrefix(token, sessionTokenPrefix), ".")
-	if len(parts) != 3 {
-		return "", errors.New("invalid session token format")
+	renewable := len(parts) == 4 && parts[2] == "r"
+	if len(parts) != 3 && !renewable {
+		return "", time.Time{}, false, errors.New("invalid session token format")
 	}
-	payload := strings.Join(parts[:2], ".")
+	signature := parts[len(parts)-1]
+	payload := strings.Join(parts[:len(parts)-1], ".")
 	expected, _ := hex.DecodeString(sign(payload, secret))
-	provided, err := hex.DecodeString(parts[2])
+	provided, err := hex.DecodeString(signature)
 	if err != nil || subtle.ConstantTimeCompare(provided, expected) != 1 {
-		return "", errors.New("invalid session token signature")
+		return "", time.Time{}, false, errors.New("invalid session token signature")
 	}
 	decodedUser, err := base64.RawURLEncoding.DecodeString(parts[0])
 	if err != nil || len(decodedUser) == 0 {
-		return "", errors.New("invalid session token user")
+		return "", time.Time{}, false, errors.New("invalid session token user")
 	}
 	expiresAt, err := strconv.ParseInt(parts[1], 10, 64)
 	if err != nil || expiresAt <= time.Now().Unix() {
-		return "", errors.New("session token expired")
+		return "", time.Time{}, false, errors.New("session token expired")
 	}
-	return string(decodedUser), nil
+	return string(decodedUser), time.Unix(expiresAt, 0), renewable, nil
 }
 
 func parseOAuthAccessToken(token, secret, expectedResource string) (string, error) {

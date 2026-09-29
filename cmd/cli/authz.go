@@ -59,6 +59,7 @@ func authenticatedHTTP(provider *auth.Provider, next http.Handler) http.Handler 
 		}
 
 		observability.RecordAuthCheck(r.URL.Path, "accepted")
+		provider.RenewSession(w, r)
 		ctx := context.WithValue(r.Context(), keyMode, "remote")
 		ctx = context.WithValue(ctx, keySSOUser, user)
 		next.ServeHTTP(w, r.WithContext(ctx))
