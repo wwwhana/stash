@@ -153,9 +153,11 @@ type oauthClient struct {
 	RedirectURIs            []string
 	TokenEndpointAuthMethod string
 	Secret                  string
-	Name                    string
-	Dynamic                 bool
-	LastUsed                time.Time
+	// SecretHash replaces Secret for clients restored from durable storage.
+	SecretHash []byte
+	Name       string
+	Dynamic    bool
+	LastUsed   time.Time
 }
 
 type authorizationRequest struct {
@@ -2060,7 +2062,7 @@ func (p *Provider) exchangeAuthorizationCode(w http.ResponseWriter, r *http.Requ
 		writeOAuthError(w, http.StatusBadRequest, "invalid_target", "resource does not match the authorization request")
 		return
 	}
-	p.issueOAuthTokens(w, code.Subject, clientID, resource, code.Scope)
+	p.issueOAuthTokens(w, r, code.Subject, clientID, resource, code.Scope)
 }
 
 func (p *Provider) exchangeRefreshToken(w http.ResponseWriter, r *http.Request, clientID string) {
@@ -2069,11 +2071,17 @@ func (p *Provider) exchangeRefreshToken(w http.ResponseWriter, r *http.Request, 
 		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "refresh_token is required")
 		return
 	}
-	p.mu.Lock()
-	p.ensureOAuthMapsLocked()
-	p.pruneOAuthStateLocked(time.Now())
-	refresh, ok := p.refreshTokens[provided]
-	p.mu.Unlock()
+	var refresh refreshToken
+	var ok bool
+	if p.tokenPool != nil {
+		refresh, ok = p.lookupRefreshToken(r.Context(), provided)
+	} else {
+		p.mu.Lock()
+		p.ensureOAuthMapsLocked()
+		p.pruneOAuthStateLocked(time.Now())
+		refresh, ok = p.refreshTokens[provided]
+		p.mu.Unlock()
+	}
 	if !ok || refresh.ClientID != clientID || !refresh.ExpiresAt.After(time.Now()) {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "refresh_token is invalid or expired")
 		return
@@ -2083,20 +2091,27 @@ func (p *Provider) exchangeRefreshToken(w http.ResponseWriter, r *http.Request, 
 		writeOAuthError(w, http.StatusBadRequest, "invalid_target", "resource does not match the refresh token")
 		return
 	}
-	p.mu.Lock()
-	if _, stillValid := p.refreshTokens[provided]; !stillValid {
-		p.mu.Unlock()
-		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "refresh_token is invalid or expired")
-		return
-	}
 	// Public clients get refresh-token rotation: the old token cannot be
 	// replayed after this request.
-	delete(p.refreshTokens, provided)
-	p.mu.Unlock()
-	p.issueOAuthTokens(w, refresh.Subject, clientID, resource, refresh.Scope)
+	if p.tokenPool != nil {
+		if !p.consumeRefreshToken(r.Context(), provided) {
+			writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "refresh_token is invalid or expired")
+			return
+		}
+	} else {
+		p.mu.Lock()
+		if _, stillValid := p.refreshTokens[provided]; !stillValid {
+			p.mu.Unlock()
+			writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "refresh_token is invalid or expired")
+			return
+		}
+		delete(p.refreshTokens, provided)
+		p.mu.Unlock()
+	}
+	p.issueOAuthTokens(w, r, refresh.Subject, clientID, resource, refresh.Scope)
 }
 
-func (p *Provider) issueOAuthTokens(w http.ResponseWriter, subject, clientID, resource, scope string) {
+func (p *Provider) issueOAuthTokens(w http.ResponseWriter, r *http.Request, subject, clientID, resource, scope string) {
 	accessTTL := p.config.AccessTokenTTL
 	if accessTTL <= 0 {
 		accessTTL = defaultAccessTokenTTL
@@ -2116,18 +2131,30 @@ func (p *Provider) issueOAuthTokens(w http.ResponseWriter, subject, clientID, re
 		return
 	}
 	refresh := refreshTokenPrefix + rawRefresh
-	p.mu.Lock()
-	p.ensureOAuthMapsLocked()
-	p.pruneOAuthStateLocked(time.Now())
-	p.storeRefreshTokenLocked(refresh, refreshToken{
+	grant := refreshToken{
 		Subject:   subject,
 		ClientID:  clientID,
 		Resource:  resource,
 		Scope:     scope,
 		CreatedAt: time.Now(),
 		ExpiresAt: time.Now().Add(refreshTTL),
-	})
-	p.mu.Unlock()
+	}
+	if p.tokenPool != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), oauthStoreTimeout)
+		err := p.persistRefreshToken(ctx, refresh, grant)
+		cancel()
+		if err != nil {
+			log.Printf("store OAuth refresh token: %v", err)
+			writeOAuthError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "refresh token storage is unavailable")
+			return
+		}
+	} else {
+		p.mu.Lock()
+		p.ensureOAuthMapsLocked()
+		p.pruneOAuthStateLocked(time.Now())
+		p.storeRefreshTokenLocked(refresh, grant)
+		p.mu.Unlock()
+	}
 
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
@@ -2234,10 +2261,17 @@ func (p *Provider) HandleOAuthRegister(w http.ResponseWriter, r *http.Request) {
 		Dynamic:                 true,
 		LastUsed:                now,
 	}
+	ctx, cancel := context.WithTimeout(r.Context(), oauthStoreTimeout)
+	defer cancel()
+	if err := p.persistOAuthClient(ctx, client, secret); err != nil {
+		log.Printf("register OAuth client: %v", err)
+		writeOAuthError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "client registration is unavailable")
+		return
+	}
 	p.mu.Lock()
 	p.ensureOAuthMapsLocked()
 	p.pruneOAuthStateLocked(now)
-	if len(p.clients) >= maxOAuthClients && !p.evictOldestUnusedClientLocked() {
+	if len(p.clients) >= maxOAuthClients && !p.evictOldestUnusedClientLocked() && p.tokenPool == nil {
 		p.mu.Unlock()
 		writeOAuthError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "client registration limit reached")
 		return
@@ -2285,7 +2319,13 @@ func (p *Provider) client(clientID string) (oauthClient, bool) {
 	if clientID == strings.TrimSpace(p.config.MCPClientID) {
 		return oauthClient{ID: clientID, TokenEndpointAuthMethod: "none"}, true
 	}
-	return oauthClient{}, false
+	p.mu.Unlock()
+	client, ok := p.loadOAuthClient(clientID)
+	p.mu.Lock()
+	if ok && (len(p.clients) < maxOAuthClients || p.evictOldestUnusedClientLocked()) {
+		p.clients[clientID] = client
+	}
+	return client, ok
 }
 
 func (p *Provider) clientExists(clientID string) bool {
@@ -2305,15 +2345,19 @@ func oauthClientAuthenticated(client oauthClient, secret string, fromBasic bool)
 	case "", "none":
 		return !fromBasic && secret == ""
 	case "client_secret_post":
-		if fromBasic || secret == "" || client.Secret == "" {
+		if fromBasic || secret == "" || client.Secret == "" && client.SecretHash == nil {
 			return false
 		}
 	case "client_secret_basic":
-		if !fromBasic || secret == "" || client.Secret == "" {
+		if !fromBasic || secret == "" || client.Secret == "" && client.SecretHash == nil {
 			return false
 		}
 	default:
 		return false
+	}
+	if client.SecretHash != nil {
+		sum := sha256.Sum256([]byte(secret))
+		return subtle.ConstantTimeCompare(sum[:], client.SecretHash) == 1
 	}
 	return len(secret) == len(client.Secret) && subtle.ConstantTimeCompare([]byte(secret), []byte(client.Secret)) == 1
 }
