@@ -15,10 +15,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alash3al/stash/internal/db"
 	"github.com/coreos/go-oidc/v3/oidc"
 	jose "github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/oauth2"
 )
 
@@ -274,7 +274,8 @@ func TestHandleGenerateTokenReportsBearerExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate session: %v", err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/auth/token", nil)
+	req := httptest.NewRequest(http.MethodPost, "/auth/token", strings.NewReader("expires_in=7200"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session})
 	rec := httptest.NewRecorder()
 	p.HandleGenerateToken(rec, req)
@@ -302,81 +303,234 @@ func TestHandleGenerateTokenReportsBearerExpiry(t *testing.T) {
 	}
 }
 
-func TestPersistentAPITokenCanBeRevoked(t *testing.T) {
+func TestHandleGenerateTokenLifetimeValidation(t *testing.T) {
+	p := &Provider{config: Config{APISecret: testSigningSecret, APITokenTTL: 2 * time.Hour}}
+	session, err := generateSessionToken("subject-1", testSigningSecret, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		form   string
+		status int
+	}{
+		{"", http.StatusServiceUnavailable},
+		{"expires_in=3600", http.StatusOK},
+		{"expires_in=9223372036", http.StatusOK},
+		{"expires_in=0", http.StatusServiceUnavailable},
+		{"expires_in=", http.StatusServiceUnavailable},
+		{"expires_in=++", http.StatusServiceUnavailable},
+		{"expires_in=-1", http.StatusBadRequest},
+		{"expires_in=1.5", http.StatusBadRequest},
+		{"expires_in=abc", http.StatusBadRequest},
+		{"expires_in=9223372037", http.StatusBadRequest},
+		{"expires_in=9223372036854775808", http.StatusBadRequest},
+		{"expires_in=0&expires_in=3600", http.StatusBadRequest},
+		{"expires_in=&expires_in=3600", http.StatusBadRequest},
+	} {
+		t.Run(tt.form, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/auth/token", strings.NewReader(tt.form))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session})
+			rec := httptest.NewRecorder()
+			p.HandleGenerateToken(rec, req)
+			if rec.Code != tt.status {
+				t.Fatalf("status = %d, want %d", rec.Code, tt.status)
+			}
+			if tt.status != http.StatusOK {
+				return
+			}
+			var issued struct {
+				Token     string    `json:"token"`
+				ExpiresIn int64     `json:"expires_in"`
+				ExpiresAt time.Time `json:"expires_at"`
+			}
+			if err := json.NewDecoder(rec.Body).Decode(&issued); err != nil {
+				t.Fatal(err)
+			}
+			seconds, _ := strconv.ParseInt(req.PostFormValue("expires_in"), 10, 64)
+			_, expiry, err := parseStashTokenClaims(issued.Token, testSigningSecret)
+			if err != nil || issued.ExpiresIn != seconds || !issued.ExpiresAt.Equal(expiry) {
+				t.Fatalf("issued lifetime = %d, expiry = %v, signed expiry = %v, error = %v", issued.ExpiresIn, issued.ExpiresAt, expiry, err)
+			}
+		})
+	}
+}
+
+func TestPersistentAPITokenLifetimeAndRevocation(t *testing.T) {
 	dsn := strings.TrimSpace(os.Getenv("STASH_TEST_DATABASE_URL"))
 	if dsn == "" {
 		t.Skip("set STASH_TEST_DATABASE_URL to a disposable PostgreSQL database")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	pool, err := db.Open(ctx, dsn, "auth-token-test", 3)
+	config, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
-		t.Fatalf("open database: %v", err)
+		t.Fatal("invalid test database URL")
+	}
+	// Isolate the auth migrations so this check needs only PostgreSQL, not pgvector.
+	schema := fmt.Sprintf("auth_token_test_%d", time.Now().UnixNano())
+	config.ConnConfig.RuntimeParams["search_path"] = schema
+	pool, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		t.Fatalf("open test database: %v", err)
 	}
 	defer pool.Close()
-	subject := fmt.Sprintf("auth-token-test-%d", time.Now().UnixNano())
+	if _, err := pool.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
+		t.Fatal(err)
+	}
 	defer func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cleanupCancel()
-		_, _ = pool.Exec(cleanupCtx, `DELETE FROM auth_tokens WHERE subject = $1`, subject)
+		if _, err := pool.Exec(cleanupCtx, "DROP SCHEMA "+schema+" CASCADE"); err != nil {
+			t.Error(err)
+		}
 	}()
+	legacyToken := apiTokenPrefix + "legacy-test-token"
+	for _, migration := range []string{"00040_add_auth_tokens.sql", "00041_add_auth_token_expiry.sql"} {
+		sql, err := os.ReadFile("../db/migrations/" + migration)
+		if err != nil {
+			t.Fatal(err)
+		}
+		up, _, _ := strings.Cut(string(sql), "-- +goose Down")
+		if _, err := pool.Exec(ctx, up); err != nil {
+			t.Fatal(err)
+		}
+		if migration == "00040_add_auth_tokens.sql" {
+			hash := sha256.Sum256([]byte(legacyToken))
+			if _, err := pool.Exec(ctx, `INSERT INTO auth_tokens (subject, token_hash) VALUES ('legacy', $1)`, hash[:]); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	p := &Provider{config: Config{Mode: "token", APISecret: testSigningSecret}, tokenPool: pool}
-	session, err := generateSessionToken(subject, testSigningSecret, time.Now().Add(time.Hour))
-	if err != nil {
-		t.Fatalf("generate test session: %v", err)
+	if subject, expiry, err := p.verifyAPIToken(ctx, legacyToken); err != nil || subject != "legacy" || !expiry.IsZero() {
+		t.Fatalf("legacy token after migration: subject=%q expiry=%v error=%v", subject, expiry, err)
 	}
-	issueRequest := httptest.NewRequest(http.MethodPost, "/auth/token", strings.NewReader(url.Values{"name": {"test token"}}.Encode()))
-	issueRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	issueRequest.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session})
-	issueResponse := httptest.NewRecorder()
-	p.HandleGenerateToken(issueResponse, issueRequest)
-	if issueResponse.Code != http.StatusOK {
-		t.Fatalf("issue status = %d, body = %s", issueResponse.Code, issueResponse.Body.String())
-	}
-	var issued struct {
-		Token     string     `json:"token"`
-		ID        int64      `json:"id"`
-		ExpiresIn int64      `json:"expires_in"`
-		ExpiresAt *time.Time `json:"expires_at"`
-	}
-	if err := json.NewDecoder(issueResponse.Body).Decode(&issued); err != nil {
-		t.Fatalf("decode issue response: %v", err)
-	}
-	if issued.Token == "" || issued.ID == 0 || issued.ExpiresIn != 0 || issued.ExpiresAt != nil {
-		t.Fatalf("unexpected issue response: id=%d expires_in=%d expires_at=%v", issued.ID, issued.ExpiresIn, issued.ExpiresAt)
-	}
-	raw := issued.Token
-	listRequest := httptest.NewRequest(http.MethodGet, "/auth/tokens", nil)
-	listRequest.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session})
-	listResponse := httptest.NewRecorder()
-	p.HandleTokens(listResponse, listRequest)
-	if listResponse.Code != http.StatusOK {
-		t.Fatalf("list status = %d, body = %s", listResponse.Code, listResponse.Body.String())
-	}
-	if strings.Contains(listResponse.Body.String(), raw) {
-		t.Fatal("token list exposed the raw token")
-	}
-	var listed struct {
-		Tokens []APIToken `json:"tokens"`
-	}
-	if err := json.NewDecoder(listResponse.Body).Decode(&listed); err != nil {
-		t.Fatalf("decode list response: %v", err)
-	}
-	if len(listed.Tokens) != 1 || listed.Tokens[0].ID != issued.ID || listed.Tokens[0].Name != "test token" {
-		t.Fatalf("unexpected token list: %#v", listed.Tokens)
-	}
-	if got, err := p.VerifyBearerToken(ctx, raw); err != nil || got != subject {
-		t.Fatalf("verify persistent token = %q, %v", got, err)
-	}
-	request := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/auth/tokens/%d/revoke", issued.ID), nil)
-	request.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session})
-	response := httptest.NewRecorder()
-	p.HandleRevokeToken(response, request)
-	if response.Code != http.StatusOK {
-		t.Fatalf("revoke status = %d, body = %s", response.Code, response.Body.String())
-	}
-	if _, err := p.VerifyBearerToken(ctx, raw); err == nil {
-		t.Fatal("revoked persistent token was accepted")
+	for _, tt := range []struct{ name, seconds string }{
+		{"default", ""}, {"empty", ""}, {"blank", " \t "}, {"unlimited", "0"}, {"one-day", "86400"}, {"manual", "604800"}, {"custom-days", "3888000"}, {"maximum", "9223372036"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			subject := "test-" + tt.name
+			session, err := generateSessionToken(subject, testSigningSecret, time.Now().Add(time.Hour))
+			if err != nil {
+				t.Fatal(err)
+			}
+			form := url.Values{"name": {"test token"}}
+			if tt.name != "default" {
+				form.Set("expires_in", tt.seconds)
+			}
+			before := time.Now()
+			issueRequest := httptest.NewRequest(http.MethodPost, "/auth/token", strings.NewReader(form.Encode()))
+			issueRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			issueRequest.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session})
+			issueResponse := httptest.NewRecorder()
+			p.HandleGenerateToken(issueResponse, issueRequest)
+			if issueResponse.Code != http.StatusOK {
+				t.Fatalf("issue status = %d", issueResponse.Code)
+			}
+			var issued struct {
+				APIToken
+				Token     string `json:"token"`
+				ExpiresIn int64  `json:"expires_in"`
+			}
+			if err := json.NewDecoder(issueResponse.Body).Decode(&issued); err != nil {
+				t.Fatal(err)
+			}
+			seconds, _ := strconv.ParseInt(tt.seconds, 10, 64)
+			if issued.Token == "" || issued.ID == 0 || issued.ExpiresIn != seconds || (issued.ExpiresAt == nil) != (seconds == 0) {
+				t.Fatalf("unexpected issue metadata: id=%d expires_in=%d expires_at=%v", issued.ID, issued.ExpiresIn, issued.ExpiresAt)
+			}
+			if seconds > 0 {
+				ttl := time.Duration(seconds) * time.Second
+				if issued.ExpiresAt.Before(before.Add(ttl).Add(-time.Second)) || issued.ExpiresAt.After(time.Now().Add(ttl)) {
+					t.Fatal("stored expiry does not match the requested lifetime")
+				}
+			}
+			listRequest := httptest.NewRequest(http.MethodGet, "/auth/tokens", nil)
+			listRequest.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session})
+			listResponse := httptest.NewRecorder()
+			p.HandleTokens(listResponse, listRequest)
+			if listResponse.Code != http.StatusOK || strings.Contains(listResponse.Body.String(), issued.Token) {
+				t.Fatalf("token list failed or exposed raw token: status=%d", listResponse.Code)
+			}
+			var listed struct {
+				Tokens []APIToken `json:"tokens"`
+			}
+			if err := json.NewDecoder(listResponse.Body).Decode(&listed); err != nil {
+				t.Fatal(err)
+			}
+			if len(listed.Tokens) != 1 || listed.Tokens[0].ID != issued.ID || listed.Tokens[0].Name != "test token" {
+				t.Fatal("token list does not match the issued token")
+			}
+			if (listed.Tokens[0].ExpiresAt == nil) != (seconds == 0) || seconds > 0 && !listed.Tokens[0].ExpiresAt.Equal(*issued.ExpiresAt) {
+				t.Fatal("token list lost the stored expiry")
+			}
+			if got, err := p.VerifyBearerToken(ctx, issued.Token); err != nil || got != subject {
+				t.Fatalf("verify persistent token = %q, %v", got, err)
+			}
+			login := func() *httptest.ResponseRecorder {
+				req := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(url.Values{"token": {issued.Token}}.Encode()))
+				req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+				rec := httptest.NewRecorder()
+				p.HandleLogin(rec, req)
+				return rec
+			}
+			loginResponse := login()
+			cookies := loginResponse.Result().Cookies()
+			if loginResponse.Code != http.StatusSeeOther || len(cookies) != 1 {
+				t.Fatalf("token login status = %d", loginResponse.Code)
+			}
+			if seconds > 0 && !cookies[0].Expires.Equal(issued.ExpiresAt.Truncate(time.Second)) {
+				t.Fatal("session outlives the token")
+			}
+			if seconds > 0 && tt.name != "manual" {
+				if _, err := pool.Exec(ctx, `UPDATE auth_tokens SET expires_at = clock_timestamp() WHERE id = $1`, issued.ID); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := p.VerifyBearerToken(ctx, issued.Token); err == nil {
+					t.Fatal("expired persistent token was accepted by the bearer verifier")
+				}
+				request := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+				request.Header.Set("Authorization", "Bearer "+issued.Token)
+				for _, verify := range []func(*http.Request) (string, error){p.VerifyRequest, p.VerifyMCPRequest} {
+					if _, err := verify(request); err == nil {
+						t.Fatal("expired persistent token was accepted over HTTP")
+					}
+				}
+				if rec := login(); rec.Code != http.StatusUnauthorized || len(rec.Result().Cookies()) != 0 {
+					t.Fatal("expired persistent token created a login session")
+				}
+			}
+			request := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/auth/tokens/%d/revoke", issued.ID), nil)
+			request.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session})
+			response := httptest.NewRecorder()
+			revokeStarted := time.Now()
+			p.HandleRevokeToken(response, request)
+			if response.Code != http.StatusOK {
+				t.Fatalf("revoke status = %d", response.Code)
+			}
+			if _, err := p.VerifyBearerToken(ctx, issued.Token); err == nil {
+				t.Fatal("revoked persistent token was accepted")
+			}
+			var revoked struct {
+				RevokedAt time.Time `json:"revoked_at"`
+				ExpiresAt time.Time `json:"expires_at"`
+			}
+			if err := json.NewDecoder(response.Body).Decode(&revoked); err != nil {
+				t.Fatal(err)
+			}
+			if !revoked.ExpiresAt.Equal(revoked.RevokedAt) || revoked.ExpiresAt.Before(revokeStarted.Add(-time.Second)) || revoked.ExpiresAt.After(time.Now()) {
+				t.Fatal("revocation did not return the immediate expiry")
+			}
+			tokens, err := p.listAPITokens(ctx, subject)
+			if err != nil || len(tokens) != 1 || tokens[0].ExpiresAt == nil || !tokens[0].ExpiresAt.Equal(revoked.ExpiresAt) || tokens[0].RevokedAt == nil || !tokens[0].RevokedAt.Equal(revoked.RevokedAt) {
+				t.Fatal("token list does not contain the updated expiry")
+			}
+			repeatedAt, err := p.revokeAPIToken(ctx, subject, issued.ID)
+			if err != nil || !repeatedAt.Equal(revoked.RevokedAt) {
+				t.Fatal("repeating revocation changed its original time")
+			}
+		})
 	}
 }
 

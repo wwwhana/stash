@@ -98,6 +98,7 @@ type APIToken struct {
 	ID         int64      `json:"id"`
 	Name       string     `json:"name"`
 	CreatedAt  time.Time  `json:"created_at"`
+	ExpiresAt  *time.Time `json:"expires_at"`
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
 }
@@ -1356,7 +1357,8 @@ func (p *Provider) HandleRevokeToken(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
-	if err := p.revokeAPIToken(r.Context(), user, id); err != nil {
+	revokedAt, err := p.revokeAPIToken(r.Context(), user, id)
+	if err != nil {
 		status := http.StatusNotFound
 		if strings.Contains(err.Error(), "storage is unavailable") {
 			status = http.StatusServiceUnavailable
@@ -1364,7 +1366,7 @@ func (p *Provider) HandleRevokeToken(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"could not revoke API token"}`, status)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "revoked": true})
+	_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "revoked": true, "revoked_at": revokedAt, "expires_at": revokedAt})
 }
 
 // HandleAuthorizationServerMetadata serves RFC 8414 metadata for the local
@@ -1747,11 +1749,12 @@ func (p *Provider) verifyAPIToken(ctx context.Context, rawToken string) (string,
 	hash := sha256.Sum256([]byte(rawToken))
 	var subject string
 	var revokedAt *time.Time
+	var expiresAt *time.Time
 	err := p.tokenPool.QueryRow(ctx, `
-		SELECT subject, revoked_at
+		SELECT subject, revoked_at, expires_at
 		FROM auth_tokens
 		WHERE token_hash = $1
-	`, hash[:]).Scan(&subject, &revokedAt)
+	`, hash[:]).Scan(&subject, &revokedAt, &expiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// Tokens issued before durable storage remain valid until their signed
 		// expiry. New opaque tokens never reach this fallback.
@@ -1763,16 +1766,22 @@ func (p *Provider) verifyAPIToken(ctx context.Context, rawToken string) (string,
 	if revokedAt != nil {
 		return "", time.Time{}, errors.New("API token revoked")
 	}
+	if expiresAt != nil && !expiresAt.After(time.Now()) {
+		return "", time.Time{}, errors.New("API token expired")
+	}
 	// ponytail: update usage inline; split this into an async write only if auth
 	// traffic makes the extra round trip measurable.
 	_, _ = p.tokenPool.Exec(ctx, `
 		UPDATE auth_tokens SET last_used_at = clock_timestamp()
 		WHERE token_hash = $1 AND revoked_at IS NULL
 	`, hash[:])
+	if expiresAt != nil {
+		return subject, *expiresAt, nil
+	}
 	return subject, time.Time{}, nil
 }
 
-func (p *Provider) issueAPIToken(ctx context.Context, subject, name string) (string, APIToken, error) {
+func (p *Provider) issueAPIToken(ctx context.Context, subject, name string, ttl time.Duration) (string, APIToken, error) {
 	if p == nil {
 		return "", APIToken{}, errors.New("authentication is disabled")
 	}
@@ -1781,12 +1790,15 @@ func (p *Provider) issueAPIToken(ctx context.Context, subject, name string) (str
 		return "", APIToken{}, errors.New("token name is too long")
 	}
 	if p.tokenPool == nil {
-		ttl := p.config.APITokenTTL
-		if ttl <= 0 {
-			ttl = defaultTokenTTL
+		if ttl == 0 {
+			return "", APIToken{}, errors.New("unlimited API tokens require durable storage")
 		}
 		token, err := generateStashToken(subject, p.config.APISecret, ttl)
-		return token, APIToken{}, err
+		if err != nil {
+			return "", APIToken{}, err
+		}
+		_, expiresAt, err := parseStashTokenClaims(token, p.config.APISecret)
+		return token, APIToken{Name: name, ExpiresAt: &expiresAt}, err
 	}
 	secret, err := randomToken(32)
 	if err != nil {
@@ -1795,11 +1807,15 @@ func (p *Provider) issueAPIToken(ctx context.Context, subject, name string) (str
 	token := apiTokenPrefix + secret
 	hash := sha256.Sum256([]byte(token))
 	var metadata APIToken
+	if ttl > 0 {
+		expiresAt := time.Now().UTC().Add(ttl)
+		metadata.ExpiresAt = &expiresAt
+	}
 	err = p.tokenPool.QueryRow(ctx, `
-		INSERT INTO auth_tokens (subject, name, token_hash)
-		VALUES ($1, $2, $3)
-		RETURNING id, name, created_at, last_used_at, revoked_at
-	`, subject, name, hash[:]).Scan(&metadata.ID, &metadata.Name, &metadata.CreatedAt, &metadata.LastUsedAt, &metadata.RevokedAt)
+		INSERT INTO auth_tokens (subject, name, token_hash, expires_at)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id, name, created_at, expires_at, last_used_at, revoked_at
+	`, subject, name, hash[:], metadata.ExpiresAt).Scan(&metadata.ID, &metadata.Name, &metadata.CreatedAt, &metadata.ExpiresAt, &metadata.LastUsedAt, &metadata.RevokedAt)
 	if err != nil {
 		return "", APIToken{}, fmt.Errorf("store API token: %w", err)
 	}
@@ -1811,7 +1827,7 @@ func (p *Provider) listAPITokens(ctx context.Context, subject string) ([]APIToke
 		return []APIToken{}, nil
 	}
 	rows, err := p.tokenPool.Query(ctx, `
-		SELECT id, name, created_at, last_used_at, revoked_at
+		SELECT id, name, created_at, expires_at, last_used_at, revoked_at
 		FROM auth_tokens
 		WHERE subject = $1
 		ORDER BY created_at DESC, id DESC
@@ -1823,7 +1839,7 @@ func (p *Provider) listAPITokens(ctx context.Context, subject string) ([]APIToke
 	tokens := make([]APIToken, 0)
 	for rows.Next() {
 		var token APIToken
-		if err := rows.Scan(&token.ID, &token.Name, &token.CreatedAt, &token.LastUsedAt, &token.RevokedAt); err != nil {
+		if err := rows.Scan(&token.ID, &token.Name, &token.CreatedAt, &token.ExpiresAt, &token.LastUsedAt, &token.RevokedAt); err != nil {
 			return nil, fmt.Errorf("read API token: %w", err)
 		}
 		tokens = append(tokens, token)
@@ -1834,25 +1850,28 @@ func (p *Provider) listAPITokens(ctx context.Context, subject string) ([]APIToke
 	return tokens, nil
 }
 
-func (p *Provider) revokeAPIToken(ctx context.Context, subject string, id int64) error {
+func (p *Provider) revokeAPIToken(ctx context.Context, subject string, id int64) (time.Time, error) {
 	if p == nil || p.tokenPool == nil {
-		return errors.New("durable API-token storage is unavailable")
+		return time.Time{}, errors.New("durable API-token storage is unavailable")
 	}
 	if id <= 0 {
-		return errors.New("invalid API token ID")
+		return time.Time{}, errors.New("invalid API token ID")
 	}
-	result, err := p.tokenPool.Exec(ctx, `
+	var revokedAt time.Time
+	err := p.tokenPool.QueryRow(ctx, `
 		UPDATE auth_tokens
-		SET revoked_at = COALESCE(revoked_at, clock_timestamp())
+		SET revoked_at = COALESCE(revoked_at, statement_timestamp()),
+		    expires_at = COALESCE(revoked_at, statement_timestamp())
 		WHERE id = $1 AND subject = $2
-	`, id, subject)
+		RETURNING revoked_at
+	`, id, subject).Scan(&revokedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return time.Time{}, errors.New("API token not found")
+	}
 	if err != nil {
-		return fmt.Errorf("revoke API token: %w", err)
+		return time.Time{}, fmt.Errorf("revoke API token: %w", err)
 	}
-	if result.RowsAffected() == 0 {
-		return errors.New("API token not found")
-	}
-	return nil
+	return revokedAt, nil
 }
 
 func (p *Provider) HandleGenerateToken(w http.ResponseWriter, r *http.Request) {
@@ -1881,7 +1900,20 @@ func (p *Provider) HandleGenerateToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, metadata, err := p.issueAPIToken(r.Context(), user, r.FormValue("name"))
+	var ttl time.Duration
+	if values, ok := r.PostForm["expires_in"]; ok {
+		value := strings.TrimSpace(r.PostForm.Get("expires_in"))
+		if value == "" {
+			value = "0"
+		}
+		seconds, err := strconv.ParseInt(value, 10, 64)
+		if len(values) != 1 || err != nil || seconds < 0 || seconds > int64((1<<63-1)/time.Second) {
+			http.Error(w, `{"error":"invalid token lifetime"}`, http.StatusBadRequest)
+			return
+		}
+		ttl = time.Duration(seconds) * time.Second
+	}
+	token, metadata, err := p.issueAPIToken(r.Context(), user, r.FormValue("name"), ttl)
 	if err != nil {
 		status := http.StatusServiceUnavailable
 		if strings.Contains(err.Error(), "token name is too long") {
@@ -1893,19 +1925,13 @@ func (p *Provider) HandleGenerateToken(w http.ResponseWriter, r *http.Request) {
 	response := map[string]any{
 		"token":      token,
 		"token_type": "Bearer",
-		"expires_in": int64(0),
+		"expires_in": int64(ttl / time.Second),
+		"expires_at": metadata.ExpiresAt,
 	}
-	if metadata.ID == 0 {
-		ttl := p.config.APITokenTTL
-		if ttl <= 0 {
-			ttl = defaultTokenTTL
-		}
-		response["expires_in"] = int64(ttl / time.Second)
-	} else {
+	if metadata.ID != 0 {
 		response["id"] = metadata.ID
 		response["name"] = metadata.Name
 		response["created_at"] = metadata.CreatedAt
-		response["expires_at"] = nil
 	}
 	_ = json.NewEncoder(w).Encode(response)
 }

@@ -133,7 +133,11 @@
                     auth: { auth_mode: 'none', authenticated: false, user: '' },
                     authPanelOpen: false,
                     issuedToken: '',
+                    issuedTokenID: 0,
+                    issuedTokenExpiresAt: null,
                     tokenName: '',
+                    tokenPeriod: '0',
+                    tokenCustomDays: '',
                     tokenLoading: false,
                     tokenError: '',
                     authTokens: [],
@@ -145,6 +149,9 @@
                 };
             },
             computed: {
+                tokenPeriodOptions() {
+                    return [{ value: '0', label: this.t('tokens.unlimited') }, ...[1, 7, 30, 90, 365].map(days => ({ value: String(days), label: this.t('tokens.days', { count: days }) })), { value: 'custom', label: this.t('tokens.customPeriod') }];
+                },
                 attentionItems() { return this.map.attention.map(entry => ({ ...entry, target: this.findByFocus(entry.key) })).filter(entry => entry.target); },
                 lastRefreshLabel() { return this.lastRefreshedAt ? this.t('refresh.updated', { time: new Intl.DateTimeFormat(this.locale, { hour: '2-digit', minute: '2-digit' }).format(this.lastRefreshedAt) }) : ''; },
                 navItems() { return navItems.map(item => ({ ...item, label: this.t(item.label) })); },
@@ -682,23 +689,44 @@
                 async loadAuthTokens() {
                     if (this.authTokensLoading) return;
                     this.authTokensLoading = true; this.authTokensError = '';
+                    const previousTokens = this.authTokens;
                     try {
                         const response = await fetch('/auth/tokens', { credentials: 'same-origin', headers: { Accept: 'application/json' } });
                         const body = await response.json().catch(() => ({}));
                         if (!response.ok) throw Object.assign(new Error(body.error || `HTTP ${response.status}`), { status: response.status });
-                        this.authTokens = Array.isArray(body.tokens) ? body.tokens : [];
+                        if (this.authTokens === previousTokens) this.authTokens = Array.isArray(body.tokens) ? body.tokens : [];
                     } catch (error) { this.authTokensError = i18n.errorMessage(error, 'error.tokens'); }
                     finally { this.authTokensLoading = false; }
                 },
                 async issueToken() {
-                    if (this.tokenLoading) return; this.tokenLoading = true; this.tokenError = '';
-                    try { const response = await fetch('/auth/token', { method: 'POST', credentials: 'same-origin', headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ name: this.tokenName }) }); const body = await response.json().catch(() => ({})); if (!response.ok) throw Object.assign(new Error(body.error || `HTTP ${response.status}`), { status: response.status }); this.issuedToken = text(body.token); this.tokenName = ''; if (this.route.route !== 'tokens') this.authPanelOpen = true; await this.loadAuthTokens(); } catch (error) { this.tokenError = i18n.errorMessage(error, 'error.token'); } finally { this.tokenLoading = false; }
+                    if (this.tokenLoading) return;
+                    this.tokenError = ''; this.issuedToken = ''; this.issuedTokenID = 0; this.issuedTokenExpiresAt = null;
+                    const period = text(this.tokenPeriod === 'custom' ? this.tokenCustomDays : this.tokenPeriod);
+                    const days = Number(period);
+                    if (!Number.isInteger(days) || days < (this.tokenPeriod === 'custom' && period ? 1 : 0) || days > 106751) { this.tokenError = 'tokens.invalidPeriod'; return; }
+                    this.tokenLoading = true;
+                    try {
+                        const response = await fetch('/auth/token', { method: 'POST', credentials: 'same-origin', headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ name: this.tokenName, expires_in: String(days * 86400) }) });
+                        const body = await response.json().catch(() => ({}));
+                        if (!response.ok) throw Object.assign(new Error(body.error || `HTTP ${response.status}`), { status: response.status });
+                        this.issuedToken = text(body.token); this.issuedTokenID = number(body.id); this.issuedTokenExpiresAt = body.expires_at || null; this.tokenName = '';
+                        await this.loadAuthTokens();
+                    } catch (error) { this.tokenError = i18n.errorMessage(error, 'error.token'); }
+                    finally { this.tokenLoading = false; }
                 },
+                tokenStatus(token) { return token.revoked_at ? 'tokens.revoked' : token.expires_at && new Date(token.expires_at).getTime() <= Date.now() ? 'tokens.expired' : 'tokens.active'; },
                 async revokeToken(token) {
                     if (!token || this.tokenRevokeID || token.revoked_at) return;
                     if (!window.confirm(this.t('tokens.confirmRevoke'))) return;
                     this.tokenRevokeID = number(token.id); this.tokenError = '';
-                    try { const response = await fetch(`/auth/tokens/${encodeURIComponent(token.id)}/revoke`, { method: 'POST', credentials: 'same-origin', headers: { Accept: 'application/json' } }); const body = await response.json().catch(() => ({})); if (!response.ok) throw Object.assign(new Error(body.error || `HTTP ${response.status}`), { status: response.status }); await this.loadAuthTokens(); } catch (error) { this.tokenError = i18n.errorMessage(error, 'error.revokeToken'); } finally { this.tokenRevokeID = 0; }
+                    try {
+                        const response = await fetch(`/auth/tokens/${encodeURIComponent(token.id)}/revoke`, { method: 'POST', credentials: 'same-origin', headers: { Accept: 'application/json' } });
+                        const body = await response.json().catch(() => ({}));
+                        if (!response.ok) throw Object.assign(new Error(body.error || `HTTP ${response.status}`), { status: response.status });
+                        this.authTokens = this.authTokens.map(item => item.id === token.id ? { ...item, revoked_at: body.revoked_at, expires_at: body.expires_at } : item);
+                        if (this.issuedTokenID === number(token.id)) this.issuedTokenExpiresAt = body.expires_at;
+                    } catch (error) { this.tokenError = i18n.errorMessage(error, 'error.revokeToken'); }
+                    finally { this.tokenRevokeID = 0; }
                 },
                 async copyIssuedToken() { if (!this.issuedToken || !navigator.clipboard) return; try { await navigator.clipboard.writeText(this.issuedToken); } catch (_) {} }
             }

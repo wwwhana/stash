@@ -165,11 +165,16 @@ const openAPISpec = `{
       "post": {
         "tags": ["Service"],
         "summary": "MCP 토큰 발급",
-        "description": "현재 로그인한 주체의 API 토큰을 발급합니다. 새 토큰은 폐기할 때까지 유효하며 원문은 응답에만 포함됩니다.",
+        "description": "현재 로그인한 주체의 API 토큰을 발급합니다. 무제한 또는 유효 시간을 지정할 수 있으며 원문은 발급 응답에만 포함됩니다.",
         "operationId": "authToken",
         "security": [{"bearerAuth": []}],
+        "requestBody": {"content": {"application/x-www-form-urlencoded": {"schema": {"type": "object", "properties": {
+          "name": {"type": "string", "maxLength": 120, "description": "토큰 이름 (선택)"},
+          "expires_in": {"type": "integer", "format": "int64", "minimum": 0, "maximum": 9223372036, "default": 0, "description": "유효 시간(초). 생략하거나 비워 두거나 0을 지정하면 무제한이며 토큰 저장소가 필요합니다."}
+        }}}}},
         "responses": {
           "200": {"description": "발급된 토큰", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ApiToken"}}}},
+          "400": {"$ref": "#/components/responses/BadRequest"},
           "401": {"$ref": "#/components/responses/Unauthorized"},
           "404": {"description": "인증이 꺼져 있음"},
           "503": {"description": "토큰 발급을 사용할 수 없음"}
@@ -197,7 +202,7 @@ const openAPISpec = `{
         "security": [{"bearerAuth": []}],
         "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer", "format": "int64"}}],
         "responses": {
-          "200": {"description": "토큰 폐기 완료", "content": {"application/json": {"schema": {"type": "object", "properties": {"id": {"type": "integer", "format": "int64"}, "revoked": {"type": "boolean"}}}}}},
+          "200": {"description": "토큰 폐기 완료. 만료일을 폐기 시각으로 즉시 갱신합니다.", "content": {"application/json": {"schema": {"type": "object", "properties": {"id": {"type": "integer", "format": "int64"}, "revoked": {"type": "boolean"}, "revoked_at": {"type": "string", "format": "date-time"}, "expires_at": {"type": "string", "format": "date-time"}}}}}},
           "401": {"$ref": "#/components/responses/Unauthorized"},
           "404": {"description": "토큰을 찾을 수 없음"}
         }
@@ -271,6 +276,7 @@ const openAPISpec = `{
           "id": {"type": "integer", "format": "int64"},
           "name": {"type": "string"},
           "created_at": {"type": "string", "format": "date-time"},
+          "expires_at": {"type": "string", "format": "date-time", "nullable": true, "description": "만료 시각. null이면 무제한"},
           "last_used_at": {"type": "string", "format": "date-time", "nullable": true},
           "revoked_at": {"type": "string", "format": "date-time", "nullable": true}
         }

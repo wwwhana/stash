@@ -29,6 +29,105 @@ const map = {
     edges: [{ from: 'work:2', to: 'goal:1', relation: 'contributes_to' }, { from: 'memory:fact:3', to: 'work:2', relation: 'context' }]
 };
 
+test('token issuance sends unlimited, preset, and custom lifetimes and keeps the returned expiry', async t => {
+    const { state } = setup('/ui/tokens');
+    const requests = [];
+    const expiresAt = '2026-12-01T00:00:00Z';
+    t.mock.method(globalThis, 'fetch', async (url, options) => {
+        requests.push({ url, options });
+        return { ok: true, json: async () => url === '/auth/token' ? { id: 1, token: 'test-token', expires_at: options.body.get('expires_in') === '0' ? null : expiresAt } : { tokens: [{ id: 1 }] } };
+    });
+    assert.equal(state.tokenPeriod, '0');
+    assert.equal(state.tokenCustomDays, '');
+    assert.deepEqual(state.tokenPeriodOptions.map(option => option.value), ['0', '1', '7', '30', '90', '365', 'custom']);
+    for (const [period, days] of [['0', 0], ['1', 1], ['7', 7], ['30', 30], ['90', 90], ['365', 365], ['custom', 45], ['custom', 106751], ['custom', ''], ['custom', ' \t '], ['custom', null]]) {
+        state.tokenName = 'Local agent'; state.tokenPeriod = period; state.tokenCustomDays = days;
+        await state.issueToken();
+        const request = requests.at(-2);
+        assert.equal(request.url, '/auth/token');
+        assert.equal(request.options.method, 'POST');
+        assert.equal(request.options.body.get('name'), 'Local agent');
+        assert.equal(request.options.body.get('expires_in'), String(days * 86400));
+        assert.equal(requests.at(-1).url, '/auth/tokens');
+        assert.equal(state.issuedToken, 'test-token');
+        assert.equal(state.issuedTokenID, 1);
+        assert.equal(state.issuedTokenExpiresAt, Number(days) ? expiresAt : null);
+        assert.equal(state.tokenName, '');
+        assert.equal(state.tokenLoading, false);
+        assert.equal(state.tokenError, '');
+    }
+});
+
+test('invalid token periods do not issue a token and failed issuance clears the previous result', async t => {
+    const { state } = setup('/ui/tokens');
+    const fetch = t.mock.method(globalThis, 'fetch', async () => ({ ok: false, status: 503, json: async () => ({}) }));
+    state.tokenPeriod = 'custom';
+    for (const days of ['abc', 0, -1, 1.5, 106752, Infinity]) {
+        state.tokenCustomDays = days;
+        await state.issueToken();
+        assert.equal(state.tokenError, 'tokens.invalidPeriod');
+        assert.equal(state.tokenLoading, false);
+    }
+    assert.equal(fetch.mock.callCount(), 0);
+    state.tokenCustomDays = 2; state.issuedToken = 'previous-token'; state.issuedTokenExpiresAt = '2026-12-01T00:00:00Z';
+    await state.issueToken();
+    assert.equal(fetch.mock.callCount(), 1);
+    assert.equal(state.issuedToken, '');
+    assert.equal(state.issuedTokenExpiresAt, null);
+    assert.equal(state.tokenLoading, false);
+    assert.deepEqual(state.tokenError, { key: 'error.http', params: { status: '503' } });
+});
+
+test('revocation immediately updates expiration and a pending list request cannot undo it', async t => {
+    const { state, window } = setup('/ui/tokens');
+    window.confirm = () => true;
+    const token = { id: 1, expires_at: null };
+    state.authTokens = [token]; state.issuedTokenID = 1;
+    const revokedAt = '2026-09-22T12:00:00Z';
+    let finishList;
+    const fetch = t.mock.method(globalThis, 'fetch', async url => {
+        if (url === '/auth/tokens') return new Promise(resolve => { finishList = resolve; });
+        assert.equal(url, '/auth/tokens/1/revoke');
+        return { ok: true, json: async () => ({ id: 1, revoked: true, revoked_at: revokedAt, expires_at: revokedAt }) };
+    });
+    const pendingList = state.loadAuthTokens();
+    await state.revokeToken(token);
+    const updated = { ...token, revoked_at: revokedAt, expires_at: revokedAt };
+    assert.deepEqual(state.authTokens, [updated]);
+    assert.equal(state.issuedTokenExpiresAt, revokedAt);
+    assert.equal(state.tokenRevokeID, 0);
+    assert.equal(fetch.mock.callCount(), 2);
+    finishList({ ok: true, json: async () => ({ tokens: [token] }) });
+    await pendingList;
+    assert.deepEqual(state.authTokens, [updated]);
+});
+
+test('a failed revocation keeps the stored expiration unchanged', async t => {
+    const { state, window } = setup('/ui/tokens');
+    window.confirm = () => true;
+    const token = { id: 1, expires_at: '2026-12-01T00:00:00Z' };
+    state.authTokens = [token]; state.issuedTokenID = 1; state.issuedTokenExpiresAt = token.expires_at;
+    t.mock.method(globalThis, 'fetch', async () => ({ ok: false, status: 503, json: async () => ({}) }));
+    await state.revokeToken(token);
+    assert.deepEqual(state.authTokens, [token]);
+    assert.equal(state.issuedTokenExpiresAt, token.expires_at);
+    assert.equal(state.tokenRevokeID, 0);
+    assert.ok(state.tokenError);
+});
+
+test('token status distinguishes active, expired, and revoked tokens at the expiry boundary', t => {
+    const { state } = setup('/ui/tokens');
+    t.mock.method(Date, 'now', () => Date.parse('2026-09-22T00:00:00Z'));
+    assert.equal(state.tokenStatus({ expires_at: null }), 'tokens.active');
+    assert.equal(state.tokenStatus({ expires_at: '2026-09-22T00:00:01Z' }), 'tokens.active');
+    assert.equal(state.tokenStatus({ expires_at: '2026-09-22T00:00:00Z' }), 'tokens.expired');
+    assert.equal(state.tokenStatus({ expires_at: '2026-09-21T23:59:59Z' }), 'tokens.expired');
+    assert.equal(state.tokenStatus({ expires_at: '2026-09-21T00:00:00Z', revoked_at: '2026-09-20T00:00:00Z' }), 'tokens.revoked');
+    state.locale = 'en';
+    assert.equal(state.tokenPeriodOptions[1].label, '1 day');
+    assert.equal(state.tokenPeriodOptions[2].label, '7 days');
+});
+
 test('login is checked before any namespace or work request', async () => {
     let requests = 0;
     const { state, window } = setup('/', async () => { requests++; });

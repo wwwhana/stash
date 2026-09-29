@@ -4,7 +4,7 @@ Stash gives each Web MCP agent a bounded view of the shared project and a durabl
 
 ## Install the agent rule
 
-Copy [AGENT.md](AGENT.md) into a project's `AGENTS.md`, or install `plugins/stash-work-plan` through the included Codex or Claude plugin manifest. Stash also serves the smaller `stash-work` skill through MCP Skills.
+Copy [AGENT.md](AGENT.md) into a project's `AGENTS.md`, or install `plugins/stash-work-plan` through the included Codex or Claude plugin manifest. Stash also serves the smaller `stash-work` skill through MCP Skills. Follow [Getting Started](GETTING_STARTED.md#2-connect-your-mcp-client) for the complete token, MCP registration, plugin installation, and verification sequence.
 
 Configure the client with the Streamable HTTP endpoint:
 
@@ -25,9 +25,9 @@ already-connected `stash` MCP server. The tool stores the submitted text under
 `/self/history`, wakes the embedding worker, and returns after the PostgreSQL
 insert. It does not wait for the embedding provider or consolidation. The MCP
 hook itself is a short synchronous request because that is the hook type that
-can reuse the client's OAuth connection; the expensive provider work is
-asynchronous. A disconnected server or failed insert remains visible and does
-not pretend that the prompt was saved.
+can reuse the client's configured authenticated `stash` MCP connection; the
+expensive provider work is asynchronous. A disconnected server or failed insert
+remains visible and does not pretend that the prompt was saved.
 
 Both plugin manifests use the same stop hook to protect an active lease. After a
 successful `claim_work`, `start_work`, or `claim_workspace`, Claude Code and
@@ -35,8 +35,9 @@ Codex must record a successful `finish_work` or `handoff_work` before the turn
 can stop. A failed terminal call, or a terminal response without
 `result_memory_linked: true`, does not clear the protection.
 
-The prompt-history hook uses the MCP server name `stash`. Install the plugin,
-enable that server name, then open `/hooks` in Codex and trust the changed
+The prompt-history hook uses the MCP server name `stash`; a connection named
+`stash-local` or anything else will not satisfy it. Install the plugin, enable
+the `stash` server, then open `/hooks` in Codex and trust the changed
 plugin hooks. In Claude Code, install the plugin and use
 `/hooks` to confirm that the plugin hook is listed. The hook keeps only a
 per-session active marker in the client plugin data directory; it never stores

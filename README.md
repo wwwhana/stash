@@ -72,13 +72,48 @@ token generated below.
 
 ### 2. Codex
 
-The bundled Docker Compose profile uses token authentication. Generate a token
-from the running container, then register the local Web MCP server:
+The bundled Docker Compose profile uses token authentication. Set these two
+server variables. Generate the signing secret once with `openssl rand -hex 32`
+and keep it stable; changing it requires issuing new tokens.
+
+```dotenv
+STASH_AUTH_MODE=token
+STASH_AUTH_API_SECRET=<output of openssl rand -hex 32>
+```
+
+When Stash and Codex run on the same machine, issue the token directly into the
+current shell and register the MCP server with the exact name `stash`:
 
 ```bash
-export STASH_MCP_TOKEN="$(docker compose exec -T stash /stash mcp token --subject codex)"
-codex mcp add stash-local --url http://127.0.0.1:8080/mcp --bearer-token-env-var STASH_MCP_TOKEN
+export STASH_MCP_TOKEN="$(docker compose exec -T stash /stash mcp token --subject codex --ttl 720h)"
+codex mcp add stash --url http://127.0.0.1:8080/mcp --bearer-token-env-var STASH_MCP_TOKEN
 ```
+
+For a remote server, issue the token on the server:
+
+```bash
+docker compose exec -T stash /stash mcp token --subject codex --ttl 720h
+```
+
+On a Mac running Codex, enter the issued token in zsh without echoing it. The
+`export` serves terminal Codex; `launchctl` serves a subsequently launched Codex
+app for the current login session:
+
+```zsh
+read -s "STASH_MCP_TOKEN?Stash token: "
+echo
+export STASH_MCP_TOKEN
+launchctl setenv STASH_MCP_TOKEN "$STASH_MCP_TOKEN"
+codex mcp add stash --url https://stash.example.com/mcp --bearer-token-env-var STASH_MCP_TOKEN
+```
+
+Fully quit and reopen the Codex app after setting the variable. The `launchctl`
+value does not survive logout or restart.
+
+The work-plan plugin hooks call the MCP server named `stash`, so do not choose a
+different name. Do not run `codex mcp login stash` in token mode. See the
+[complete Codex setup](docs/GETTING_STARTED.md#2-connect-your-mcp-client) for
+macOS app environment setup, plugin installation, and verification.
 
 You can also use the `stdio` transport and point it to the stash CLI binary:
 
@@ -120,8 +155,13 @@ HTTP MCP requests must send `Authorization: Bearer <stash_oauth_token>` or
 `Authorization: Bearer <stash_api_token>`. The browser session cookie is only
 for the embedded console; it is not the standard client credential.
 
-The console's **Access settings** can issue a Stash API token after browser
-login. For a server without OIDC, run `stash mcp token --subject <agent>` with
+The console's **API tokens** page can issue and revoke Stash API tokens after
+browser login. Choose no expiration, a preset duration (1, 7, 30, 90, or 365 days),
+or a custom number of days. Leaving the duration blank means no expiration.
+Revoking a token immediately sets its expiration to the revocation time.
+The list shows expiration dates and expired tokens;
+tokens stop working when they expire or are revoked. Existing tokens keep their
+unlimited lifetime, and the raw value is shown only once. For a server without OIDC, run `stash mcp token --subject <agent>` with
 `STASH_AUTH_API_SECRET`; the command does not open the database or contact an
 OIDC provider. The token lifetime follows `STASH_AUTH_TOKEN_TTL` (30 days by
 default) and can be renewed with the same command.
@@ -232,7 +272,7 @@ An agent rules sample is available at [docs/AGENT.md](docs/AGENT.md). The defaul
 
 ### Work plan skill
 
-The repository includes the same MCP workflow as a Codex and Claude plugin. Configure a Stash MCP server named `stash`, then install the plugin from this repository:
+The repository includes the same MCP workflow as a Codex and Claude plugin. Configure a Stash MCP server named `stash`, then install the plugin from this repository. The [complete setup](docs/GETTING_STARTED.md#2-connect-your-mcp-client) covers the server variables, token, MCP registration, plugin, and verification in order:
 
 ```bash
 claude plugin marketplace add wwwhana/stash

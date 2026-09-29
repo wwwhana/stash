@@ -1,8 +1,20 @@
 # Getting Started with Stash
 
-Before the first start, generate a signing secret with `openssl rand -hex 32`
-and paste it into `STASH_AUTH_API_SECRET` in `.env`. Then run
-`docker compose up`.
+Before the first start, generate a signing secret with `openssl rand -hex 32`.
+Set the server's `.env` to token mode, paste the generated value once, and keep
+it stable. Changing the secret invalidates previously issued tokens.
+
+```dotenv
+STASH_AUTH_MODE=token
+STASH_AUTH_API_SECRET=<output of openssl rand -hex 32>
+```
+
+Then run `docker compose up`. If the server was already running when these
+values changed, recreate the Stash service so it receives the new environment:
+
+```bash
+docker compose up -d --force-recreate stash
+```
 
 ## 1. Verify Stash is running
 
@@ -41,20 +53,79 @@ curl -sS http://localhost:8080/openapi.json
 
 Point a Streamable HTTP client at `http://localhost:8080/mcp`. The older `/sse` endpoint remains available for clients that only support MCP over SSE.
 
-The Docker Compose profile requires a bearer token. Generate one from the
-running container and keep it in the client process environment:
+### Codex: token, MCP server, and plugin
+
+The Docker Compose profile requires a bearer token. Issue a 30-day token from
+the running server. The command prints the token once; do not put the returned
+value in documentation, source control, or chat:
 
 ```bash
-export STASH_MCP_TOKEN="$(docker compose exec -T stash /stash mcp token --subject agent-1)"
+docker compose exec -T stash /stash mcp token --subject codex --ttl 720h
 ```
 
-**Codex**:
+Set `STASH_MCP_TOKEN` on the computer that runs Codex. For Stash and terminal
+Codex on the same machine, issue it directly into the current shell without
+printing it again:
 
 ```bash
-codex mcp add stash-local --url http://127.0.0.1:8080/mcp --bearer-token-env-var STASH_MCP_TOKEN
+export STASH_MCP_TOKEN="$(docker compose exec -T stash /stash mcp token --subject codex --ttl 720h)"
 ```
 
-**Cursor** — create or edit `~/.cursor/mcp.json`:
+For the macOS Codex app, read a token supplied by the server operator without
+echoing it and add it to the current login session before fully quitting and
+reopening Codex:
+
+```zsh
+read -s "STASH_MCP_TOKEN?Stash token: "
+echo
+export STASH_MCP_TOKEN
+launchctl setenv STASH_MCP_TOKEN "$STASH_MCP_TOKEN"
+```
+
+`launchctl setenv` does not survive logout or restart. Set it again before
+launching Codex after a new login. Avoid saving the token as plain text in a
+shell profile.
+
+Register the MCP server with the exact name `stash`; the plugin hooks use this
+name. Use one of these URLs:
+
+```bash
+# Local Stash
+codex mcp add stash --url http://127.0.0.1:8080/mcp --bearer-token-env-var STASH_MCP_TOKEN
+
+# Remote Stash over HTTPS
+codex mcp add stash --url https://stash.example.com/mcp --bearer-token-env-var STASH_MCP_TOKEN
+```
+
+If an old `stash` entry has the wrong URL or authentication setting, remove that
+entry and add it again:
+
+```bash
+codex mcp remove stash
+```
+
+Install the bundled work-plan plugin, then start a new Codex session:
+
+```bash
+codex plugin marketplace add wwwhana/stash
+codex plugin add stash-work-plan@stash-tools
+```
+
+Open `/hooks` in Codex and review and trust the installed hooks. Confirm both
+registrations from the terminal:
+
+```bash
+codex mcp get stash
+codex plugin list
+```
+
+Token mode uses `STASH_MCP_TOKEN`; do not run `codex mcp login stash`. That
+command is only for a server running `STASH_AUTH_MODE=oauth` whose OAuth
+discovery endpoints return success.
+
+### Cursor
+
+Create or edit `~/.cursor/mcp.json`:
 
 ```json
 {
@@ -102,7 +173,7 @@ For shared project work, first create a namespace such as `/projects/myapp`, cre
 
 Do not run this tracked-work sequence for unrelated ordinary requests. `init` is first-time setup, `list_namespaces` is only for an unknown path, and `recall` is only for a history-dependent decision.
 
-The bundled Codex and Claude Code plugin gives the agent one short memory reminder at a new session startup without calling Stash. Its `UserPromptSubmit` hook sends the prompt to `queue_prompt_history`, which stores it under `/self/history` and returns after the database insert. Embedding runs in the server worker, and configured consolidation processes it later, so prompt handling does not wait for either provider call. The authenticated MCP hook is still one short request per submitted prompt; it reuses the client's existing OAuth connection instead of introducing another token.
+The bundled Codex and Claude Code plugin gives the agent one short memory reminder at a new session startup without calling Stash. Its `UserPromptSubmit` hook sends the prompt to `queue_prompt_history`, which stores it under `/self/history` and returns after the database insert. Embedding runs in the server worker, and configured consolidation processes it later, so prompt handling does not wait for either provider call. The authenticated MCP hook is still one short request per submitted prompt; it reuses the client's configured `stash` MCP connection instead of introducing another credential.
 
 This flow is entirely Web MCP based and does not require a local path, Git repository, or MCP Roots. For code projects, `stash workspace facts`, `resolve_workspace`, `resume_workspace`, and `claim_workspace` remain optional Git connector helpers.
 
@@ -204,7 +275,8 @@ Atlas Cloud docs: [https://www.atlascloud.ai/docs](https://www.atlascloud.ai/doc
 
 - Confirm `docker compose up` finished and port 8080 is not in use elsewhere.
 - Use `http://localhost:8080/mcp` (not `https`) for local Docker. Try `/sse` only for a client that does not support Streamable HTTP.
-- A `401` response means the client did not send the bearer token generated in step 2.
+- A `401` response means the client did not send a valid bearer token generated in step 2. Confirm that the Codex process inherited `STASH_MCP_TOKEN` and that `codex mcp get stash` names the same environment variable.
+- OAuth discovery `404` responses in token mode mean the client tried the wrong login flow. Remove the MCP entry, add it again with `--bearer-token-env-var STASH_MCP_TOKEN`, and do not run `codex mcp login stash`.
 
 **Empty recall results**
 

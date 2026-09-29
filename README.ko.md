@@ -68,13 +68,47 @@ STASH_VECTOR_DIM=384
 클라이언트를 설정합니다.
 
 ### 2. Codex
-Docker Compose 기본 설정은 토큰 인증을 사용합니다. 실행 중인 컨테이너에서
-토큰을 발급한 뒤 로컬 Web MCP 서버를 등록합니다.
+Docker Compose 기본 설정은 토큰 인증을 사용합니다. 서버의 `.env`에 다음 두
+변수를 설정하세요. 서명 비밀값은 `openssl rand -hex 32`로 한 번 생성한 뒤
+유지해야 합니다. 값을 바꾸면 기존 토큰을 다시 발급해야 합니다.
+
+```dotenv
+STASH_AUTH_MODE=token
+STASH_AUTH_API_SECRET=<openssl rand -hex 32 출력값>
+```
+
+Stash와 Codex가 같은 컴퓨터에서 실행된다면 토큰을 발급해 현재 셸에 바로 넣고,
+MCP 서버를 `stash`라는 이름으로 등록할 수 있습니다.
 
 ```bash
-export STASH_MCP_TOKEN="$(docker compose exec -T stash /stash mcp token --subject codex)"
-codex mcp add stash-local --url http://127.0.0.1:8080/mcp --bearer-token-env-var STASH_MCP_TOKEN
+export STASH_MCP_TOKEN="$(docker compose exec -T stash /stash mcp token --subject codex --ttl 720h)"
+codex mcp add stash --url http://127.0.0.1:8080/mcp --bearer-token-env-var STASH_MCP_TOKEN
 ```
+
+원격 서버라면 서버에서 다음 명령으로 토큰을 발급합니다.
+
+```bash
+docker compose exec -T stash /stash mcp token --subject codex --ttl 720h
+```
+
+Codex를 실행할 Mac의 zsh에서 발급받은 토큰을 화면에 표시하지 않고 입력하세요.
+터미널에서 실행하는 Codex는 `export` 값을 사용합니다. Codex 앱은 `launchctl`
+설정 뒤 완전히 종료했다가 다시 실행해야 합니다.
+
+```zsh
+read -s "STASH_MCP_TOKEN?Stash token: "
+echo
+export STASH_MCP_TOKEN
+launchctl setenv STASH_MCP_TOKEN "$STASH_MCP_TOKEN"
+codex mcp add stash --url https://stash.example.com/mcp --bearer-token-env-var STASH_MCP_TOKEN
+```
+
+`launchctl setenv` 값은 로그아웃하거나 재시작하면 사라집니다. 전체 설치와 확인
+순서는 [Getting Started](docs/GETTING_STARTED.md#2-connect-your-mcp-client)를
+참고하세요.
+
+작업 계획 플러그인의 훅이 `stash` 연결을 사용하므로 다른 이름으로 등록하지
+마세요. 토큰 모드에서는 `codex mcp login stash`도 실행하지 않습니다.
 
 `stdio` 방식으로 stash CLI 바이너리를 직접 실행할 수도 있습니다.
 ```json
@@ -117,7 +151,11 @@ HTTP MCP 요청은 `Authorization: Bearer <stash_oauth_token>` 또는
 `Authorization: Bearer <stash_api_token>` 헤더를 보내야 합니다. 화면에
 로그인할 때 쓰는 세션 쿠키는 표준 MCP 클라이언트 인증 수단이 아닙니다.
 
-화면의 **접근 설정**에서도 로그인 뒤 Stash API 토큰을 발급할 수 있습니다.
+화면의 **인증 토큰**에서 로그인 뒤 Stash API 토큰을 발급·폐기할 수 있습니다.
+무제한, 1·7·30·90·365일 또는 직접 입력한 일수로 발급할 수 있습니다.
+유효 기간을 비워 두면 무제한으로 발급하고, 수동으로 폐기하면 만료일을 폐기한 시각으로 즉시 갱신합니다.
+목록에 만료일과 만료 상태가 표시되며, 만료되거나 폐기한 토큰은 사용할 수 없습니다.
+기존 토큰의 무제한 유효기간은 유지되고 원문은 발급 직후 한 번만 표시됩니다.
 OIDC를 쓰지 않는 서버는 `STASH_AUTH_API_SECRET`이 있는 환경에서
 `stash mcp token --subject <에이전트>`를 실행하세요. 기본 유효기간은 30일이며
 `STASH_AUTH_TOKEN_TTL` 또는 명령의 `--ttl`로 늘려 발급할 수 있습니다.
@@ -220,7 +258,7 @@ stash issue comment add W-000001 --body "재현 조건을 확인했습니다"
 
 ### 작업 계획 스킬
 
-같은 MCP 작업 절차를 Codex와 Claude 플러그인으로 제공합니다. 먼저 `stash`라는 이름으로 Stash MCP 서버를 등록한 뒤 이 저장소에서 플러그인을 설치합니다.
+같은 MCP 작업 절차를 Codex와 Claude 플러그인으로 제공합니다. 먼저 `stash`라는 이름으로 Stash MCP 서버를 등록한 뒤 이 저장소에서 플러그인을 설치합니다. 서버 변수 설정부터 설치 확인까지 이어지는 전체 순서는 [Getting Started](docs/GETTING_STARTED.md#2-connect-your-mcp-client)에 있습니다.
 
 ```bash
 claude plugin marketplace add wwwhana/stash
