@@ -243,6 +243,10 @@ Stash is a cognitive layer between your AI agent and the world. Episodes become 
 
 A 9-stage consolidation pipeline turns raw observations into structured knowledge — facts, relationships, causal links, patterns, contradictions, goal tracking, failure patterns, and hypothesis verification. Each stage only processes new data since the last run.
 
+## Source-backed LLM Wiki
+
+Agents can maintain Markdown wiki documents backed by original episodes using `list_wiki_pages`, `get_wiki_page`, and `save_wiki_page`. Revisions preserve history, check source access, detect concurrent edits, and support deletion and restoration. See [LLM Wiki](docs/LLM_WIKI.md) for the first-phase MCP workflow and pagination contract. Web wiki views and Markdown export are planned for the next phase.
+
 ## Shared Work Map and Optional Connectors
 
 Work cards live separately from memory data and connect goals, tasks, dependencies, resources, and activity events in one graph. A project can select one shared top-level goal, decompose it into A-1, A-2, and deeper outcomes, and show memory and external resources flowing through work into that shared outcome. The Goal Map shows progress, active agents, blockers, next actions, recent results, and the Jira, Confluence, Git, browser, document, API, data, or device references attached to each item.

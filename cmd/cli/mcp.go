@@ -1077,6 +1077,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 	registerWorkExecutionTools(mcpServer, bc)
 	registerProjectCoordinationTools(mcpServer, bc)
 	registerWorkspaceTools(mcpServer, bc)
+	registerWikiTools(mcpServer, bc)
 	registerStashSkills(mcpServer)
 	return mcpServer
 }
