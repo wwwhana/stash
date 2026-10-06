@@ -1040,6 +1040,18 @@ func (p *Provider) issueAPIToken(ctx context.Context, subject, name string, ttl 
 	return token, metadata, nil
 }
 
+// ListAPITokens returns a subject's tokens, newest first, for the account
+// pages and the administrator's user list.
+func (p *Provider) ListAPITokens(ctx context.Context, subject string) ([]APIToken, error) {
+	return p.listAPITokens(ctx, strings.TrimSpace(subject))
+}
+
+// RevokeAPIToken revokes one of a subject's tokens; an administrator uses it
+// on behalf of another user.
+func (p *Provider) RevokeAPIToken(ctx context.Context, subject string, id int64) (time.Time, error) {
+	return p.revokeAPIToken(ctx, strings.TrimSpace(subject), id)
+}
+
 func (p *Provider) listAPITokens(ctx context.Context, subject string) ([]APIToken, error) {
 	if p == nil || p.tokenPool == nil {
 		return []APIToken{}, nil

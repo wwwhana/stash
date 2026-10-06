@@ -26,6 +26,7 @@ func registerAdminRoutes(mux *http.ServeMux, bc *bootstrap.Context) {
 	})))
 	registerLLMAdminRoutes(mux, bc)
 	registerSSOAdminRoutes(mux, bc)
+	registerUserAdminRoutes(mux, bc)
 }
 
 func adminOnlyHTTP(bc *bootstrap.Context, next http.Handler) http.Handler {

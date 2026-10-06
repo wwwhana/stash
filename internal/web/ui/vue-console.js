@@ -145,7 +145,7 @@
             <form class="stash-wiki-editor" @submit.prevent="saveWikiPage">
               <div class="stash-wiki-editor-fields">
                 <label class="stash-field"><span>{{ t('wiki.title') }}</span><input v-model="wikiEdit.title" required :disabled="wikiBusy"></label>
-                <label class="stash-field"><span>{{ t('wiki.slug') }}</span><input v-model="wikiEdit.slug" required pattern="[a-z0-9][a-z0-9_-]*(/[a-z0-9][a-z0-9_-]*)*" :disabled="wikiBusy || !wikiEdit.isNew" :placeholder="t('wiki.slugHint')"></label>
+                <label class="stash-field"><span>{{ t('wiki.slug') }}</span><input v-model="wikiEdit.slug" required pattern="[a-z0-9][a-z0-9_\\-]*(/[a-z0-9][a-z0-9_\\-]*)*" :disabled="wikiBusy || !wikiEdit.isNew" :placeholder="t('wiki.slugHint')"></label>
                 <label class="stash-field"><span>{{ t('wiki.kind') }}</span><select v-model="wikiEdit.kind" :disabled="wikiBusy"><option v-for="kind in wikiKinds" :key="kind" :value="kind">{{ t('wiki.kind.' + kind) }}</option></select></label>
                 <label class="stash-field"><span>{{ t('wiki.tags') }}</span><input v-model="wikiEdit.tags" :disabled="wikiBusy"></label>
                 <label class="stash-field is-wide"><span>{{ t('wiki.summary') }}</span><input v-model="wikiEdit.summary" :disabled="wikiBusy"></label>
@@ -255,6 +255,40 @@
                   <label class="stash-check"><input v-model="ssoForm.enabled" type="checkbox" :disabled="ssoBusy"><span>{{ t('llm.enabled') }}</span></label>
                   <div class="stash-llm-actions"><button type="submit" class="stash-button is-primary" :disabled="ssoBusy">{{ t('llm.save') }}</button><button type="button" class="stash-button" :disabled="ssoBusy" @click="ssoForm = null">{{ t('action.cancel') }}</button></div>
                 </form>
+              </section>
+              <section class="stash-llm-section stash-users" :aria-label="t('users.heading')">
+                <header class="stash-llm-head"><h3>{{ t('users.heading') }}</h3><button type="button" class="stash-button" :disabled="usersBusy" @click="openUserForm()">{{ t('users.add') }}</button></header>
+                <p class="stash-access-hint">{{ t('users.description') }}</p>
+                <p v-if="usersNotice" class="stash-llm-notice" role="status">{{ t(usersNotice) }}</p>
+                <p v-if="usersError" class="stash-error" role="alert">{{ t(usersError) }}</p>
+                <form v-if="userForm" class="stash-llm-form" @submit.prevent="saveUser">
+                  <h4>{{ userForm.username && userForm.mode === 'password' ? t('users.setPassword', { name: userForm.username }) : t('users.add') }}</h4>
+                  <label v-if="userForm.mode === 'create'" class="stash-field"><span>{{ t('auth.username') }}</span><input v-model="userForm.username" required pattern="[a-z0-9][a-z0-9._\\-]{0,63}" autocomplete="off" autocapitalize="off" :disabled="usersBusy"></label>
+                  <label v-if="userForm.mode === 'create'" class="stash-field"><span>{{ t('users.displayName') }}</span><input v-model="userForm.display_name" autocomplete="off" :disabled="usersBusy"></label>
+                  <label class="stash-field"><span>{{ userForm.mode === 'create' ? t('users.passwordOptional') : t('auth.newPassword') }}</span><input v-model="userForm.password" type="password" autocomplete="new-password" minlength="8" maxlength="72" :required="userForm.mode === 'password'" :disabled="usersBusy" :placeholder="userForm.mode === 'create' ? t('users.passwordHint') : ''"></label>
+                  <label v-if="userForm.mode === 'create'" class="stash-check"><input v-model="userForm.is_admin" type="checkbox" :disabled="usersBusy"><span>{{ t('users.admin') }}</span></label>
+                  <div class="stash-llm-actions"><button type="submit" class="stash-button is-primary" :disabled="usersBusy">{{ t('llm.save') }}</button><button type="button" class="stash-button" :disabled="usersBusy" @click="userForm = null">{{ t('action.cancel') }}</button></div>
+                </form>
+                <div v-if="!users.length" class="stash-loading" role="status">{{ t('users.loading') }}</div>
+                <ul v-else class="stash-llm-providers stash-user-list">
+                  <li v-for="user in users" :key="user.username" :class="{ 'is-disabled': user.disabled }">
+                    <div>
+                      <strong>{{ user.username }}<span v-if="user.display_name" class="stash-user-display"> · {{ user.display_name }}</span><span v-if="user.is_admin" class="stash-user-badge">{{ t('users.admin') }}</span><span v-if="user.disabled" class="stash-user-badge is-off">{{ t('users.disabled') }}</span><span v-if="user.username === usersActor" class="stash-user-badge is-you">{{ t('users.you') }}</span></strong>
+                      <small>{{ userIdentityText(user) }}<template v-if="user.last_login_at"> · {{ t('users.lastLogin', { time: formatDateTime(user.last_login_at) }) }}</template></small>
+                      <div v-if="userTokens[user.username]" class="stash-user-tokens">
+                        <div v-if="!userTokens[user.username].length" class="stash-user-token-empty">{{ t('users.noTokens') }}</div>
+                        <div v-for="token in userTokens[user.username]" :key="token.id" class="stash-user-token"><span><strong>{{ token.name || t('tokens.unnamed') }}</strong> <small>#{{ token.id }} · {{ formatDateTime(token.created_at) }} · {{ t(tokenStatus(token)) }}<template v-if="token.last_used_at"> · {{ t('tokens.lastUsed', { time: formatDateTime(token.last_used_at) }) }}</template><template v-if="token.expires_at && !token.revoked_at"> · {{ t('tokens.expiresAt', { time: formatDateTime(token.expires_at) }) }}</template></small></span><button v-if="!token.revoked_at" type="button" class="stash-button is-danger" :disabled="usersBusy" @click="revokeUserToken(user, token)">{{ t('tokens.revoke') }}</button></div>
+                      </div>
+                    </div>
+                    <div class="stash-llm-actions">
+                      <button type="button" class="stash-button" :disabled="usersBusy" @click="toggleUserTokens(user)">{{ userTokens[user.username] ? t('users.hideTokens') : t('users.showTokens') }}</button>
+                      <button type="button" class="stash-button" :disabled="usersBusy" @click="openUserForm(user)">{{ t('users.password') }}</button>
+                      <button type="button" class="stash-button" :disabled="usersBusy || user.username === usersActor" @click="updateUser(user, { is_admin: !user.is_admin })">{{ user.is_admin ? t('users.revokeAdmin') : t('users.makeAdmin') }}</button>
+                      <button type="button" class="stash-button" :disabled="usersBusy || user.username === usersActor" @click="updateUser(user, { disabled: !user.disabled })">{{ user.disabled ? t('users.enable') : t('users.disable') }}</button>
+                      <button type="button" class="stash-button is-danger" :disabled="usersBusy || user.username === usersActor" @click="deleteUser(user)">{{ llmDeleteLabel }}</button>
+                    </div>
+                  </li>
+                </ul>
               </section>
             </div>
           </template>

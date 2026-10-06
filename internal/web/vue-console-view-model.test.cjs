@@ -630,3 +630,43 @@ test('a signed-in person without a workspace still gets the console and can crea
     assert.equal(state.workspaceMissing, false);
     assert.equal(state.namespaces.length, 1);
 });
+
+test('the access page manages users and their tokens through the admin API', async () => {
+    const { state, window } = setup('/ui/access');
+    window.confirm = () => true;
+    const requests = [];
+    let users = [{ username: 'admin', display_name: '', is_admin: true, disabled: false, identities: [{ kind: 'password' }] }, { username: 'dana', display_name: 'Dana', is_admin: false, disabled: false, identities: [{ kind: 'oidc', issuer: 'https://idp.example.com' }] }];
+    globalThis.fetch = async (url, options = {}) => {
+        requests.push({ url, method: options.method || 'GET', body: options.body ? JSON.parse(options.body) : null });
+        const json = value => ({ ok: true, status: 200, json: async () => value });
+        if (url === '/admin/users' && !options.method) return json({ users, actor: 'admin' });
+        if (url === '/admin/users' && options.method === 'POST') { users = [...users, { username: 'eve', is_admin: false, disabled: false, identities: [{ kind: 'password' }] }]; return json({ username: 'eve' }); }
+        if (url === '/admin/users/dana' && options.method === 'PUT') { users = users.map(u => u.username === 'dana' ? { ...u, ...JSON.parse(options.body) } : u); return json(users[1]); }
+        if (url === '/admin/users/dana/tokens') return json({ username: 'dana', tokens: [{ id: 7, name: 'laptop', created_at: '2026-10-01T00:00:00Z' }, { id: 3, name: 'old', created_at: '2026-09-01T00:00:00Z', revoked_at: '2026-09-02T00:00:00Z' }] });
+        if (url === '/admin/users/dana/tokens/7/revoke') return json({ id: 7, revoked: true, revoked_at: '2026-10-05T00:00:00Z', expires_at: '2026-10-05T00:00:00Z' });
+        if (url === '/admin/sso/status') return json({ providers: [], secrets_enabled: true });
+        return { ok: false, status: 404, json: async () => ({ error: 'nope ' + url }) };
+    };
+    try {
+        await state.reloadUsers();
+        assert.equal(state.users.length, 2);
+        assert.equal(state.usersActor, 'admin');
+        assert.match(state.userIdentityText(state.users[1]), /idp\.example\.com/);
+        state.openUserForm();
+        state.userForm.username = 'Eve'; state.userForm.password = 'eve-password-1'; state.userForm.is_admin = false;
+        await state.saveUser();
+        assert.deepEqual(requests.find(r => r.url === '/admin/users' && r.method === 'POST').body, { username: 'eve', display_name: '', is_admin: false, password: 'eve-password-1' });
+        assert.equal(state.users.length, 3);
+        assert.equal(state.usersNotice, 'users.created');
+        await state.updateUser(state.users[1], { disabled: true });
+        assert.equal(state.users[1].disabled, true);
+        await state.toggleUserTokens(state.users[1]);
+        assert.equal(state.userTokens.dana.length, 2);
+        assert.equal(state.userTokens.dana[0].id, 7, 'newest token first as the server orders it');
+        await state.revokeUserToken(state.users[1], state.userTokens.dana[0]);
+        assert.equal(state.userTokens.dana[0].revoked_at, '2026-10-05T00:00:00Z');
+        assert.equal(state.tokenStatus(state.userTokens.dana[0]), 'tokens.revoked');
+        await state.toggleUserTokens(state.users[1]);
+        assert.equal(state.userTokens.dana, undefined);
+    } finally { delete globalThis.fetch; }
+});

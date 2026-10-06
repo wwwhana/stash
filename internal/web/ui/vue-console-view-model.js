@@ -119,6 +119,7 @@
                     llm: null, llmBusy: false, llmNotice: '', llmError: '', llmProviderForm: null, llmProbe: {}, llmAssignmentForms: {},
                     sso: null, ssoBusy: false, ssoNotice: '', ssoError: '', ssoForm: null, ssoTest: {},
                     workspaceMissing: false, workspaceInitializing: false,
+                    users: [], usersActor: '', usersBusy: false, usersError: '', usersNotice: '', userForm: null, userTokens: {},
                     wikiPages: [], wikiLog: [], wikiLint: null, wikiPage: null, wikiRendered: '', wikiHistory: [], wikiHistoryOpen: false, wikiEdit: null, wikiBusy: false, wikiCompiling: false, wikiNotice: '', wikiError: '', wikiFocusedSource: '',
                     wikiFilters: { kind: route.kind, tag: route.tag, stale: route.stale }, wikiKinds: ['article', 'index', 'entity', 'decision', 'log'],
                     copyStatus: 'action.copyGuide',
@@ -182,6 +183,7 @@
                 canSSOLogin() { return this.auth.sso_login === true && this.ssoProviders.length > 0; },
                 ssoProviders() { return Array.isArray(this.auth.sso_providers) ? this.auth.sso_providers.filter(item => item && item.slug) : []; },
                 ssoCallbackURL() { return window.location.origin + '/auth/callback'; },
+                llmDeleteLabel() { return this.t('llm.delete'); },
                 // The server settings pages answer 403 for a signed-in user who is
                 // not an administrator; without authentication they are open.
                 showAdminNav() { return !this.auth.authenticated || this.auth.admin !== false; },
@@ -447,7 +449,7 @@
                         return null;
                     } finally { this.llmBusy = false; }
                 },
-                async reloadLLM() { const status = await this.llmRequest('/admin/llm/status', {}); if (status) this.applyLLM(status); },
+                async reloadLLM() { const notice = this.llmNotice; const status = await this.llmRequest('/admin/llm/status', {}); if (status) { this.applyLLM(status); this.llmNotice = notice; } },
                 // Access page: SSO providers. Same shape as the model settings page.
                 async ssoRequest(path, options, notice) {
                     this.ssoBusy = true; this.ssoError = ''; this.ssoNotice = '';
@@ -460,7 +462,7 @@
                         return null;
                     } finally { this.ssoBusy = false; }
                 },
-                async reloadSSO() { const status = await this.ssoRequest('/admin/sso/status', {}); if (status) { status.providers = Array.isArray(status.providers) ? status.providers : []; this.sso = status; } },
+                async reloadSSO() { const notice = this.ssoNotice; const status = await this.ssoRequest('/admin/sso/status', {}); if (status) { status.providers = Array.isArray(status.providers) ? status.providers : []; this.sso = status; this.ssoNotice = notice; } },
                 openSSOForm(provider) {
                     this.ssoForm = provider
                         ? { id: provider.id, slug: provider.slug, display_name: provider.display_name || '', issuer: provider.issuer, client_id: provider.client_id, client_secret: '', redirect_url: provider.redirect_url, enabled: provider.enabled }
@@ -480,6 +482,61 @@
                 async testSSOProvider(provider) {
                     const result = await this.ssoRequest('/admin/sso/providers/' + provider.id + '/test', { method: 'POST' }, '');
                     if (result) this.ssoTest = { ...this.ssoTest, [String(provider.id)]: result };
+                },
+                // Users and their tokens, on the same page as SSO.
+                async usersRequest(path, options, notice) {
+                    this.usersBusy = true; this.usersError = ''; this.usersNotice = '';
+                    try {
+                        const result = await api.adminRequest(path, options);
+                        if (notice) this.usersNotice = notice;
+                        return result;
+                    } catch (error) {
+                        this.usersError = [401, 403].includes(error.status) ? 'error.admin' : { key: 'users.failed', params: { message: error.message } };
+                        return null;
+                    } finally { this.usersBusy = false; }
+                },
+                async reloadUsers() {
+                    const notice = this.usersNotice;
+                    const result = await this.usersRequest('/admin/users', {});
+                    if (result) { this.users = Array.isArray(result.users) ? result.users : []; this.usersActor = text(result.actor); this.usersNotice = notice; }
+                },
+                userIdentityText(user) {
+                    const parts = (user.identities || []).map(identity => identity.kind === 'password' ? this.t('users.identityPassword') : this.t('users.identitySSO', { issuer: identity.issuer || 'oidc' }));
+                    return parts.length ? parts.join(' · ') : this.t('users.noIdentity');
+                },
+                openUserForm(user) {
+                    this.userForm = user
+                        ? { mode: 'password', username: user.username, password: '' }
+                        : { mode: 'create', username: '', display_name: '', password: '', is_admin: false };
+                },
+                async saveUser() {
+                    const form = this.userForm; if (!form) return;
+                    let result;
+                    if (form.mode === 'password') {
+                        result = await this.usersRequest('/admin/users/' + encodeURIComponent(form.username) + '/password', this.llmJSON('POST', { password: form.password }), 'users.passwordSaved');
+                    } else {
+                        const body = { username: text(form.username).toLowerCase(), display_name: text(form.display_name), is_admin: !!form.is_admin };
+                        if (form.password) body.password = form.password;
+                        result = await this.usersRequest('/admin/users', this.llmJSON('POST', body), 'users.created');
+                    }
+                    if (result) { this.userForm = null; await this.reloadUsers(); }
+                },
+                async updateUser(user, change) {
+                    if (await this.usersRequest('/admin/users/' + encodeURIComponent(user.username), this.llmJSON('PUT', change), 'users.updated')) await this.reloadUsers();
+                },
+                async deleteUser(user) {
+                    if (!window.confirm(this.t('users.deleteConfirm', { name: user.username }))) return;
+                    if (await this.usersRequest('/admin/users/' + encodeURIComponent(user.username), { method: 'DELETE' }, 'users.deleted')) { const tokens = { ...this.userTokens }; delete tokens[user.username]; this.userTokens = tokens; await this.reloadUsers(); }
+                },
+                async toggleUserTokens(user) {
+                    if (this.userTokens[user.username]) { const tokens = { ...this.userTokens }; delete tokens[user.username]; this.userTokens = tokens; return; }
+                    const result = await this.usersRequest('/admin/users/' + encodeURIComponent(user.username) + '/tokens', {});
+                    if (result) this.userTokens = { ...this.userTokens, [user.username]: Array.isArray(result.tokens) ? result.tokens : [] };
+                },
+                async revokeUserToken(user, token) {
+                    if (!window.confirm(this.t('tokens.confirmRevoke'))) return;
+                    const result = await this.usersRequest('/admin/users/' + encodeURIComponent(user.username) + '/tokens/' + encodeURIComponent(token.id) + '/revoke', { method: 'POST' }, 'users.tokenRevoked');
+                    if (result) this.userTokens = { ...this.userTokens, [user.username]: (this.userTokens[user.username] || []).map(item => item.id === token.id ? { ...item, revoked_at: result.revoked_at, expires_at: result.expires_at } : item) };
                 },
                 async importSSOEnvironment() {
                     const result = await this.ssoRequest('/admin/sso/import-environment', { method: 'POST' }, '');
@@ -900,8 +957,11 @@
                             const status = await api.adminRequest('/admin/llm/status');
                             if (generation === this.loadGeneration) { this.llmProviderForm = null; this.llmError = ''; this.llmNotice = ''; this.applyLLM(status); }
                         } else if (route.route === 'access') {
-                            const status = await api.adminRequest('/admin/sso/status');
-                            if (generation === this.loadGeneration) { this.ssoForm = null; this.ssoError = ''; this.ssoNotice = ''; this.ssoTest = {}; status.providers = Array.isArray(status.providers) ? status.providers : []; this.sso = status; }
+                            const [status, userList] = await Promise.all([api.adminRequest('/admin/sso/status'), api.adminRequest('/admin/users')]);
+                            if (generation === this.loadGeneration) {
+                                this.ssoForm = null; this.ssoError = ''; this.ssoNotice = ''; this.ssoTest = {}; status.providers = Array.isArray(status.providers) ? status.providers : []; this.sso = status;
+                                this.userForm = null; this.usersError = ''; this.usersNotice = ''; this.userTokens = {}; this.users = Array.isArray(userList.users) ? userList.users : []; this.usersActor = text(userList.actor);
+                            }
                         } else if (route.route === 'tokens') {
                             await this.loadAuthTokens();
                         } else if (route.route === 'graph') {

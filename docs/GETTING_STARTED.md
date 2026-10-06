@@ -262,6 +262,8 @@ stash user passwd alice --password-stdin
 stash user remove alice             # revokes its API tokens; memory stays
 ```
 
+The same operations are on the console's **Users & SSO** page, which also
+lists each person's API tokens by creation date and revokes them.
 A user is a person; `stash user list` also shows how each one signs in
 (a password, an SSO subject, or both). SSO logins are matched to users by
 issuer and subject and provisioned on first login. The login page shows the
@@ -272,7 +274,7 @@ SSO providers live in the database. Set `STASH_AUTH_ISSUER`,
 `STASH_AUTH_CLIENT_ID`, `STASH_AUTH_CLIENT_SECRET`, and
 `STASH_AUTH_REDIRECT_URL` once to register the first one; the server imports
 it at startup when `STASH_SECRETS_KEY` is set (the secret is sealed with it).
-Add, test, disable, or remove providers on the console's **Login & SSO** page
+Add, test, disable, or remove providers on the console's **Users & SSO** page
 or with `stash sso list|add|set|test|remove`. Register
 `https://<stash>/auth/callback` as the redirect URL at the identity provider.
 

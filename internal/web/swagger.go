@@ -237,6 +237,58 @@ const openAPISpec = `{
         }
       }
     },
+    "/admin/users": {
+      "get": {
+        "tags": ["Admin"], "summary": "사용자 목록", "description": "사용자와 각자의 인증 수단(비밀번호, SSO subject)을 돌려줍니다. actor는 호출한 관리자입니다.", "operationId": "adminUsers",
+        "security": [{"adminToken": []}, {"bearerAuth": []}],
+        "responses": {"200": {"description": "사용자 목록", "content": {"application/json": {"schema": {"type": "object", "properties": {"users": {"type": "array", "items": {"$ref": "#/components/schemas/User"}}, "actor": {"type": "string"}}}}}}}
+      },
+      "post": {
+        "tags": ["Admin"], "summary": "사용자 만들기", "description": "password를 주면 비밀번호 로그인 계정, 생략하면 SSO나 나중의 비밀번호 설정을 기다리는 계정입니다.", "operationId": "adminCreateUser",
+        "security": [{"adminToken": []}, {"bearerAuth": []}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["username"], "properties": {"username": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"}, "display_name": {"type": "string"}, "password": {"type": "string", "format": "password", "minLength": 8, "maxLength": 72}, "is_admin": {"type": "boolean"}}}}}},
+        "responses": {"201": {"description": "만든 사용자", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/User"}}}}, "400": {"$ref": "#/components/responses/BadRequest"}, "409": {"description": "같은 아이디가 이미 있음"}}
+      }
+    },
+    "/admin/users/{username}": {
+      "parameters": [{"name": "username", "in": "path", "required": true, "schema": {"type": "string"}}],
+      "put": {
+        "tags": ["Admin"], "summary": "사용자 수정", "description": "표시 이름, 관리자 여부, 비활성화를 바꿉니다. 자기 자신의 관리자 권한을 빼거나 자신을 비활성화할 수는 없습니다(409).", "operationId": "adminUpdateUser",
+        "security": [{"adminToken": []}, {"bearerAuth": []}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "properties": {"display_name": {"type": "string"}, "is_admin": {"type": "boolean"}, "disabled": {"type": "boolean", "description": "true면 다음 요청부터 세션과 토큰이 거부됨"}}}}}},
+        "responses": {"200": {"description": "수정된 사용자", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/User"}}}}, "404": {"description": "사용자를 찾을 수 없음"}, "409": {"description": "자기 자신을 잠그는 변경"}}
+      },
+      "delete": {
+        "tags": ["Admin"], "summary": "사용자 삭제", "description": "인증 수단을 함께 지우고 그 사용자의 API 토큰을 모두 폐기합니다. 기억과 위키는 남습니다.", "operationId": "adminDeleteUser",
+        "security": [{"adminToken": []}, {"bearerAuth": []}],
+        "responses": {"200": {"description": "삭제 완료"}, "404": {"description": "사용자를 찾을 수 없음"}, "409": {"description": "자기 자신은 삭제할 수 없음"}}
+      }
+    },
+    "/admin/users/{username}/password": {
+      "post": {
+        "tags": ["Admin"], "summary": "사용자 비밀번호 설정", "description": "비밀번호가 없던(SSO 전용) 사용자에게 붙이거나 기존 비밀번호를 바꿉니다.", "operationId": "adminSetUserPassword",
+        "security": [{"adminToken": []}, {"bearerAuth": []}],
+        "parameters": [{"name": "username", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["password"], "properties": {"password": {"type": "string", "format": "password", "minLength": 8, "maxLength": 72}}}}}},
+        "responses": {"200": {"description": "수정된 사용자", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/User"}}}}, "400": {"$ref": "#/components/responses/BadRequest"}, "404": {"description": "사용자를 찾을 수 없음"}}
+      }
+    },
+    "/admin/users/{username}/tokens": {
+      "get": {
+        "tags": ["Admin"], "summary": "사용자의 API 토큰", "description": "생성일 역순으로 돌려줍니다. 원문은 포함되지 않습니다.", "operationId": "adminUserTokens",
+        "security": [{"adminToken": []}, {"bearerAuth": []}],
+        "parameters": [{"name": "username", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {"200": {"description": "토큰 목록", "content": {"application/json": {"schema": {"type": "object", "properties": {"username": {"type": "string"}, "tokens": {"type": "array", "items": {"$ref": "#/components/schemas/ApiTokenMetadata"}}}}}}}}
+      }
+    },
+    "/admin/users/{username}/tokens/{id}/revoke": {
+      "post": {
+        "tags": ["Admin"], "summary": "사용자의 API 토큰 폐기", "operationId": "adminRevokeUserToken",
+        "security": [{"adminToken": []}, {"bearerAuth": []}],
+        "parameters": [{"name": "username", "in": "path", "required": true, "schema": {"type": "string"}}, {"name": "id", "in": "path", "required": true, "schema": {"type": "integer", "format": "int64"}}],
+        "responses": {"200": {"description": "폐기 완료", "content": {"application/json": {"schema": {"type": "object", "properties": {"id": {"type": "integer", "format": "int64"}, "revoked": {"type": "boolean"}, "revoked_at": {"type": "string", "format": "date-time"}, "expires_at": {"type": "string", "format": "date-time"}}}}}}, "404": {"description": "토큰을 찾을 수 없음"}}
+      }
+    },
     "/admin/sso/status": {
       "get": {
         "tags": ["Admin"],
@@ -457,6 +509,23 @@ const openAPISpec = `{
         "additionalProperties": false
       },
       "JsonRpcResponse": {"type": "object", "description": "MCP JSON-RPC 응답. 메서드에 따라 result 또는 error가 포함됩니다.", "additionalProperties": true},
+      "User": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "integer", "format": "int64"}, "username": {"type": "string", "description": "세션 주체이자 네임스페이스·토큰의 소유자 키"},
+          "display_name": {"type": "string"}, "is_admin": {"type": "boolean"}, "disabled": {"type": "boolean"},
+          "created_at": {"type": "string", "format": "date-time"}, "updated_at": {"type": "string", "format": "date-time"}, "last_login_at": {"type": "string", "format": "date-time", "nullable": true},
+          "identities": {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "integer", "format": "int64"}, "kind": {"type": "string", "enum": ["password", "oidc"]}, "issuer": {"type": "string"}, "subject": {"type": "string"}, "created_at": {"type": "string", "format": "date-time"}, "last_used_at": {"type": "string", "format": "date-time", "nullable": true}}}}
+        }
+      },
+      "ApiTokenMetadata": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "integer", "format": "int64"}, "name": {"type": "string"},
+          "created_at": {"type": "string", "format": "date-time"}, "expires_at": {"type": "string", "format": "date-time", "nullable": true},
+          "last_used_at": {"type": "string", "format": "date-time", "nullable": true}, "revoked_at": {"type": "string", "format": "date-time", "nullable": true}
+        }
+      },
       "SSOProvider": {
         "type": "object",
         "properties": {

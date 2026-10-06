@@ -107,7 +107,10 @@ STASH_ADMIN_PASSWORD=<at least 8 characters>
 
 An existing user keeps the password it has (so a change made in the console
 survives restarts) but is promoted and re-enabled, which makes these two
-variables the way back in. More accounts come from the CLI:
+variables the way back in. More accounts come from the **Users & SSO** page
+of the console (add a user with or without a password, set a password, grant
+or remove administrator access, disable, delete, and list or revoke the
+person's API tokens by creation date) or from the CLI:
 
 ```bash
 stash user add alice --display-name "Alice" --password-stdin   # or --password-env / --password
@@ -136,7 +139,7 @@ the client secret sealed by `STASH_SECRETS_KEY`. The environment registers
 the first one: when `STASH_AUTH_ISSUER`, `STASH_AUTH_CLIENT_ID`,
 `STASH_AUTH_CLIENT_SECRET`, and `STASH_AUTH_REDIRECT_URL` are set, the server
 imports them into the table at startup (once; later edits happen in the
-table). From then on administrators manage providers on the **Login & SSO**
+table). From then on administrators manage providers on the **Users & SSO**
 page of the console or with the CLI:
 
 ```bash

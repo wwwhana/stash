@@ -344,3 +344,11 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,su
 .stash-access-hint { margin:0 0 12px; color:var(--app-muted); font-size:13px; word-break:break-all; }
 .stash-workspace-missing { grid-column:1/-1; margin:12px 0; }
 .stash-workspace-missing .stash-button { margin-top:10px; }
+.stash-user-list li > div:first-child { min-width:0; flex:1 1 320px; }
+.stash-user-display { font-weight:400; color:var(--app-muted); }
+.stash-user-badge { display:inline-block; margin-left:8px; padding:1px 7px; border-radius:999px; background:var(--app-raised); color:var(--app-muted); font-size:11px; font-weight:600; vertical-align:middle; }
+.stash-user-badge.is-off { color:var(--app-danger); background:var(--app-danger-soft); }
+.stash-user-badge.is-you { color:var(--app-accent, #5b5bd6); }
+.stash-user-tokens { display:grid; gap:6px; margin-top:10px; padding-top:8px; border-top:1px dashed var(--app-border); }
+.stash-user-token { display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:13px; }
+.stash-user-token small,.stash-user-token-empty { color:var(--app-muted); }

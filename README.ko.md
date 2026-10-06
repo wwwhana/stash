@@ -100,7 +100,10 @@ STASH_ADMIN_PASSWORD=<8자 이상>
 
 이미 있는 사용자는 비밀번호를 그대로 두고(콘솔에서 바꾼 값이 재시작마다
 되돌아가지 않도록) 관리자 권한과 활성 상태만 다시 켜 주므로, 이 두 변수는
-잠긴 서버에 다시 들어가는 길이기도 합니다. 추가 계정은 CLI로 만듭니다.
+잠긴 서버에 다시 들어가는 길이기도 합니다. 추가 계정은 콘솔의 **사용자·SSO**
+페이지(비밀번호 유무를 골라 사용자 추가, 비밀번호 설정, 관리자 지정·해제,
+비활성화, 삭제, 그리고 그 사람의 API 토큰을 생성일 순으로 보고 폐기)나
+CLI로 만듭니다.
 
 ```bash
 stash user add alice --display-name "Alice" --password-stdin   # 또는 --password-env / --password
@@ -128,7 +131,7 @@ SSO 제공자는 DB(`sso_providers`)에 저장되는 OIDC 발급자이며, 클�
 `STASH_AUTH_ISSUER`, `STASH_AUTH_CLIENT_ID`, `STASH_AUTH_CLIENT_SECRET`,
 `STASH_AUTH_REDIRECT_URL`이 설정돼 있으면 서버가 시작할 때 한 번 테이블로
 가져오고, 그 뒤의 수정은 테이블에서 이루어집니다. 이후에는 관리자가 콘솔의
-**로그인·SSO** 페이지나 CLI로 제공자를 관리합니다.
+**사용자·SSO** 페이지나 CLI로 제공자를 관리합니다.
 
 ```bash
 stash sso list
