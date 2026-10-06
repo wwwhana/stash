@@ -119,9 +119,9 @@ codex mcp get stash
 codex plugin list
 ```
 
-Token mode uses `STASH_MCP_TOKEN`; do not run `codex mcp login stash`. That
-command is only for a server running `STASH_AUTH_MODE=oauth` whose OAuth
-discovery endpoints return success.
+Stash uses `STASH_MCP_TOKEN` in every profile; do not run
+`codex mcp login stash`. Stash does not act as an OAuth server for MCP
+clients, so that login flow has nothing to talk to.
 
 ### Cursor
 
@@ -220,38 +220,32 @@ If tools fail, check `.env`:
 | `STASH_AUTH_MODE` | `none`, `token`, `oauth`, or `stdio` |
 | `STASH_AUTH_TRUSTED_NETWORK` | `true` lets `STASH_AUTH_MODE=none` bind beyond loopback on a network you trust (logs a warning) |
 | `STASH_AUTH_API_SECRET` | At least 32 random bytes used to sign Stash tokens and sessions |
-| `STASH_AUTH_TOKEN_TTL` | Lifetime of issued API tokens (default `720h`) |
-| `STASH_AUTH_ACCESS_TOKEN_TTL` | OAuth access-token lifetime (default and maximum `1h`) |
-| `STASH_AUTH_REFRESH_TOKEN_TTL` | OAuth refresh-token lifetime (default `720h`) |
+| `STASH_AUTH_TOKEN_TTL` | Default lifetime of tokens issued by `stash mcp token` (default `720h`; `--ttl 0` means no expiry) |
 | `STASH_AUTH_SESSION_TTL` | Browser console session lifetime after login; renewed while in use (default `720h`) |
-| `STASH_AUTH_MCP_RESOURCE_URL` | Required canonical `/mcp` HTTPS URL in OAuth mode; loopback HTTP is allowed locally |
 | `STASH_AUTH_COOKIE_SECURE` | `false` for loopback HTTP; `true` for public HTTPS |
 
 ### HTTP MCP authentication
 
-Use `STASH_AUTH_MODE=oauth` with the browser OAuth settings for a remote
-Streamable HTTP or SSE server. The MCP client follows the OAuth Authorization
-Code flow, exchanges the code at `/oauth/token`, and sends the returned
-resource-bound Stash access token to `/mcp`. Stash shows its own access page
-after the identity provider login and issues a code only after the user allows
-the connection.
-
-For unattended clients, use `STASH_AUTH_MODE=token` and
-`STASH_AUTH_API_SECRET` to issue a token without OIDC or database access:
+MCP clients authenticate with a Stash API token in every profile. The token
+is stored in the database (only a digest), is listed and revocable in the
+console, and does not change until it expires or is revoked, so an agent keeps
+the same subject and the same history across sessions. Issue one in the
+console (**API tokens**) or on the server host:
 
 ```bash
-stash mcp token --subject agent-1
+stash mcp token --subject agent-1 --name "build box"   # --ttl 0 for no expiry
 ```
 
-Send the result as `Authorization: Bearer <stash_api_token>`. In `oauth` mode,
-MCP also accepts the OAuth access token returned by the code exchange after
-checking its signature, expiry, and resource. `STASH_AUTH_TOKEN_TTL` controls
-native API-token lifetime; the OAuth lifetimes use the separate access and
-refresh settings listed above.
+Send the result as `Authorization: Bearer <stash_api_token>`. Nothing else is
+accepted on `/mcp`: Stash no longer brokers OAuth for MCP clients, and an
+identity provider's access token is not a Stash credential.
 
-For a local CLI process, use `STASH_AUTH_MODE=stdio`; STDIO does not use MCP
-OAuth discovery. `STASH_AUTH_MODE=none` disables HTTP authentication and is
-accepted only when the server listens on a loopback address.
+`STASH_AUTH_MODE=oauth` only changes how people reach the console: it adds SSO
+login through the configured OIDC provider next to the password form. For a
+local CLI process, use `STASH_AUTH_MODE=stdio`, optionally with a Stash API
+token in `STASH_AUTH_STDIO_TOKEN`. `STASH_AUTH_MODE=none` disables HTTP
+authentication and is accepted only on a loopback address (or with
+`STASH_AUTH_TRUSTED_NETWORK=true`).
 
 ### Console login and users
 
@@ -304,7 +298,8 @@ Atlas Cloud docs: [https://www.atlascloud.ai/docs](https://www.atlascloud.ai/doc
 - Confirm `docker compose up` finished and port 8080 is not in use elsewhere.
 - Use `http://localhost:8080/mcp` (not `https`) for local Docker. Try `/sse` only for a client that does not support Streamable HTTP.
 - A `401` response means the client did not send a valid bearer token generated in step 2. Confirm that the Codex process inherited `STASH_MCP_TOKEN` and that `codex mcp get stash` names the same environment variable.
-- OAuth discovery `404` responses in token mode mean the client tried the wrong login flow. Remove the MCP entry, add it again with `--bearer-token-env-var STASH_MCP_TOKEN`, and do not run `codex mcp login stash`.
+- OAuth discovery `404` responses mean the client tried an OAuth login flow that Stash does not offer. Remove the MCP entry, add it again with `--bearer-token-env-var STASH_MCP_TOKEN`, and do not run `codex mcp login stash`.
+- A `401` after an upgrade means the client still sends an OAuth access token from the old flow. Issue a Stash API token and configure the client with it.
 
 **Empty recall results**
 

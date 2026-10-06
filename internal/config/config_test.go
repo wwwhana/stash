@@ -166,7 +166,6 @@ func TestOAuthPrefixedAuthenticationAliases(t *testing.T) {
 		"STASH_AUTH_OAUTH_CLIENT_SECRET": "secret",
 		"STASH_AUTH_OAUTH_REDIRECT_URL":  "https://stash.example.com/auth/callback",
 		"STASH_AUTH_OAUTH_API_SECRET":    "signing-secret",
-		"STASH_AUTH_OAUTH_RESOURCE_URL":  "https://stash.example.com/mcp",
 	} {
 		t.Setenv(key, value)
 	}
@@ -174,7 +173,7 @@ func TestOAuthPrefixedAuthenticationAliases(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load OAuth alias config: %v", err)
 	}
-	if cfg.AuthIssuer != "https://auth.example.com/" || cfg.AuthClientID != "stash" || cfg.AuthClientSecret != "secret" || cfg.AuthRedirectURL != "https://stash.example.com/auth/callback" || cfg.AuthAPISecret != "signing-secret" || cfg.AuthMCPResourceURL != "https://stash.example.com/mcp" {
+	if cfg.AuthIssuer != "https://auth.example.com/" || cfg.AuthClientID != "stash" || cfg.AuthClientSecret != "secret" || cfg.AuthRedirectURL != "https://stash.example.com/auth/callback" || cfg.AuthAPISecret != "signing-secret" {
 		t.Fatalf("OAuth aliases were not applied: %#v", cfg)
 	}
 }

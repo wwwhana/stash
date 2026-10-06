@@ -569,11 +569,13 @@ func main() {
 				Commands: []*cli.Command{
 					{
 						Name:   "token",
-						Usage:  "Issue a Stash API token without OIDC or database access",
+						Usage:  "Issue a Stash API token stored in the database (visible and revocable in the console)",
 						Action: mcpTokenCmd,
 						Flags: []cli.Flag{
-							&cli.StringFlag{Name: "subject", Usage: "Stable agent or user identity"},
-							&cli.DurationFlag{Name: "ttl", Value: 720 * time.Hour, Usage: "Token lifetime"},
+							&cli.StringFlag{Name: "subject", Usage: "Stable agent or user identity (namespaces and tokens are keyed by it)"},
+							&cli.StringFlag{Name: "name", Usage: "Label shown in the token list"},
+							&cli.DurationFlag{Name: "ttl", Value: 720 * time.Hour, Usage: "Token lifetime; 0 means no expiry (default STASH_AUTH_TOKEN_TTL)"},
+							&cli.BoolFlag{Name: "json", Usage: "Print the token with its metadata as JSON"},
 						},
 					},
 					{

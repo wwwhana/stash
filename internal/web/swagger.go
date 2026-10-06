@@ -332,7 +332,7 @@ const openAPISpec = `{
   },
   "components": {
     "securitySchemes": {
-      "bearerAuth": {"type": "http", "scheme": "bearer", "bearerFormat": "Stash token or OAuth access token"},
+      "bearerAuth": {"type": "http", "scheme": "bearer", "bearerFormat": "Stash API token (stash_api_…) stored in the database"},
       "adminToken": {"type": "apiKey", "in": "header", "name": "X-Stash-Admin-Token"}
     },
     "parameters": {

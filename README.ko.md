@@ -188,47 +188,39 @@ codex mcp add stash --url https://stash.example.com/mcp --bearer-token-env-var S
 }
 ```
 
-원격 MCP 서버는 Streamable HTTP로 연결합니다. `oauth` 프로필에서는 MCP
-클라이언트가 OAuth 인증 코드 방식으로 로그인한 뒤 MCP 리소스에 묶인 Stash
-접근 권한을 사용자가 확인하고 허용하면 Stash 접근 토큰을 받습니다.
+원격 MCP 서버는 Streamable HTTP에 Stash API 토큰으로 연결합니다. 프로필이
+무엇이든 MCP 클라이언트의 인증 수단은 하나, DB에 저장된 API 토큰입니다.
+만료되거나 폐기하기 전에는 바뀌지 않으므로 에이전트의 주체와 기록이 중간에
+끊기지 않습니다. 토큰은 화면의 **인증 토큰** 페이지나 서버에서 발급합니다.
 
 ```bash
-codex mcp add stash --url https://stash.example.com/mcp
-```
-
-자동화 클라이언트는 OIDC 없이 Stash API 토큰을 사용할 수 있습니다:
-
-```bash
-export STASH_MCP_TOKEN="$(stash mcp token --subject codex)"
+export STASH_MCP_TOKEN="$(stash mcp token --subject codex --name laptop)"
 codex mcp add stash --url https://stash.example.com/mcp --bearer-token-env-var STASH_MCP_TOKEN
 ```
 
-자동화용 API 토큰을 발급하려면 `STASH_AUTH_MODE=token`과
-`STASH_AUTH_API_SECRET`을 설정하세요. `oauth` 프로필의 MCP와 SSE는
-리소스가 확인된 Stash OAuth 접근 토큰과 Stash API 토큰을 모두 받습니다.
-
 인증 프로필은 네 가지입니다.
 
-- `none`: HTTP 인증 없음. 이 모드에서는 로컬 주소 밖으로 서버를 열 수 없습니다.
-- `oauth` (기존 `oidc`도 호환): 브라우저 OIDC 로그인과 MCP OAuth 인증 코드
-  방식을 함께 사용합니다. MCP와 SSE는 리소스가 확인된 Stash OAuth 접근
-  토큰과 Stash API Bearer 토큰을 받습니다.
-- `token`: OIDC 없이 Stash API Bearer 토큰만 사용하는 HTTP 방식입니다.
-- `stdio`: MCP OAuth 탐색을 사용하지 않습니다. 로컬 프로세스를 신뢰하거나
-  `STASH_AUTH_STDIO_TOKEN`으로 사용자 범위를 확인할 수 있습니다.
+- `none`: HTTP 인증 없음. 이 모드에서는 로컬 주소 밖으로 서버를 열 수 없습니다
+  (`STASH_AUTH_TRUSTED_NETWORK=true`로 신뢰하는 망에 한해 예외).
+- `oauth` (기존 `oidc`도 호환): 콘솔에 OIDC 제공자를 통한 SSO 로그인을
+  더합니다. MCP 클라이언트는 그대로 Stash API 토큰을 씁니다.
+- `token`: 아이디/비밀번호와 API 토큰 로그인만 쓰며 OIDC 제공자에 접속하지
+  않습니다.
+- `stdio`: 로컬 프로세스를 신뢰하거나, `STASH_AUTH_STDIO_TOKEN`에 넣은 Stash
+  API 토큰으로 사용자 범위를 확인합니다.
 
-HTTP MCP 요청은 `Authorization: Bearer <stash_oauth_token>` 또는
-`Authorization: Bearer <stash_api_token>` 헤더를 보내야 합니다. 화면에
-로그인할 때 쓰는 세션 쿠키는 표준 MCP 클라이언트 인증 수단이 아닙니다.
+HTTP MCP 요청은 `Authorization: Bearer <stash_api_token>` 헤더를 보내야
+합니다. MCP에서는 그 외의 자격 증명(OAuth 접근 토큰, 상위 제공자의 ID 토큰)을
+받지 않습니다. 화면에 로그인할 때 쓰는 세션 쿠키는 내장 콘솔 전용입니다.
 
 화면의 **인증 토큰**에서 로그인 뒤 Stash API 토큰을 발급·폐기할 수 있습니다.
 무제한, 1·7·30·90·365일 또는 직접 입력한 일수로 발급할 수 있습니다.
 유효 기간을 비워 두면 무제한으로 발급하고, 수동으로 폐기하면 만료일을 폐기한 시각으로 즉시 갱신합니다.
 목록에 만료일과 만료 상태가 표시되며, 만료되거나 폐기한 토큰은 사용할 수 없습니다.
-기존 토큰의 무제한 유효기간은 유지되고 원문은 발급 직후 한 번만 표시됩니다.
-OIDC를 쓰지 않는 서버는 `STASH_AUTH_API_SECRET`이 있는 환경에서
-`stash mcp token --subject <에이전트>`를 실행하세요. 기본 유효기간은 30일이며
-`STASH_AUTH_TOKEN_TTL` 또는 명령의 `--ttl`로 늘려 발급할 수 있습니다.
+원문은 발급 직후 한 번만 표시됩니다. 서버에서 실행하는
+`stash mcp token --subject <에이전트>`도 같은 방식으로 DB에 저장하므로 그
+주체의 토큰 목록에 나타나고 거기서 폐기할 수 있습니다. 기본 유효기간은 30일
+(`STASH_AUTH_TOKEN_TTL`)이며 `--ttl 0`은 폐기할 때까지 유효한 토큰을 만듭니다.
 
 OAuth 접근 토큰의 기본 유효기간은 1시간이며, 한 번 쓴 뒤 교체되는 갱신 토큰은
 30일입니다. `STASH_AUTH_ACCESS_TOKEN_TTL`과
@@ -236,7 +228,7 @@ OAuth 접근 토큰의 기본 유효기간은 1시간이며, 한 번 쓴 뒤 교
 
 ## 운영 지표와 상태 확인
 
-`stash serve`는 MCP, 관리 화면, OAuth 경로, 운영 지표, 상태 확인을 하나의 HTTP 포트(기본 `127.0.0.1:8080`)에서 제공합니다. Docker도 호스트의 로컬 주소에만 8080번 포트를 연결합니다. HTTP 인증을 켜면 `http://localhost:8080/metrics`도 MCP와 같은 Bearer 인증이 필요합니다. `/healthz`와 `/readyz`는 로드 밸런서 상태 확인을 위해 공개로 둡니다. HTTP 요청, 인증 결과, MCP 도구 호출, 외부 제공자 호출, 네임스페이스 범위 적용, 기억 통합 대기량과 최근 오류 수, 작업 결과 기억 연결, 임베딩 재시도 대기 건수를 기록합니다. 요청·인증·도구·제공자·범위 지표의 라벨에는 사용자 ID와 실제 네임스페이스 이름을 넣지 않습니다.
+`stash serve`는 MCP, 관리 화면, 로그인 경로, 운영 지표, 상태 확인을 하나의 HTTP 포트(기본 `127.0.0.1:8080`)에서 제공합니다. Docker도 호스트의 로컬 주소에만 8080번 포트를 연결합니다. HTTP 인증을 켜면 `http://localhost:8080/metrics`도 MCP와 같은 Bearer 인증이 필요합니다. `/healthz`와 `/readyz`는 로드 밸런서 상태 확인을 위해 공개로 둡니다. HTTP 요청, 인증 결과, MCP 도구 호출, 외부 제공자 호출, 네임스페이스 범위 적용, 기억 통합 대기량과 최근 오류 수, 작업 결과 기억 연결, 임베딩 재시도 대기 건수를 기록합니다. 요청·인증·도구·제공자·범위 지표의 라벨에는 사용자 ID와 실제 네임스페이스 이름을 넣지 않습니다.
 
 임베딩 API가 짧은 요청 재시도 후에도 실패하면 원문은 인덱싱 대기 상태로 저장됩니다. PostgreSQL 연결은 정상이지만 벡터 값만 저장하지 못한 경우에도 원문을 보존합니다. 한 항목이 다섯 번 실패하면 자동 재시도를 멈추고 관리자가 다시 시작할 때까지 일시 중지해, 작은 일일 한도를 계속 소모하지 않게 합니다. 재시도 간격은 설정한 최댓값 안에서 늘어납니다. 임베딩 제공자가 잠시 응답하지 않아도 `recall`은 저장된 원문과 사실의 `entity`·`property`·`value` 필드를 PostgreSQL 트라이그램 검색으로 찾아 작업을 계속할 수 있습니다. `STASH_EMBEDDING_RETRY_INTERVAL`, `STASH_EMBEDDING_RETRY_MAX_INTERVAL`, `STASH_EMBEDDING_RETRY_BATCH_SIZE`로 주기와 한 번에 처리할 수를 설정합니다.
 
@@ -291,7 +283,7 @@ Streamable HTTP를 지원하면 `http://localhost:8080/mcp`를 사용하세요. 
 
 ### 자동 저장과 작업 이어가기
 
-Codex·Claude Code용 플러그인은 세션을 새로 시작할 때 기억 사용 원칙을 한 번만 알려 줍니다. 사용자가 보낸 프롬프트는 기존 OAuth 연결로 저장 대기열에 넣고, 임베딩은 서버에서 따로 처리합니다. 프롬프트 원문이 저장되므로 사용 범위와 끄는 방법은 **[에이전트 작업 이어가기 안내](docs/AGENT_HANDOFF.md)**에서 확인하세요.
+Codex·Claude Code용 플러그인은 세션을 새로 시작할 때 기억 사용 원칙을 한 번만 알려 줍니다. 사용자가 보낸 프롬프트는 기존 MCP 연결(API 토큰)로 저장 대기열에 넣고, 임베딩은 서버에서 따로 처리합니다. 프롬프트 원문이 저장되므로 사용 범위와 끄는 방법은 **[에이전트 작업 이어가기 안내](docs/AGENT_HANDOFF.md)**에서 확인하세요.
 
 ## 동작 원리 (What It Does)
 

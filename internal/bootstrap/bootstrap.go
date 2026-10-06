@@ -40,21 +40,17 @@ func New(ctx context.Context) (*Context, error) {
 	logger := buildLogger(cfg)
 
 	authProvider, err := auth.Init(ctx, auth.Config{
-		Mode:            cfg.AuthMode,
-		Issuer:          cfg.AuthIssuer,
-		ClientID:        cfg.AuthClientID,
-		MCPClientID:     cfg.AuthMCPClientID,
-		ClientSecret:    cfg.AuthClientSecret,
-		RedirectURL:     cfg.AuthRedirectURL,
-		APISecret:       cfg.AuthAPISecret,
-		MCPResourceURL:  cfg.AuthMCPResourceURL,
-		CookieSecure:    cfg.AuthCookieSecure,
-		APITokenTTL:     cfg.AuthTokenTTL,
-		AccessTokenTTL:  cfg.AuthAccessTokenTTL,
-		RefreshTokenTTL: cfg.AuthRefreshTokenTTL,
-		SessionTTL:      cfg.AuthSessionTTL,
-		StdioToken:      cfg.AuthStdioToken,
-		AdminSubjects:   cfg.AdminSubjects,
+		Mode:          cfg.AuthMode,
+		Issuer:        cfg.AuthIssuer,
+		ClientID:      cfg.AuthClientID,
+		ClientSecret:  cfg.AuthClientSecret,
+		RedirectURL:   cfg.AuthRedirectURL,
+		APISecret:     cfg.AuthAPISecret,
+		CookieSecure:  cfg.AuthCookieSecure,
+		APITokenTTL:   cfg.AuthTokenTTL,
+		SessionTTL:    cfg.AuthSessionTTL,
+		StdioToken:    cfg.AuthStdioToken,
+		AdminSubjects: cfg.AdminSubjects,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("initialize authentication: %w", err)
@@ -213,8 +209,11 @@ func buildLogger(cfg *config.Config) *slog.Logger {
 		opts.Level = slog.LevelInfo
 	}
 
+	// Logs go to stderr so a command's stdout stays machine-readable: for
+	// example `stash mcp token` prints only the token, and the JSON commands
+	// print only JSON. Container log collectors read both streams.
 	if cfg.LogFormat == "json" {
-		return slog.New(slog.NewJSONHandler(os.Stdout, opts))
+		return slog.New(slog.NewJSONHandler(os.Stderr, opts))
 	}
-	return slog.New(slog.NewTextHandler(os.Stdout, opts))
+	return slog.New(slog.NewTextHandler(os.Stderr, opts))
 }

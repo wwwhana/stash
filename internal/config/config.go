@@ -62,20 +62,16 @@ type Config struct {
 	MCPToolTimeout time.Duration `env:"STASH_MCP_TOOL_TIMEOUT" envDefault:"2m"`
 
 	// Authentication
-	AuthMode            string        `env:"STASH_AUTH_MODE" envDefault:"none"`
-	AuthIssuer          string        `env:"STASH_AUTH_ISSUER" envDefault:""`
-	AuthClientID        string        `env:"STASH_AUTH_CLIENT_ID" envDefault:""`
-	AuthMCPClientID     string        `env:"STASH_AUTH_MCP_CLIENT_ID" envDefault:""`
-	AuthClientSecret    string        `env:"STASH_AUTH_CLIENT_SECRET" envDefault:""`
-	AuthRedirectURL     string        `env:"STASH_AUTH_REDIRECT_URL" envDefault:""`
-	AuthAPISecret       string        `env:"STASH_AUTH_API_SECRET" envDefault:""`
-	AuthMCPResourceURL  string        `env:"STASH_AUTH_MCP_RESOURCE_URL" envDefault:""`
-	AuthCookieSecure    bool          `env:"STASH_AUTH_COOKIE_SECURE" envDefault:"true"`
-	AuthTokenTTL        time.Duration `env:"STASH_AUTH_TOKEN_TTL" envDefault:"720h"`
-	AuthAccessTokenTTL  time.Duration `env:"STASH_AUTH_ACCESS_TOKEN_TTL" envDefault:"1h"`
-	AuthRefreshTokenTTL time.Duration `env:"STASH_AUTH_REFRESH_TOKEN_TTL" envDefault:"720h"`
-	AuthSessionTTL      time.Duration `env:"STASH_AUTH_SESSION_TTL" envDefault:"720h"`
-	AuthStdioToken      string        `env:"STASH_AUTH_STDIO_TOKEN" envDefault:""`
+	AuthMode         string        `env:"STASH_AUTH_MODE" envDefault:"none"`
+	AuthIssuer       string        `env:"STASH_AUTH_ISSUER" envDefault:""`
+	AuthClientID     string        `env:"STASH_AUTH_CLIENT_ID" envDefault:""`
+	AuthClientSecret string        `env:"STASH_AUTH_CLIENT_SECRET" envDefault:""`
+	AuthRedirectURL  string        `env:"STASH_AUTH_REDIRECT_URL" envDefault:""`
+	AuthAPISecret    string        `env:"STASH_AUTH_API_SECRET" envDefault:""`
+	AuthCookieSecure bool          `env:"STASH_AUTH_COOKIE_SECURE" envDefault:"true"`
+	AuthTokenTTL     time.Duration `env:"STASH_AUTH_TOKEN_TTL" envDefault:"720h"`
+	AuthSessionTTL   time.Duration `env:"STASH_AUTH_SESSION_TTL" envDefault:"720h"`
+	AuthStdioToken   string        `env:"STASH_AUTH_STDIO_TOKEN" envDefault:""`
 	// Admin maintenance accepts either an authenticated OIDC subject listed
 	// here or the separate static token below. Keep this independent from the
 	// MCP API secret so a maintenance credential cannot sign user sessions.
@@ -93,15 +89,11 @@ type Config struct {
 	// original STASH_AUTH_* names used by existing deployments.
 	AuthOAuthIssuer          string        `env:"STASH_AUTH_OAUTH_ISSUER" envDefault:""`
 	AuthOAuthClientID        string        `env:"STASH_AUTH_OAUTH_CLIENT_ID" envDefault:""`
-	AuthOAuthMCPClientID     string        `env:"STASH_AUTH_OAUTH_MCP_CLIENT_ID" envDefault:""`
 	AuthOAuthClientSecret    string        `env:"STASH_AUTH_OAUTH_CLIENT_SECRET" envDefault:""`
 	AuthOAuthRedirectURL     string        `env:"STASH_AUTH_OAUTH_REDIRECT_URL" envDefault:""`
 	AuthOAuthAPISecret       string        `env:"STASH_AUTH_OAUTH_API_SECRET" envDefault:""`
-	AuthOAuthResourceURL     string        `env:"STASH_AUTH_OAUTH_RESOURCE_URL" envDefault:""`
 	AuthOAuthCookieSecureRaw string        `env:"STASH_AUTH_OAUTH_COOKIE_SECURE" envDefault:""`
 	AuthOAuthTokenTTL        time.Duration `env:"STASH_AUTH_OAUTH_TOKEN_TTL" envDefault:"0s"`
-	AuthOAuthAccessTokenTTL  time.Duration `env:"STASH_AUTH_OAUTH_ACCESS_TOKEN_TTL" envDefault:"0s"`
-	AuthOAuthRefreshTokenTTL time.Duration `env:"STASH_AUTH_OAUTH_REFRESH_TOKEN_TTL" envDefault:"0s"`
 	AuthOAuthStdioToken      string        `env:"STASH_AUTH_OAUTH_STDIO_TOKEN" envDefault:""`
 
 	// Consolidation
@@ -145,9 +137,6 @@ func (c *Config) applyAuthAliases() {
 	if c.AuthClientID == "" {
 		c.AuthClientID = c.AuthOAuthClientID
 	}
-	if c.AuthMCPClientID == "" {
-		c.AuthMCPClientID = c.AuthOAuthMCPClientID
-	}
 	if c.AuthClientSecret == "" {
 		c.AuthClientSecret = c.AuthOAuthClientSecret
 	}
@@ -156,9 +145,6 @@ func (c *Config) applyAuthAliases() {
 	}
 	if c.AuthAPISecret == "" {
 		c.AuthAPISecret = c.AuthOAuthAPISecret
-	}
-	if c.AuthMCPResourceURL == "" {
-		c.AuthMCPResourceURL = c.AuthOAuthResourceURL
 	}
 	if c.AuthStdioToken == "" {
 		c.AuthStdioToken = c.AuthOAuthStdioToken
@@ -170,12 +156,6 @@ func (c *Config) applyAuthAliases() {
 	}
 	if c.AuthOAuthTokenTTL > 0 {
 		c.AuthTokenTTL = c.AuthOAuthTokenTTL
-	}
-	if c.AuthOAuthAccessTokenTTL > 0 {
-		c.AuthAccessTokenTTL = c.AuthOAuthAccessTokenTTL
-	}
-	if c.AuthOAuthRefreshTokenTTL > 0 {
-		c.AuthRefreshTokenTTL = c.AuthOAuthRefreshTokenTTL
 	}
 }
 
@@ -262,17 +242,8 @@ func (c *Config) Validate() error {
 	if c.AuthTokenTTL < 0 {
 		return fmt.Errorf("STASH_AUTH_TOKEN_TTL must not be negative")
 	}
-	if c.AuthAccessTokenTTL < 0 || c.AuthAccessTokenTTL > time.Hour {
-		return fmt.Errorf("STASH_AUTH_ACCESS_TOKEN_TTL must not be negative or greater than 1h")
-	}
 	if c.AuthSessionTTL < 0 {
 		return fmt.Errorf("STASH_AUTH_SESSION_TTL must not be negative")
-	}
-	if c.AuthRefreshTokenTTL < 0 {
-		return fmt.Errorf("STASH_AUTH_REFRESH_TOKEN_TTL must not be negative")
-	}
-	if c.AuthRefreshTokenTTL > 0 && c.AuthAccessTokenTTL > 0 && c.AuthRefreshTokenTTL < c.AuthAccessTokenTTL {
-		return fmt.Errorf("STASH_AUTH_REFRESH_TOKEN_TTL must not be shorter than STASH_AUTH_ACCESS_TOKEN_TTL")
 	}
 	if c.ConsolidationBatchSize <= 0 {
 		return fmt.Errorf("STASH_CONSOLIDATION_BATCH_SIZE must be greater than zero")

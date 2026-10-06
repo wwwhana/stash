@@ -194,19 +194,14 @@ You can also use the `stdio` transport and point it to the stash CLI binary:
 }
 ```
 
-For a remote MCP server, use Streamable HTTP. With the `oauth` profile, the
-MCP client follows OAuth Authorization Code login and receives a Stash access
-token bound to the MCP resource after the user approves the Stash access page:
+For a remote MCP server, use Streamable HTTP with a Stash API token. Every
+MCP client authenticates the same way, whatever the profile: a token that
+lives in the database until it expires or is revoked, so an agent's identity
+and history never change underneath it. Issue one from the console's **API
+tokens** page or on the server:
 
 ```bash
-codex mcp add stash --url https://stash.example.com/mcp
-```
-
-For unattended clients, set `STASH_AUTH_MODE=token` and
-`STASH_AUTH_API_SECRET`, then issue a native bearer token:
-
-```bash
-export STASH_MCP_TOKEN="$(stash mcp token --subject codex)"
+export STASH_MCP_TOKEN="$(stash mcp token --subject codex --name laptop)"
 codex mcp add stash --url https://stash.example.com/mcp --bearer-token-env-var STASH_MCP_TOKEN
 ```
 
@@ -216,32 +211,27 @@ Authentication profiles:
   loopback address unless `STASH_AUTH_TRUSTED_NETWORK=true` states that the
   network itself is trusted (a private LAN or a VPN); it then logs a warning
   and keeps only the cross-origin protection.
-- `oauth` (or the legacy alias `oidc`): OIDC login plus the MCP OAuth
-  Authorization Code flow. MCP and SSE accept the resource-bound Stash OAuth
-  access token and native Stash API bearer tokens.
-- `token`: OIDC-free HTTP authentication using only Stash API bearer tokens.
-- `stdio`: no MCP OAuth discovery. The local process is trusted, or it can
-  validate `STASH_AUTH_STDIO_TOKEN` before using an isolated namespace.
+- `oauth` (or the legacy alias `oidc`): adds SSO login to the console through
+  an OIDC provider. MCP clients still use Stash API tokens.
+- `token`: username/password and API-token login only; no OIDC provider is
+  contacted.
+- `stdio`: the local process is trusted, or it can validate a Stash API token
+  given as `STASH_AUTH_STDIO_TOKEN` before using an isolated namespace.
 
-HTTP MCP requests must send `Authorization: Bearer <stash_oauth_token>` or
-`Authorization: Bearer <stash_api_token>`. The browser session cookie is only
-for the embedded console; it is not the standard client credential.
+HTTP MCP requests must send `Authorization: Bearer <stash_api_token>`. Nothing
+else is accepted over MCP: no OAuth access token, no upstream identity token.
+The browser session cookie is only for the embedded console.
 
 The console's **API tokens** page can issue and revoke Stash API tokens after
 browser login. Choose no expiration, a preset duration (1, 7, 30, 90, or 365 days),
 or a custom number of days. Leaving the duration blank means no expiration.
 Revoking a token immediately sets its expiration to the revocation time.
 The list shows expiration dates and expired tokens;
-tokens stop working when they expire or are revoked. Existing tokens keep their
-unlimited lifetime, and the raw value is shown only once. For a server without OIDC, run `stash mcp token --subject <agent>` with
-`STASH_AUTH_API_SECRET`; the command does not open the database or contact an
-OIDC provider. The token lifetime follows `STASH_AUTH_TOKEN_TTL` (30 days by
-default) and can be renewed with the same command.
-
-OAuth access tokens expire after one hour by default; rotated refresh tokens
-expire after 30 days. Configure them with `STASH_AUTH_ACCESS_TOKEN_TTL` and
-`STASH_AUTH_REFRESH_TOKEN_TTL`. The access-token lifetime cannot exceed one
-hour.
+tokens stop working when they expire or are revoked. The raw value is shown
+only once. On the server host, `stash mcp token --subject <agent>` stores a
+token the same way, so it appears in that subject's token list and can be
+revoked there. The lifetime follows `STASH_AUTH_TOKEN_TTL` (30 days by
+default); `--ttl 0` issues one that lasts until revoked.
 
 ### 3. agy (Antigravity)
 
@@ -287,7 +277,7 @@ Prefer the Streamable HTTP URL `http://localhost:8080/mcp`. Use the SSE URL `htt
 
 ## Metrics and Health
 
-`stash serve` uses one HTTP port for MCP, the web console, OAuth endpoints, metrics, and status checks (default `127.0.0.1:8080`). Docker also publishes port 8080 only on the host loopback interface. Prometheus metrics are available at `http://localhost:8080/metrics`; when HTTP authentication is enabled, `/metrics` requires the same bearer credential as MCP. `/healthz` and `/readyz` stay public for load-balancer probes. The metrics cover HTTP requests, authentication outcomes, MCP tool calls, outbound provider calls, namespace-scope decisions, consolidation backlog and latest errors, terminal result-memory coverage, and pending embedding retries. Request, authentication, tool, provider, and scope metrics use bounded labels and do not include user IDs or raw namespace names.
+`stash serve` uses one HTTP port for MCP, the web console, login endpoints, metrics, and status checks (default `127.0.0.1:8080`). Docker also publishes port 8080 only on the host loopback interface. Prometheus metrics are available at `http://localhost:8080/metrics`; when HTTP authentication is enabled, `/metrics` requires the same bearer credential as MCP. `/healthz` and `/readyz` stay public for load-balancer probes. The metrics cover HTTP requests, authentication outcomes, MCP tool calls, outbound provider calls, namespace-scope decisions, consolidation backlog and latest errors, terminal result-memory coverage, and pending embedding retries. Request, authentication, tool, provider, and scope metrics use bounded labels and do not include user IDs or raw namespace names.
 
 The HTTP contract is available as OpenAPI at `http://localhost:8080/openapi.json`; the interactive Swagger UI is at `http://localhost:8080/docs` (also `/swagger`). The UI loads its pinned viewer assets from jsDelivr, while the specification remains available same-origin for offline tooling.
 

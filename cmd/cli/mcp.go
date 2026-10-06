@@ -1324,16 +1324,6 @@ func newStashHTTPHandler(bc *bootstrap.Context) http.Handler {
 	mux.Handle("/mcp", authenticatedHTTP(bc.Auth, newStashSkillsHTTPTransport(streamableServer, sessionResolver)))
 	mux.Handle("/sse", authenticatedHTTP(bc.Auth, sseServer.SSEHandler()))
 	mux.Handle("/message", authenticatedHTTP(bc.Auth, limitRequestBody(sseServer.MessageHandler(), maxMCPRequestBodyBytes)))
-	mux.HandleFunc("/.well-known/oauth-protected-resource", bc.Auth.HandleProtectedResourceMetadata)
-	mux.HandleFunc("/.well-known/oauth-protected-resource/mcp", bc.Auth.HandleProtectedResourceMetadata)
-	mux.HandleFunc("/.well-known/oauth-protected-resource/sse", bc.Auth.HandleProtectedResourceMetadata)
-	mux.HandleFunc("/.well-known/oauth-protected-resource/message", bc.Auth.HandleProtectedResourceMetadata)
-	mux.HandleFunc("/.well-known/oauth-authorization-server", bc.Auth.HandleAuthorizationServerMetadata)
-	mux.HandleFunc("/.well-known/openid-configuration", bc.Auth.HandleAuthorizationServerMetadata)
-	mux.HandleFunc("/authorize", bc.Auth.HandleAuthorize)
-	mux.HandleFunc("/oauth/token", bc.Auth.HandleOAuthToken)
-	mux.HandleFunc("/oauth/register", bc.Auth.HandleOAuthRegister)
-	mux.HandleFunc("/oauth/consent", bc.Auth.HandleConsent)
 	mux.HandleFunc("/auth/login", bc.Auth.HandleLogin)
 	mux.HandleFunc("/auth/callback", bc.Auth.HandleCallback)
 	mux.HandleFunc("/oauth/callback", bc.Auth.HandleCallback)
@@ -1394,13 +1384,10 @@ func mcpExecuteCmd(ctx context.Context, cmd *cli.Command) error {
 	return err
 }
 
-func mcpTokenCmd(_ context.Context, cmd *cli.Command) error {
-	secret := os.Getenv("STASH_AUTH_API_SECRET")
-	if strings.TrimSpace(secret) == "" {
-		secret = os.Getenv("STASH_AUTH_OAUTH_API_SECRET")
-	}
-	if strings.TrimSpace(secret) == "" {
-		return fmt.Errorf("STASH_AUTH_API_SECRET must be set")
+func mcpTokenCmd(ctx context.Context, cmd *cli.Command) error {
+	bc := getBootstrap(cmd)
+	if bc == nil || bc.Auth == nil {
+		return fmt.Errorf("API tokens need STASH_AUTH_MODE=token or oauth")
 	}
 	subject := strings.TrimSpace(cmd.String("subject"))
 	if subject == "" {
@@ -1411,24 +1398,20 @@ func mcpTokenCmd(_ context.Context, cmd *cli.Command) error {
 	}
 	ttl := cmd.Duration("ttl")
 	if !cmd.IsSet("ttl") {
-		rawTTL := strings.TrimSpace(os.Getenv("STASH_AUTH_TOKEN_TTL"))
-		if rawTTL == "" {
-			rawTTL = strings.TrimSpace(os.Getenv("STASH_AUTH_OAUTH_TOKEN_TTL"))
-		}
-		if rawTTL != "" {
-			parsed, err := time.ParseDuration(rawTTL)
-			if err != nil {
-				return fmt.Errorf("STASH_AUTH_TOKEN_TTL is invalid: %w", err)
-			}
-			ttl = parsed
-		}
+		ttl = bc.Config.AuthTokenTTL
 	}
-	token, err := auth.GenerateAPIToken(subject, secret, ttl)
+	if ttl < 0 {
+		return fmt.Errorf("--ttl must not be negative (0 means no expiry)")
+	}
+	token, metadata, err := bc.Auth.IssueAPIToken(ctx, subject, cmd.String("name"), ttl)
 	if err != nil {
-		return fmt.Errorf("generate MCP token: %w", err)
+		return fmt.Errorf("issue API token: %w", err)
 	}
 	// This is an explicit credential-generation command; do not log it from
 	// the server or include it in any durable work record.
+	if cmd.Bool("json") {
+		return printJSON(map[string]any{"token": token, "id": metadata.ID, "name": metadata.Name, "subject": subject, "expires_at": metadata.ExpiresAt, "created_at": metadata.CreatedAt})
+	}
 	fmt.Println(token)
 	return nil
 }
