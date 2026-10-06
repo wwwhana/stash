@@ -3,38 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/alash3al/stash/internal/bootstrap"
 	"github.com/alash3al/stash/internal/brain"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
-
-func workPlanPaths(request mcp.CallToolRequest, key string) ([]string, error) {
-	raw, ok := request.GetArguments()[key]
-	if !ok || raw == nil {
-		return nil, nil
-	}
-	switch value := raw.(type) {
-	case string:
-		return strings.FieldsFunc(value, func(r rune) bool { return r == ',' || r == '\n' }), nil
-	case []string:
-		return value, nil
-	case []any:
-		paths := make([]string, 0, len(value))
-		for _, entry := range value {
-			path, ok := entry.(string)
-			if !ok {
-				return nil, fmt.Errorf("argument %q must contain only strings", key)
-			}
-			paths = append(paths, path)
-		}
-		return paths, nil
-	default:
-		return nil, fmt.Errorf("argument %q must be a comma-separated string or string array", key)
-	}
-}
 
 func workPlanActor(ctx context.Context, request mcp.CallToolRequest) string {
 	if user, ok := ctx.Value(keySSOUser).(string); ok && user != "" {
@@ -59,7 +33,7 @@ func workPlanOptionalPaths(request mcp.CallToolRequest, key string) (*[]string, 
 	if raw, ok := request.GetArguments()[key]; !ok || raw == nil {
 		return nil, nil
 	}
-	paths, err := workPlanPaths(request, key)
+	paths, err := stringListArgument(request, key)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +87,7 @@ func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 		if err != nil {
 			return nil, err
 		}
-		paths, err := workPlanPaths(request, "owned_paths")
+		paths, err := stringListArgument(request, "owned_paths")
 		if err != nil {
 			return nil, err
 		}
@@ -150,11 +124,7 @@ func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 		if err != nil {
 			return nil, err
 		}
-		current, err := bc.Brain.GetWorkItem(ctx, componentID)
-		if err != nil {
-			return nil, err
-		}
-		if err := authorizeNamespaceID(ctx, bc, current.NamespaceID); err != nil {
+		if _, err := authorizedWorkItem(ctx, bc, componentID); err != nil {
 			return nil, err
 		}
 		title, err := workPlanOptionalString(request, "title")
@@ -241,11 +211,7 @@ func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 		if err != nil {
 			return nil, err
 		}
-		current, err := bc.Brain.GetWorkItem(ctx, taskID)
-		if err != nil {
-			return nil, err
-		}
-		if err := authorizeNamespaceID(ctx, bc, current.NamespaceID); err != nil {
+		if _, err := authorizedWorkItem(ctx, bc, taskID); err != nil {
 			return nil, err
 		}
 		title, err := workPlanOptionalString(request, "title")
@@ -288,11 +254,7 @@ func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 		if err != nil {
 			return nil, err
 		}
-		current, err := bc.Brain.GetWorkItem(ctx, taskID)
-		if err != nil {
-			return nil, err
-		}
-		if err := authorizeNamespaceID(ctx, bc, current.NamespaceID); err != nil {
+		if _, err := authorizedWorkItem(ctx, bc, taskID); err != nil {
 			return nil, err
 		}
 		task, err := bc.Brain.StartWorkPlanTask(ctx, taskID, workPlanActor(ctx, request))
@@ -310,11 +272,7 @@ func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 		if err != nil {
 			return nil, err
 		}
-		current, err := bc.Brain.GetWorkItem(ctx, taskID)
-		if err != nil {
-			return nil, err
-		}
-		if err := authorizeNamespaceID(ctx, bc, current.NamespaceID); err != nil {
+		if _, err := authorizedWorkItem(ctx, bc, taskID); err != nil {
 			return nil, err
 		}
 		task, err := bc.Brain.CompleteWorkPlanTask(ctx, taskID, workPlanActor(ctx, request))
@@ -332,11 +290,7 @@ func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 		if err != nil {
 			return nil, err
 		}
-		current, err := bc.Brain.GetWorkItem(ctx, taskID)
-		if err != nil {
-			return nil, err
-		}
-		if err := authorizeNamespaceID(ctx, bc, current.NamespaceID); err != nil {
+		if _, err := authorizedWorkItem(ctx, bc, taskID); err != nil {
 			return nil, err
 		}
 		task, err := bc.Brain.BlockWorkPlanTask(ctx, taskID, workPlanActor(ctx, request), request.GetString("reason", ""))
@@ -354,11 +308,7 @@ func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 		if err != nil {
 			return nil, err
 		}
-		current, err := bc.Brain.GetWorkItem(ctx, taskID)
-		if err != nil {
-			return nil, err
-		}
-		if err := authorizeNamespaceID(ctx, bc, current.NamespaceID); err != nil {
+		if _, err := authorizedWorkItem(ctx, bc, taskID); err != nil {
 			return nil, err
 		}
 		task, err := bc.Brain.UnblockWorkPlanTask(ctx, taskID)
@@ -376,11 +326,7 @@ func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 		if err != nil {
 			return nil, err
 		}
-		current, err := bc.Brain.GetWorkItem(ctx, componentID)
-		if err != nil {
-			return nil, err
-		}
-		if err := authorizeNamespaceID(ctx, bc, current.NamespaceID); err != nil {
+		if _, err := authorizedWorkItem(ctx, bc, componentID); err != nil {
 			return nil, err
 		}
 		if err := bc.Brain.DeleteWorkPlanComponent(ctx, componentID); err != nil {
@@ -397,11 +343,7 @@ func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 		if err != nil {
 			return nil, err
 		}
-		current, err := bc.Brain.GetWorkItem(ctx, taskID)
-		if err != nil {
-			return nil, err
-		}
-		if err := authorizeNamespaceID(ctx, bc, current.NamespaceID); err != nil {
+		if _, err := authorizedWorkItem(ctx, bc, taskID); err != nil {
 			return nil, err
 		}
 		if err := bc.Brain.DeleteWorkPlanTask(ctx, taskID); err != nil {
@@ -418,14 +360,10 @@ func registerWorkPlanTools(mcpServer *server.MCPServer, bc *bootstrap.Context) {
 		if err != nil {
 			return nil, err
 		}
-		current, err := bc.Brain.GetWorkItem(ctx, componentID)
-		if err != nil {
+		if _, err := authorizedWorkItem(ctx, bc, componentID); err != nil {
 			return nil, err
 		}
-		if err := authorizeNamespaceID(ctx, bc, current.NamespaceID); err != nil {
-			return nil, err
-		}
-		paths, err := workPlanPaths(request, "owned_paths")
+		paths, err := stringListArgument(request, "owned_paths")
 		if err != nil {
 			return nil, err
 		}
