@@ -534,3 +534,77 @@ test('Git registration validates input, writes to the selected space and reloads
     assert.equal(state.statusLabel('unknown'), 'Not checked');
     assert.equal(state.statusLabel('dirty'), 'Has changes');
 });
+
+test('password login submits the form, reads the failure reason, and reloads the console on success', async () => {
+    const { state, window } = setup('/ui/wiki');
+    const calls = [];
+    let authenticated = false;
+    window.fetch = async (url, options = {}) => {
+        calls.push({ url, options });
+        if (url === '/auth/status') return { ok: true, json: async () => ({ auth_mode: 'token', authenticated, user: authenticated ? 'alice' : '', local_login: true, sso_login: false, admin: false, has_password: true }) };
+        if (url === '/auth/login') {
+            const headers = { get: name => name === 'X-Stash-Login-Error' ? (options.body.get('password') === 'slow' ? 'throttled' : 'invalid') : '' };
+            if (options.body.get('password') === 'correct horse') { authenticated = true; return { type: 'opaqueredirect', status: 0, ok: false, headers }; }
+            return { type: 'basic', status: 401, ok: false, headers };
+        }
+        return { ok: true, json: async () => ({}) };
+    };
+    await state.bootstrap();
+    assert.equal(state.needsLogin, true);
+    assert.equal(state.canLocalLogin, true);
+    assert.equal(state.canSSOLogin, false);
+    state.loginForm = { username: 'alice', password: 'wrong' };
+    await state.submitLogin();
+    assert.equal(state.loginError, 'auth.failed');
+    state.loginForm.password = 'slow';
+    await state.submitLogin();
+    assert.equal(state.loginError, 'auth.throttled');
+    state.loginForm.password = 'correct horse';
+    await state.submitLogin();
+    assert.equal(state.loginError, '');
+    assert.equal(state.auth.authenticated, true);
+    assert.equal(state.auth.user, 'alice');
+    assert.equal(state.needsLogin, false);
+    const login = calls.filter(call => call.url === '/auth/login');
+    assert.equal(login.length, 3);
+    assert.equal(login[0].options.redirect, 'manual');
+    assert.equal(login[0].options.body.get('username'), 'alice');
+    assert.equal(state.loginForm.password, '');
+});
+
+test('server settings navigation is hidden from a signed-in user who is not an administrator', () => {
+    const { state } = setup('/ui/wiki');
+    assert.equal(state.showAdminNav, true, 'open without authentication');
+    state.auth = { auth_mode: 'token', authenticated: true, user: 'bob', admin: false };
+    assert.equal(state.showAdminNav, false);
+    state.auth = { auth_mode: 'token', authenticated: true, user: 'alice', admin: true };
+    assert.equal(state.showAdminNav, true);
+    state.auth = { auth_mode: 'none', authenticated: false };
+    assert.equal(state.showAdminNav, true);
+});
+
+test('password change validates locally and maps server answers to messages', async () => {
+    const { state, window } = setup('/ui/wiki');
+    let status = 204;
+    const bodies = [];
+    window.fetch = async (url, options = {}) => { if (url === '/auth/password') { bodies.push(JSON.parse(options.body)); return { status, ok: status < 300 }; } return { ok: true, json: async () => ({}) }; };
+    state.passwordForm = { current: '', next: 'new password 1', confirm: 'new password 1' };
+    await state.changePassword();
+    assert.equal(state.passwordError, 'auth.passwordRequired');
+    state.passwordForm = { current: 'old password', next: 'new password 1', confirm: 'different' };
+    await state.changePassword();
+    assert.equal(state.passwordError, 'auth.passwordMismatch');
+    assert.equal(bodies.length, 0);
+    state.passwordForm = { current: 'old password', next: 'new password 1', confirm: 'new password 1' };
+    await state.changePassword();
+    assert.equal(state.passwordError, '');
+    assert.equal(state.passwordNotice, 'auth.passwordChanged');
+    assert.deepEqual(bodies[0], { current_password: 'old password', new_password: 'new password 1' });
+    assert.equal(state.passwordForm.current, '');
+    for (const [code, message] of [[401, 'auth.currentPasswordWrong'], [400, 'auth.weakPassword'], [429, 'auth.throttled'], [500, 'error.password']]) {
+        status = code;
+        state.passwordForm = { current: 'old password', next: 'new password 1', confirm: 'new password 1' };
+        await state.changePassword();
+        assert.equal(state.passwordError, message);
+    }
+});

@@ -87,10 +87,47 @@ stash llm import-env                           # copy STASH_OPENAI_* into the re
 stash llm status
 ```
 
-The admin endpoints require `X-Stash-Admin-Token` (`STASH_ADMIN_TOKEN`) or a
-logged-in subject listed in `STASH_ADMIN_SUBJECTS`. Under `STASH_AUTH_MODE=none`,
+The admin endpoints and the **Server settings** pages are for administrators:
+a user whose `is_admin` flag is set (`STASH_ADMIN_USER` or `stash user set --admin`),
+a subject listed in `STASH_ADMIN_SUBJECTS`, or a request carrying
+`X-Stash-Admin-Token` (`STASH_ADMIN_TOKEN`). Under `STASH_AUTH_MODE=none`,
 which only listens on loopback, they are open like the rest of the server.
 Set `STASH_EMBEDDING_CACHE=false` to stop caching computed vectors in PostgreSQL.
+
+## Console login
+
+People sign in to the console with a username and password. The first
+administrator comes from the environment and is created at startup when it
+does not exist yet:
+
+```dotenv
+STASH_ADMIN_USER=admin
+STASH_ADMIN_PASSWORD=<at least 8 characters>
+```
+
+An existing user keeps the password it has (so a change made in the console
+survives restarts) but is promoted and re-enabled, which makes these two
+variables the way back in. More accounts come from the CLI:
+
+```bash
+stash user add alice --display-name "Alice" --password-stdin   # or --password-env / --password
+stash user set alice --admin
+stash user passwd alice --password-stdin
+stash user set alice --disable      # takes effect on the next request
+stash user list                     # users with their identities
+```
+
+Users and the ways they sign in are separate tables: a user row is the
+person (username, display name, admin flag), and `user_identities` holds its
+password hash and any SSO subject. An SSO login whose subject is new is
+provisioned as a user named after that subject, so the namespaces and tokens
+it already had stay its own, and an administrator can later add a password to
+it or disable it. The username is the session subject everywhere: namespaces,
+API tokens, and wiki authorship are keyed by it.
+
+The login page offers the password form first, SSO when `STASH_AUTH_MODE=oauth`
+is configured, and an API token form one link away. Signed-in users change
+their own password from the **Account** panel.
 
 See [Getting Started](docs/GETTING_STARTED.md) for a fuller configuration checklist.
 
@@ -176,7 +213,9 @@ codex mcp add stash --url https://stash.example.com/mcp --bearer-token-env-var S
 Authentication profiles:
 
 - `none`: no HTTP authentication. Stash refuses to bind this mode beyond a
-  loopback address.
+  loopback address unless `STASH_AUTH_TRUSTED_NETWORK=true` states that the
+  network itself is trusted (a private LAN or a VPN); it then logs a warning
+  and keeps only the cross-origin protection.
 - `oauth` (or the legacy alias `oidc`): OIDC login plus the MCP OAuth
   Authorization Code flow. MCP and SSE accept the resource-bound Stash OAuth
   access token and native Stash API bearer tokens.

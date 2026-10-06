@@ -81,6 +81,13 @@ type Config struct {
 	// MCP API secret so a maintenance credential cannot sign user sessions.
 	AdminSubjects string `env:"STASH_ADMIN_SUBJECTS" envDefault:""`
 	AdminToken    string `env:"STASH_ADMIN_TOKEN" envDefault:""`
+	// The first local administrator is created from these at startup when
+	// the account does not exist yet; later password changes are kept.
+	AdminUser     string `env:"STASH_ADMIN_USER" envDefault:""`
+	AdminPassword string `env:"STASH_ADMIN_PASSWORD" envDefault:""`
+	// AuthTrustedNetwork lets STASH_AUTH_MODE=none listen beyond loopback. It
+	// is an explicit statement that everyone on the network may use Stash.
+	AuthTrustedNetwork bool `env:"STASH_AUTH_TRUSTED_NETWORK" envDefault:"false"`
 
 	// OAuth-prefixed aliases make the profile explicit while preserving the
 	// original STASH_AUTH_* names used by existing deployments.
@@ -184,6 +191,12 @@ func (c *Config) Validate() error {
 		if _, err := strconv.ParseBool(raw); err != nil {
 			return fmt.Errorf("STASH_AUTH_OAUTH_COOKIE_SECURE must be true or false")
 		}
+	}
+	if (strings.TrimSpace(c.AdminUser) == "") != (strings.TrimSpace(c.AdminPassword) == "") {
+		return fmt.Errorf("STASH_ADMIN_USER and STASH_ADMIN_PASSWORD must be set together")
+	}
+	if c.AdminPassword != "" && (len(c.AdminPassword) < 8 || len(c.AdminPassword) > 72) {
+		return fmt.Errorf("STASH_ADMIN_PASSWORD must be between 8 and 72 characters")
 	}
 	if c.VectorDim < 0 || c.VectorDim > 2000 {
 		return fmt.Errorf("STASH_VECTOR_DIM must be between 0 and 2000")

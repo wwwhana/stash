@@ -75,6 +75,9 @@ type Config struct {
 	// minutes long and would otherwise sign the user out almost immediately.
 	SessionTTL time.Duration
 	StdioToken string
+	// AdminSubjects lists OIDC or token subjects allowed on the operator
+	// pages, next to local administrators.
+	AdminSubjects string
 }
 
 type Provider struct {
@@ -95,6 +98,7 @@ type Provider struct {
 	authorizeRate         fixedWindowRateLimit
 	registerRate          fixedWindowRateLimit
 	tokenRate             fixedWindowRateLimit
+	loginFailures         map[string]*loginFailure
 }
 
 // APIToken is the metadata shown in the token management page. The raw token
@@ -527,6 +531,15 @@ func (p *Provider) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodPost {
+		r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+		if err := r.ParseForm(); err != nil {
+			writeTokenLoginPage(w, true, p.browserLoginConfigured())
+			return
+		}
+		if _, ok := r.PostForm["username"]; ok {
+			p.handleLocalLogin(w, r)
+			return
+		}
 		p.handleTokenLogin(w, r)
 		return
 	}
@@ -534,17 +547,17 @@ func (p *Provider) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	if p.Mode() == "token" {
-		writeTokenLoginPage(w, false, false)
-		return
-	}
 	provider := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("provider")))
-	if provider != "" && provider != "oidc" && provider != "token" {
+	if provider != "" && provider != "oidc" && provider != "token" && provider != "local" {
 		http.Error(w, "unsupported login provider", http.StatusBadRequest)
 		return
 	}
-	if provider == "token" || !p.browserLoginConfigured() {
-		writeTokenLoginPage(w, false, p.browserLoginConfigured())
+	page := loginPageOptions{OAuthEnabled: p.browserLoginConfigured(), LocalEnabled: p.LocalLoginAvailable(r.Context())}
+	page.TokenForm = provider == "token" || !page.LocalEnabled
+	if p.Mode() == "token" || provider == "token" || provider == "local" || !page.OAuthEnabled || page.LocalEnabled && provider == "" {
+		// A deployment with local accounts shows the password form first;
+		// SSO stays one link away. Without accounts the token form remains.
+		writeLoginPage(w, page)
 		return
 	}
 	if p.verifier == nil || p.oauth2Config.ClientID == "" {
@@ -594,7 +607,21 @@ func (p *Provider) handleTokenLogin(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
+// loginPageOptions selects which forms the login page shows.
+type loginPageOptions struct {
+	Failed       bool
+	Throttled    bool
+	OAuthEnabled bool
+	LocalEnabled bool
+	TokenForm    bool
+}
+
 func writeTokenLoginPage(w http.ResponseWriter, failed, oauthEnabled bool) {
+	writeLoginPage(w, loginPageOptions{Failed: failed, OAuthEnabled: oauthEnabled, TokenForm: true})
+}
+
+func writeLoginPage(w http.ResponseWriter, o loginPageOptions) {
+	failed, oauthEnabled := o.Failed, o.OAuthEnabled
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
 	w.Header().Set("Referrer-Policy", "no-referrer")
@@ -602,22 +629,48 @@ func writeTokenLoginPage(w http.ResponseWriter, failed, oauthEnabled bool) {
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if failed {
+		// The console submits this form with fetch and reads the reason here.
+		reason := "invalid"
+		if o.Throttled {
+			reason = "throttled"
+		}
+		w.Header().Set("X-Stash-Login-Error", reason)
 		w.WriteHeader(http.StatusUnauthorized)
 	}
 	message := "발급한 토큰으로 로그인하세요."
+	if !o.TokenForm {
+		message = "아이디와 비밀번호로 로그인하세요."
+	}
 	if failed {
 		message = "토큰이 올바르지 않거나 만료되었습니다."
+		if !o.TokenForm {
+			message = "아이디 또는 비밀번호가 올바르지 않습니다."
+		}
+		if o.Throttled {
+			message = "로그인 실패가 너무 많습니다. 잠시 후 다시 시도하세요."
+		}
 	}
 	_, _ = io.WriteString(w, `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Stash 로그인</title><style>
 :root{color-scheme:light dark;--bg:#eef2f7;--surface:#fff;--ink:#182235;--muted:#667085;--border:#d7dee8;--accent:#5b5bd6;--danger:#c83c56}*{box-sizing:border-box}body{min-height:100vh;margin:0;display:grid;place-items:center;padding:24px;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}@media(prefers-color-scheme:dark){:root{--bg:#0d131b;--surface:#151d27;--ink:#f4f7fb;--muted:#a8b5c7;--border:#2e3b4a;--accent:#a5b0ff;--danger:#ff8a9b}}main{width:min(420px,100%);padding:28px;border:1px solid var(--border);border-radius:16px;background:var(--surface);box-shadow:0 16px 40px #0002}h1{margin:0 0 6px;font-size:22px;letter-spacing:-.04em}p{margin:0 0 20px;color:var(--muted)}label{display:grid;gap:7px;font-weight:700}input{width:100%;min-height:42px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:transparent;color:var(--ink);font:inherit}input:focus{outline:3px solid color-mix(in srgb,var(--accent) 32%,transparent);border-color:var(--accent)}button{width:100%;min-height:42px;margin-top:14px;border:0;border-radius:10px;background:var(--accent);color:#fff;font:inherit;font-weight:800;cursor:pointer}.error{margin:-4px 0 14px;color:var(--danger);font-size:13px}a{display:block;margin-top:16px;color:var(--muted);text-align:center;text-decoration:none}
 </style></head><body><main><h1>Stash 로그인</h1><p>`+message+`</p>`)
-	_, _ = io.WriteString(w, `<form method="post" action="/auth/login"><label for="stash-token">토큰</label><input id="stash-token" name="token" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" required autofocus placeholder="stash_api_…">`)
-	if failed {
-		_, _ = io.WriteString(w, `<div class="error" role="alert">토큰을 확인하고 다시 시도하세요.</div>`)
+	if o.TokenForm {
+		_, _ = io.WriteString(w, `<form method="post" action="/auth/login"><label for="stash-token">토큰</label><input id="stash-token" name="token" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" required autofocus placeholder="stash_api_…">`)
+		if failed {
+			_, _ = io.WriteString(w, `<div class="error" role="alert">토큰을 확인하고 다시 시도하세요.</div>`)
+		}
+		_, _ = io.WriteString(w, `<button type="submit">토큰으로 로그인</button></form>`)
+		if o.LocalEnabled {
+			_, _ = io.WriteString(w, `<a href="/auth/login?provider=local">아이디로 로그인</a>`)
+		}
+	} else {
+		_, _ = io.WriteString(w, `<form method="post" action="/auth/login"><label for="stash-username">아이디</label><input id="stash-username" name="username" type="text" autocomplete="username" autocapitalize="off" spellcheck="false" required autofocus><label for="stash-password" style="margin-top:12px">비밀번호</label><input id="stash-password" name="password" type="password" autocomplete="current-password" required>`)
+		if failed {
+			_, _ = io.WriteString(w, `<div class="error" role="alert">아이디와 비밀번호를 확인하고 다시 시도하세요.</div>`)
+		}
+		_, _ = io.WriteString(w, `<button type="submit">로그인</button></form><a href="/auth/login?provider=token">토큰으로 로그인</a>`)
 	}
-	_, _ = io.WriteString(w, `<button type="submit">토큰으로 로그인</button></form>`)
 	if oauthEnabled {
-		_, _ = io.WriteString(w, `<a href="/auth/login?provider=oidc">계정으로 로그인</a>`)
+		_, _ = io.WriteString(w, `<a href="/auth/login?provider=oidc">계정(SSO)으로 로그인</a>`)
 	}
 	_, _ = io.WriteString(w, `<a href="/">돌아가기</a></main></body></html>`)
 }
@@ -674,6 +727,20 @@ func (p *Provider) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	pending, isOAuthRequest := p.pending[providedState]
 	p.mu.Unlock()
 	subject, expiresAt, err := p.completeOIDCLogin(r, providedState, w)
+	if err == nil {
+		// The identity token names a subject at the issuer; the session is
+		// for the user that identity belongs to.
+		username, resolveErr := p.resolveOIDCUser(r.Context(), p.config.Issuer, subject.Subject, subject.Profile)
+		switch {
+		case errors.Is(resolveErr, ErrUserDisabled):
+			err = &authHTTPError{http.StatusForbidden, "login was denied: this account is disabled"}
+		case resolveErr != nil:
+			log.Printf("resolve SSO user %q: %v", subject.Subject, resolveErr)
+			err = &authHTTPError{http.StatusServiceUnavailable, "could not look up the account"}
+		default:
+			subject.Subject = username
+		}
+	}
 	if err != nil {
 		if isOAuthRequest && loginStateMatches(r, providedState) {
 			p.mu.Lock()
@@ -701,7 +768,7 @@ func (p *Provider) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		p.pruneOAuthStateLocked(time.Now())
 		pending, isOAuthRequest = p.pending[providedState]
 		if isOAuthRequest {
-			pending.Subject = subject
+			pending.Subject = subject.Subject
 			pending.SessionExpiresAt = expiresAt
 			pending.ConsentToken = consentToken
 			pending.ExpiresAt = time.Now().Add(loginStateTTL)
@@ -716,7 +783,7 @@ func (p *Provider) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	p.setSessionCookie(w, subject, expiresAt, true)
+	p.setSessionCookie(w, subject.Subject, expiresAt, true)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
@@ -799,36 +866,43 @@ type authHTTPError struct {
 
 func (e authHTTPError) Error() string { return e.message }
 
-func (p *Provider) completeOIDCLogin(r *http.Request, providedState string, w http.ResponseWriter) (string, time.Time, *authHTTPError) {
+// oidcLogin is a verified upstream login: the issuer's subject plus the
+// profile claims used to name a newly provisioned user.
+type oidcLogin struct {
+	Subject string
+	Profile oidcProfile
+}
+
+func (p *Provider) completeOIDCLogin(r *http.Request, providedState string, w http.ResponseWriter) (oidcLogin, time.Time, *authHTTPError) {
 	stateCookie, err := r.Cookie(stateCookieName)
 	if err != nil || stateCookie.Value == "" {
-		return "", time.Time{}, &authHTTPError{http.StatusBadRequest, "login state is missing"}
+		return oidcLogin{}, time.Time{}, &authHTTPError{http.StatusBadRequest, "login state is missing"}
 	}
 	nonceCookie, err := r.Cookie(nonceCookieName)
 	if err != nil || nonceCookie.Value == "" {
-		return "", time.Time{}, &authHTTPError{http.StatusBadRequest, "login nonce is missing"}
+		return oidcLogin{}, time.Time{}, &authHTTPError{http.StatusBadRequest, "login nonce is missing"}
 	}
 	clearOAuthCookies(w, p.config.CookieSecure)
 	if len(providedState) != len(stateCookie.Value) || subtle.ConstantTimeCompare([]byte(providedState), []byte(stateCookie.Value)) != 1 {
-		return "", time.Time{}, &authHTTPError{http.StatusBadRequest, "invalid login state"}
+		return oidcLogin{}, time.Time{}, &authHTTPError{http.StatusBadRequest, "invalid login state"}
 	}
 	if upstreamError := strings.TrimSpace(r.FormValue("error")); upstreamError != "" {
-		return "", time.Time{}, &authHTTPError{http.StatusBadRequest, "login was denied: " + upstreamError}
+		return oidcLogin{}, time.Time{}, &authHTTPError{http.StatusBadRequest, "login was denied: " + upstreamError}
 	}
 	code := r.FormValue("code")
 	if code == "" {
-		return "", time.Time{}, &authHTTPError{http.StatusBadRequest, "authorization code is missing"}
+		return oidcLogin{}, time.Time{}, &authHTTPError{http.StatusBadRequest, "authorization code is missing"}
 	}
 
 	providerCtx, cancel := context.WithTimeout(r.Context(), oauthProviderTimeout)
 	defer cancel()
 	token, err := p.oauth2Config.Exchange(providerCtx, code)
 	if err != nil {
-		return "", time.Time{}, &authHTTPError{http.StatusBadGateway, "could not complete login"}
+		return oidcLogin{}, time.Time{}, &authHTTPError{http.StatusBadGateway, "could not complete login"}
 	}
 	rawIDToken, ok := token.Extra("id_token").(string)
 	if !ok || rawIDToken == "" {
-		return "", time.Time{}, &authHTTPError{http.StatusBadGateway, "identity token is missing"}
+		return oidcLogin{}, time.Time{}, &authHTTPError{http.StatusBadGateway, "identity token is missing"}
 	}
 
 	idToken, err := p.verifyIdentityToken(providerCtx, rawIDToken)
@@ -841,26 +915,28 @@ func (p *Provider) completeOIDCLogin(r *http.Request, providedState string, w ht
 		// provider can still be configured for normal OIDC validation later.
 		if subject, _, introspectionErr := p.introspectLoginAccessToken(providerCtx, token.AccessToken); introspectionErr == nil {
 			log.Printf("OIDC identity token verification failed; accepted introspected access token: %v", err)
-			return subject, time.Now().Add(p.sessionTTL()), nil
+			return oidcLogin{Subject: subject}, time.Now().Add(p.sessionTTL()), nil
 		} else {
 			log.Printf("OIDC identity token verification failed: %v (access-token introspection fallback failed: %v)", err, introspectionErr)
 		}
-		return "", time.Time{}, &authHTTPError{http.StatusUnauthorized, "identity token is invalid"}
+		return oidcLogin{}, time.Time{}, &authHTTPError{http.StatusUnauthorized, "identity token is invalid"}
 	}
 	if idToken.Nonce == "" || len(idToken.Nonce) != len(nonceCookie.Value) || subtle.ConstantTimeCompare([]byte(idToken.Nonce), []byte(nonceCookie.Value)) != 1 {
-		return "", time.Time{}, &authHTTPError{http.StatusUnauthorized, "invalid login nonce"}
+		return oidcLogin{}, time.Time{}, &authHTTPError{http.StatusUnauthorized, "invalid login nonce"}
 	}
 
 	subject, err := subjectFromToken(idToken)
 	if err != nil {
-		return "", time.Time{}, &authHTTPError{http.StatusUnauthorized, "identity token has no stable subject"}
+		return oidcLogin{}, time.Time{}, &authHTTPError{http.StatusUnauthorized, "identity token has no stable subject"}
 	}
 	if idToken.Expiry.IsZero() || !idToken.Expiry.After(time.Now()) {
-		return "", time.Time{}, &authHTTPError{http.StatusUnauthorized, "identity token is expired"}
+		return oidcLogin{}, time.Time{}, &authHTTPError{http.StatusUnauthorized, "identity token is expired"}
 	}
+	var profile oidcProfile
+	_ = idToken.Claims(&profile)
 	// The ID token only proves the login moment; the Stash session lifetime
 	// is governed locally so the console does not expire with it.
-	return subject, time.Now().Add(p.sessionTTL()), nil
+	return oidcLogin{Subject: subject, Profile: profile}, time.Now().Add(p.sessionTTL()), nil
 }
 
 // verifyIdentityToken accepts the asymmetric algorithms supported by go-oidc
@@ -1334,9 +1410,13 @@ func (p *Provider) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	status := map[string]any{"auth_mode": "none", "authenticated": false}
 	if p != nil {
 		status["auth_mode"] = p.Mode()
+		status["local_login"] = p.LocalLoginAvailable(r.Context())
+		status["sso_login"] = p.browserLoginConfigured()
 		if user, err := p.VerifyRequest(r); err == nil && user != "" {
 			status["authenticated"] = true
 			status["user"] = user
+			status["admin"] = p.IsAdmin(r.Context(), user)
+			status["has_password"] = p.HasPassword(r.Context(), user)
 			p.RenewSession(w, r)
 		}
 	}
@@ -1536,14 +1616,16 @@ func (p *Provider) verifyRequest(r *http.Request, mcp bool) (string, error) {
 		if mcp && bearer {
 			return "", errors.New("MCP OAuth or API token required")
 		}
-		return parseSessionToken(rawToken, p.config.APISecret)
+		subject, err := parseSessionToken(rawToken, p.config.APISecret)
+		return p.activeSubject(r.Context(), subject, err)
 	}
 	if strings.HasPrefix(rawToken, oauthTokenPrefix) {
-		return parseOAuthAccessToken(rawToken, p.config.APISecret, p.configuredResourceURL(r))
+		subject, err := parseOAuthAccessToken(rawToken, p.config.APISecret, p.configuredResourceURL(r))
+		return p.activeSubject(r.Context(), subject, err)
 	}
 	if strings.HasPrefix(rawToken, apiTokenPrefix) {
 		subject, _, err := p.verifyAPIToken(r.Context(), rawToken)
-		return subject, err
+		return p.activeSubject(r.Context(), subject, err)
 	}
 	if mcp {
 		return "", errors.New("MCP OAuth or API token required")
@@ -1552,6 +1634,19 @@ func (p *Provider) verifyRequest(r *http.Request, mcp bool) (string, error) {
 		return "", errors.New("unsupported session credential")
 	}
 	return p.verifyOIDCAccessToken(r, rawToken)
+}
+
+// activeSubject turns a verified subject into an error when an administrator
+// has disabled that user, so a disable takes effect on the next request
+// instead of at the end of the session or token lifetime.
+func (p *Provider) activeSubject(ctx context.Context, subject string, err error) (string, error) {
+	if err != nil {
+		return "", err
+	}
+	if p.userDisabled(ctx, subject) {
+		return "", ErrUserDisabled
+	}
+	return subject, nil
 }
 
 // VerifyBearerToken validates a bearer credential supplied to the STDIO

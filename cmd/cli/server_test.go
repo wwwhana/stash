@@ -71,12 +71,12 @@ func TestOperationalRoutesAreRegistered(t *testing.T) {
 
 func TestDisabledAuthenticationOnlyListensOnLoopback(t *testing.T) {
 	for _, addr := range []string{"127.0.0.1:8080", "[::1]:8080", "localhost:8080"} {
-		if err := validateListenAddress(addr, nil); err != nil {
+		if err := validateListenAddress(addr, nil, false); err != nil {
 			t.Fatalf("loopback address %q rejected: %v", addr, err)
 		}
 	}
 	for _, addr := range []string{"0.0.0.0:8080", ":8080", "[::]:8080"} {
-		if err := validateListenAddress(addr, nil); err == nil {
+		if err := validateListenAddress(addr, nil, false); err == nil {
 			t.Fatalf("public address %q accepted without authentication", addr)
 		}
 	}
@@ -84,8 +84,11 @@ func TestDisabledAuthenticationOnlyListensOnLoopback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("init token auth: %v", err)
 	}
-	if err := validateListenAddress("0.0.0.0:8080", provider); err != nil {
+	if err := validateListenAddress("0.0.0.0:8080", provider, false); err != nil {
 		t.Fatalf("authenticated public address rejected: %v", err)
+	}
+	if err := validateListenAddress("0.0.0.0:8080", nil, true); err != nil {
+		t.Fatalf("trusted network without authentication rejected: %v", err)
 	}
 }
 

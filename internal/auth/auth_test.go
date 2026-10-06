@@ -356,52 +356,68 @@ func TestHandleGenerateTokenLifetimeValidation(t *testing.T) {
 	}
 }
 
-func TestPersistentAPITokenLifetimeAndRevocation(t *testing.T) {
+// authTestMigrations are the auth-only migrations, which need PostgreSQL but
+// not pgvector, so these checks run in a plain isolated schema.
+var authTestMigrations = []string{"00040_add_auth_tokens.sql", "00041_add_auth_token_expiry.sql", "00045_add_users.sql"}
+
+// openAuthTestSchema returns a pool whose search_path is a fresh schema with
+// the auth migrations applied. afterMigration runs after each migration so a
+// test can insert rows that predate a later one.
+func openAuthTestSchema(t *testing.T, ctx context.Context, afterMigration func(pool *pgxpool.Pool, migration string)) *pgxpool.Pool {
+	t.Helper()
 	dsn := strings.TrimSpace(os.Getenv("STASH_TEST_DATABASE_URL"))
 	if dsn == "" {
 		t.Skip("set STASH_TEST_DATABASE_URL to a disposable PostgreSQL database")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
 	config, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		t.Fatal("invalid test database URL")
 	}
-	// Isolate the auth migrations so this check needs only PostgreSQL, not pgvector.
-	schema := fmt.Sprintf("auth_token_test_%d", time.Now().UnixNano())
+	schema := fmt.Sprintf("auth_test_%d", time.Now().UnixNano())
 	config.ConnConfig.RuntimeParams["search_path"] = schema
 	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
 		t.Fatalf("open test database: %v", err)
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	if _, err := pool.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
 		t.Fatal(err)
 	}
-	defer func() {
+	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cleanupCancel()
 		if _, err := pool.Exec(cleanupCtx, "DROP SCHEMA "+schema+" CASCADE"); err != nil {
 			t.Error(err)
 		}
-	}()
-	legacyToken := apiTokenPrefix + "legacy-test-token"
-	for _, migration := range []string{"00040_add_auth_tokens.sql", "00041_add_auth_token_expiry.sql"} {
+	})
+	for _, migration := range authTestMigrations {
 		sql, err := os.ReadFile("../db/migrations/" + migration)
 		if err != nil {
 			t.Fatal(err)
 		}
 		up, _, _ := strings.Cut(string(sql), "-- +goose Down")
 		if _, err := pool.Exec(ctx, up); err != nil {
-			t.Fatal(err)
+			t.Fatalf("%s: %v", migration, err)
 		}
+		if afterMigration != nil {
+			afterMigration(pool, migration)
+		}
+	}
+	return pool
+}
+
+func TestPersistentAPITokenLifetimeAndRevocation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	legacyToken := apiTokenPrefix + "legacy-test-token"
+	pool := openAuthTestSchema(t, ctx, func(pool *pgxpool.Pool, migration string) {
 		if migration == "00040_add_auth_tokens.sql" {
 			hash := sha256.Sum256([]byte(legacyToken))
 			if _, err := pool.Exec(ctx, `INSERT INTO auth_tokens (subject, token_hash) VALUES ('legacy', $1)`, hash[:]); err != nil {
 				t.Fatal(err)
 			}
 		}
-	}
+	})
 	p := &Provider{config: Config{Mode: "token", APISecret: testSigningSecret}, tokenPool: pool}
 	if subject, expiry, err := p.verifyAPIToken(ctx, legacyToken); err != nil || subject != "legacy" || !expiry.IsZero() {
 		t.Fatalf("legacy token after migration: subject=%q expiry=%v error=%v", subject, expiry, err)
@@ -796,8 +812,8 @@ func TestCompleteOIDCLoginFallsBackToIntrospection(t *testing.T) {
 		t.Fatalf("complete login error = %v", authErr)
 	}
 	// The session lifetime is local, not the upstream token's short expiry.
-	if subject != "subject-1" || gotExpiry.Unix() == expires || gotExpiry.Before(time.Now().Add(defaultSessionTTL-time.Minute)) {
-		t.Fatalf("completed identity = (%q, %v), want subject and local session expiry", subject, gotExpiry)
+	if subject.Subject != "subject-1" || gotExpiry.Unix() == expires || gotExpiry.Before(time.Now().Add(defaultSessionTTL-time.Minute)) {
+		t.Fatalf("completed identity = (%q, %v), want subject and local session expiry", subject.Subject, gotExpiry)
 	}
 }
 

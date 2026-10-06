@@ -135,6 +135,13 @@
                     error: '',
                     auth: { auth_mode: 'none', authenticated: false, user: '' },
                     authPanelOpen: false,
+                    loginForm: { username: '', password: '' },
+                    loginBusy: false,
+                    loginError: '',
+                    passwordForm: { current: '', next: '', confirm: '' },
+                    passwordBusy: false,
+                    passwordError: '',
+                    passwordNotice: '',
                     issuedToken: '',
                     issuedTokenID: 0,
                     issuedTokenExpiresAt: null,
@@ -169,6 +176,11 @@
                     return work;
                 },
                 needsLogin() { return this.canLogin && !this.auth.authenticated; },
+                canLocalLogin() { return this.auth.local_login === true; },
+                canSSOLogin() { return this.auth.sso_login === true; },
+                // The server settings pages answer 403 for a signed-in user who is
+                // not an administrator; without authentication they are open.
+                showAdminNav() { return !this.auth.authenticated || this.auth.admin !== false; },
                 hasFilters() { return Object.values(this.filters).some(Boolean) || Object.values(this.kindFilters).some(value => !value); },
                 pageTitle() { if (this.route.route === 'wiki_page') { if (this.wikiEdit) return this.wikiEdit.isNew ? this.t('wiki.newPage') : this.wikiEdit.title; if (this.wikiPage) return this.wikiPage.page.title; } return routeAPI.routeTitle(this.route.route, this.locale); },
                 rootOptions() {
@@ -892,9 +904,41 @@
                     this.authTokens = [];
                     this.tokenError = 'error.session';
                 },
-                beginLogin() {
+                beginLogin(provider) {
                     try { window.sessionStorage.setItem('stash.loginReturn', window.location.pathname + window.location.search); } catch (_) {}
-                    window.location.assign('/auth/login');
+                    window.location.assign('/auth/login' + (['oidc', 'token'].includes(provider) ? '?provider=' + provider : ''));
+                },
+                async submitLogin() {
+                    if (this.loginBusy) return;
+                    const username = text(this.loginForm.username); const password = this.loginForm.password || '';
+                    if (!username || !password) { this.loginError = 'auth.failed'; return; }
+                    this.loginBusy = true; this.loginError = '';
+                    try {
+                        const body = new URLSearchParams({ username, password });
+                        const response = await window.fetch('/auth/login', { method: 'POST', credentials: 'same-origin', redirect: 'manual', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body });
+                        // Success is a redirect to "/"; a manual redirect shows up as an opaque response.
+                        if (response.type === 'opaqueredirect' || response.ok || response.status === 303) {
+                            this.loginForm = { username: '', password: '' };
+                            await this.bootstrap();
+                            return;
+                        }
+                        const reason = response.headers && response.headers.get ? response.headers.get('X-Stash-Login-Error') : '';
+                        this.loginError = reason === 'throttled' ? 'auth.throttled' : response.status === 401 ? 'auth.failed' : 'error.login';
+                    } catch (_) { this.loginError = 'error.login'; }
+                    finally { this.loginBusy = false; }
+                },
+                async changePassword() {
+                    if (this.passwordBusy) return;
+                    const form = this.passwordForm;
+                    if (!form.current || !form.next) { this.passwordError = 'auth.passwordRequired'; return; }
+                    if (form.next !== form.confirm) { this.passwordError = 'auth.passwordMismatch'; return; }
+                    this.passwordBusy = true; this.passwordError = ''; this.passwordNotice = '';
+                    try {
+                        const response = await window.fetch('/auth/password', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ current_password: form.current, new_password: form.next }) });
+                        if (response.status === 204) { this.passwordForm = { current: '', next: '', confirm: '' }; this.passwordNotice = 'auth.passwordChanged'; return; }
+                        this.passwordError = response.status === 401 ? 'auth.currentPasswordWrong' : response.status === 400 ? 'auth.weakPassword' : response.status === 429 ? 'auth.throttled' : 'error.password';
+                    } catch (_) { this.passwordError = 'error.password'; }
+                    finally { this.passwordBusy = false; }
                 },
                 async logout() {
                     api.token = '';

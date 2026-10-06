@@ -37,23 +37,17 @@ func adminOnlyHTTP(bc *bootstrap.Context, next http.Handler) http.Handler {
 			writeAdminError(w, http.StatusForbidden, "cross-origin request denied")
 			return
 		}
-		if strings.TrimSpace(bc.Config.AdminToken) == "" && strings.TrimSpace(bc.Config.AdminSubjects) == "" {
-			// STASH_AUTH_MODE=none already trusts everyone who can reach the
-			// loopback listener with full memory access; the admin pages are
-			// the same trust level, so they open without a separate credential.
-			if unauthenticatedDeployment(bc) {
-				next.ServeHTTP(w, r)
-				return
-			}
-			writeAdminError(w, http.StatusServiceUnavailable, "admin maintenance is not configured")
+		// STASH_AUTH_MODE=none already trusts everyone who can reach the
+		// listener with full memory access; the admin pages are the same
+		// trust level, so they open without a separate credential.
+		if unauthenticatedDeployment(bc) && strings.TrimSpace(bc.Config.AdminToken) == "" && strings.TrimSpace(bc.Config.AdminSubjects) == "" {
+			next.ServeHTTP(w, r)
 			return
 		}
-
 		if adminTokenMatches(r, bc.Config.AdminToken) {
 			next.ServeHTTP(w, r)
 			return
 		}
-
 		if bc.Auth == nil {
 			writeAdminError(w, http.StatusUnauthorized, "admin credential is required")
 			return
@@ -63,7 +57,9 @@ func adminOnlyHTTP(bc *bootstrap.Context, next http.Handler) http.Handler {
 			writeAdminError(w, http.StatusUnauthorized, "authentication is required")
 			return
 		}
-		if !adminSubjectMatches(user, bc.Config.AdminSubjects) {
+		// A local administrator (STASH_ADMIN_USER or 'stash user set --admin')
+		// is the usual operator; STASH_ADMIN_SUBJECTS covers SSO identities.
+		if !bc.Auth.IsAdmin(r.Context(), user) {
 			writeAdminError(w, http.StatusForbidden, "administrator permission is required")
 			return
 		}
@@ -91,19 +87,6 @@ func adminTokenMatches(r *http.Request, expected string) bool {
 		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(expected), []byte(provided)) == 1
-}
-
-func adminSubjectMatches(user, configured string) bool {
-	user = strings.TrimSpace(user)
-	if user == "" {
-		return false
-	}
-	for _, candidate := range strings.Split(configured, ",") {
-		if user == strings.TrimSpace(candidate) {
-			return true
-		}
-	}
-	return false
 }
 
 func adminEmbeddingStatusHandler(bc *bootstrap.Context, w http.ResponseWriter, r *http.Request) {

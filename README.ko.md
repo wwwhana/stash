@@ -88,6 +88,47 @@ stash llm status
 
 자세한 설정 점검 목록은 [시작 가이드](docs/GETTING_STARTED.md)를 참고하세요.
 
+## 콘솔 로그인
+
+사람은 아이디와 비밀번호로 콘솔에 로그인합니다. 첫 관리자는 환경 변수로
+지정하며, 서버가 시작할 때 없으면 만들어 줍니다.
+
+```dotenv
+STASH_ADMIN_USER=admin
+STASH_ADMIN_PASSWORD=<8자 이상>
+```
+
+이미 있는 사용자는 비밀번호를 그대로 두고(콘솔에서 바꾼 값이 재시작마다
+되돌아가지 않도록) 관리자 권한과 활성 상태만 다시 켜 주므로, 이 두 변수는
+잠긴 서버에 다시 들어가는 길이기도 합니다. 추가 계정은 CLI로 만듭니다.
+
+```bash
+stash user add alice --display-name "Alice" --password-stdin   # 또는 --password-env / --password
+stash user set alice --admin
+stash user passwd alice --password-stdin
+stash user set alice --disable      # 다음 요청부터 적용
+stash user list                     # 사용자와 인증 수단 목록
+```
+
+사용자와 인증 수단은 다른 테이블입니다. `users`는 사람(아이디, 표시 이름,
+관리자 여부)이고, `user_identities`에 비밀번호 해시와 SSO subject가 들어갑니다.
+처음 보는 SSO subject로 로그인하면 그 subject를 아이디로 하는 사용자가
+자동으로 만들어져 기존 네임스페이스와 토큰이 그대로 유지되고, 관리자는 나중에
+그 계정에 비밀번호를 붙이거나 비활성화할 수 있습니다. 아이디는 어디서나 세션
+주체로 쓰여 네임스페이스, API 토큰, 위키 작성자가 모두 아이디 기준입니다.
+
+로그인 페이지는 비밀번호 폼을 먼저 보여 주고, `STASH_AUTH_MODE=oauth`가
+설정돼 있으면 SSO 버튼을, 그리고 API 토큰 폼을 링크 하나 거리에 둡니다.
+로그인한 사용자는 **계정** 패널에서 자기 비밀번호를 바꿉니다.
+
+관리 API와 **서버 설정** 화면은 관리자만 씁니다. `is_admin`이 켜진 사용자
+(`STASH_ADMIN_USER` 또는 `stash user set --admin`), `STASH_ADMIN_SUBJECTS`에
+적힌 주체, 또는 `X-Stash-Admin-Token`(`STASH_ADMIN_TOKEN`)을 보낸 요청이
+해당합니다. `STASH_AUTH_MODE=none`은 루프백에서만 듣고 다른 기능처럼 열려
+있으며, 사설망이나 VPN처럼 네트워크 자체를 신뢰한다면
+`STASH_AUTH_TRUSTED_NETWORK=true`로 경고와 함께 외부 주소에도 바인드할 수
+있습니다.
+
 ## MCP 클라이언트 설정
 
 `docker compose up` 실행 후, Stash는 HTTP/SSE 방식으로 MCP 서버를 노출합니다. Streamable HTTP(`/mcp`)와 표준 SSE(`/sse`)를 모두 지원합니다.

@@ -6,14 +6,24 @@
     <div class="stash-login-language"><select class="stash-language-select" :aria-label="t('language.label')" :value="locale" @change="changeLocale($event.target.value)"><option value="ko">한국어</option><option value="en">English</option></select></div>
     <p v-if="authLoading" role="status">{{ t('auth.checking') }}</p>
     <template v-else-if="!authChecked"><p class="stash-error" role="alert">{{ t(error) }}</p><button type="button" class="stash-button" @click="bootstrap">{{ t('action.retry') }}</button></template>
-    <template v-else><h1>{{ t('auth.heading') }}</h1><a class="stash-button is-primary" href="/auth/login" @click.prevent="beginLogin">{{ t('auth.login') }}</a></template>
+    <template v-else><h1>{{ t('auth.heading') }}</h1>
+      <form v-if="canLocalLogin" class="stash-login-form" @submit.prevent="submitLogin">
+        <label class="stash-field"><span>{{ t('auth.username') }}</span><input v-model="loginForm.username" name="username" autocomplete="username" autocapitalize="off" spellcheck="false" required autofocus :disabled="loginBusy"></label>
+        <label class="stash-field"><span>{{ t('auth.password') }}</span><input v-model="loginForm.password" name="password" type="password" autocomplete="current-password" required :disabled="loginBusy"></label>
+        <p v-if="loginError" class="stash-error" role="alert">{{ t(loginError) }}</p>
+        <button type="submit" class="stash-button is-primary" :disabled="loginBusy">{{ loginBusy ? t('auth.loggingIn') : t('auth.login') }}</button>
+      </form>
+      <a v-if="canSSOLogin" class="stash-button" :class="{'is-primary': !canLocalLogin}" href="/auth/login?provider=oidc" @click.prevent="beginLogin('oidc')">{{ t('auth.sso') }}</a>
+      <a v-if="!canLocalLogin && !canSSOLogin" class="stash-button is-primary" href="/auth/login" @click.prevent="beginLogin()">{{ t('auth.login') }}</a>
+      <a v-else class="stash-login-alt" href="/auth/login?provider=token" @click.prevent="beginLogin('token')">{{ t('auth.withToken') }}</a>
+    </template>
   </div>
 </section>
 <div v-else class="stash-console" @keydown.esc="route.detail ? closeDetail() : clearSelection()">
   <aside class="stash-sidebar" :aria-label="t('nav.main')">
     <div class="stash-brand"><span class="stash-brand-mark">S</span><span>Stash</span></div>
     <label class="stash-root-select"><span>{{ t('nav.workspaces') }}</span><select v-model="rootSlug" :title="rootSlug" @change="changeRoot"><option v-for="item in rootOptions" :key="item.slug" :value="item.slug">{{ item.name || (item.slug === '/' ? t('workspace.default') : item.slug) }}</option></select></label>
-    <select class="stash-mobile-nav" :aria-label="t('nav.page')" :value="route.route === 'wiki_page' ? 'wiki' : route.route" @change="navigate($event.target.value)"><optgroup :label="t('nav.sectionWiki')"><option value="wiki">{{ t('nav.wikiHome') }}</option></optgroup><optgroup :label="t('nav.sectionMemory')"><option value="list_memories">{{ t('nav.memories') }}</option><option value="list_goals">{{ t('nav.goals') }}</option><option v-for="item in navItems" :key="item.route" :value="item.route">{{ item.label }}</option></optgroup><optgroup :label="t('nav.sectionServer')"><option value="llm">{{ t('nav.llm') }}</option><option value="maintenance">{{ t('nav.maintenance') }}</option><option value="list_namespaces">{{ t('nav.manageWorkspaces') }}</option><option value="tokens">{{ t('nav.tokens') }}</option><option value="agent">{{ t('nav.agent') }}</option></optgroup></select>
+    <select class="stash-mobile-nav" :aria-label="t('nav.page')" :value="route.route === 'wiki_page' ? 'wiki' : route.route" @change="navigate($event.target.value)"><optgroup :label="t('nav.sectionWiki')"><option value="wiki">{{ t('nav.wikiHome') }}</option></optgroup><optgroup :label="t('nav.sectionMemory')"><option value="list_memories">{{ t('nav.memories') }}</option><option value="list_goals">{{ t('nav.goals') }}</option><option v-for="item in navItems" :key="item.route" :value="item.route">{{ item.label }}</option></optgroup><optgroup :label="t('nav.sectionServer')"><option v-if="showAdminNav" value="llm">{{ t('nav.llm') }}</option><option v-if="showAdminNav" value="maintenance">{{ t('nav.maintenance') }}</option><option value="list_namespaces">{{ t('nav.manageWorkspaces') }}</option><option value="tokens">{{ t('nav.tokens') }}</option><option value="agent">{{ t('nav.agent') }}</option></optgroup></select>
     <nav class="stash-nav">
       <span class="stash-nav-label">{{ t('nav.sectionWiki') }}</span>
       <a :href="navHref('wiki')" :class="{'is-active': ['wiki', 'wiki_page'].includes(route.route)}" :aria-current="['wiki', 'wiki_page'].includes(route.route) ? 'page' : null" @click.prevent="navigate('wiki')"><span class="stash-nav-icon">▤</span><span>{{ t('nav.wikiHome') }}</span></a>
@@ -22,8 +32,8 @@
       <a :href="navHref('list_goals')" :class="{'is-active': route.route === 'list_goals'}" @click.prevent="navigate('list_goals')"><span class="stash-nav-icon">↗</span><span>{{ t('nav.goals') }}</span></a>
       <a v-for="item in navItems" :key="item.route" :href="navHref(item.route)" :class="{'is-active': route.route === item.route}" :aria-current="route.route === item.route ? 'page' : null" @click.prevent="navigate(item.route)"><span class="stash-nav-icon">{{ item.icon }}</span><span>{{ item.label }}</span></a>
       <span class="stash-nav-label">{{ t('nav.sectionServer') }}</span>
-      <a :href="navHref('llm')" :class="{'is-active': route.route === 'llm'}" @click.prevent="navigate('llm')"><span class="stash-nav-icon">⚙</span><span>{{ t('nav.llm') }}</span></a>
-      <a :href="navHref('maintenance')" :class="{'is-active': route.route === 'maintenance'}" @click.prevent="navigate('maintenance')"><span class="stash-nav-icon">↻</span><span>{{ t('nav.maintenance') }}</span></a>
+      <a v-if="showAdminNav" :href="navHref('llm')" :class="{'is-active': route.route === 'llm'}" @click.prevent="navigate('llm')"><span class="stash-nav-icon">⚙</span><span>{{ t('nav.llm') }}</span></a>
+      <a v-if="showAdminNav" :href="navHref('maintenance')" :class="{'is-active': route.route === 'maintenance'}" @click.prevent="navigate('maintenance')"><span class="stash-nav-icon">↻</span><span>{{ t('nav.maintenance') }}</span></a>
       <a :href="navHref('list_namespaces')" :class="{'is-active': route.route === 'list_namespaces'}" @click.prevent="navigate('list_namespaces')"><span class="stash-nav-icon">◌</span><span>{{ t('nav.manageWorkspaces') }}</span></a>
       <a :href="navHref('tokens')" :class="{'is-active': route.route === 'tokens'}" @click.prevent="navigate('tokens')"><span class="stash-nav-icon">⚿</span><span>{{ t('nav.tokens') }}</span></a>
       <a :href="navHref('agent')" :class="{'is-active': route.route === 'agent'}" @click.prevent="navigate('agent')"><span class="stash-nav-icon">☰</span><span>{{ t('nav.agent') }}</span></a>
@@ -47,6 +57,16 @@
 
     <section v-if="authPanelOpen" id="stash-account" class="stash-token-panel" @keydown.esc="authPanelOpen = false">
       <div class="stash-inspector-head"><h3>{{ t('auth.account') }}</h3><button type="button" :aria-label="t('auth.closeAccount')" @click="authPanelOpen = false">×</button></div>
+      <p class="stash-account-user"><strong>{{ auth.user }}</strong><span v-if="auth.admin"> · {{ t('auth.administrator') }}</span></p>
+      <form v-if="auth.has_password" class="stash-password-form" @submit.prevent="changePassword">
+        <strong>{{ t('auth.changePassword') }}</strong>
+        <label class="stash-field"><span>{{ t('auth.currentPassword') }}</span><input v-model="passwordForm.current" type="password" autocomplete="current-password" :disabled="passwordBusy"></label>
+        <label class="stash-field"><span>{{ t('auth.newPassword') }}</span><input v-model="passwordForm.next" type="password" autocomplete="new-password" minlength="8" maxlength="72" :disabled="passwordBusy"></label>
+        <label class="stash-field"><span>{{ t('auth.confirmPassword') }}</span><input v-model="passwordForm.confirm" type="password" autocomplete="new-password" :disabled="passwordBusy"></label>
+        <p v-if="passwordError" class="stash-error" role="alert">{{ t(passwordError) }}</p>
+        <p v-if="passwordNotice" class="stash-context-note" role="status">{{ t(passwordNotice) }}</p>
+        <button type="submit" class="stash-button" :disabled="passwordBusy">{{ passwordBusy ? t('auth.saving') : t('auth.changePassword') }}</button>
+      </form>
       <div class="stash-token-actions"><button type="button" class="stash-button" @click="navigate('tokens'); authPanelOpen = false">{{ t('auth.issueToken') }}</button><a class="stash-button" :href="navHref('tokens')" @click.prevent="navigate('tokens'); authPanelOpen = false">{{ t('auth.manageTokens') }}</a><a class="stash-button is-quiet" href="/auth/logout" @click.prevent="logout">{{ t('auth.logout') }}</a></div>
       <div class="stash-token-issued" v-if="issuedToken"><code>{{ issuedToken }}</code><button type="button" class="stash-button" @click="copyIssuedToken">{{ t('auth.copyToken') }}</button></div>
       <div v-if="tokenError" class="stash-error">{{ t(tokenError) }}</div>

@@ -27,18 +27,6 @@ func TestAdminTokenMatchesExactHeader(t *testing.T) {
 	}
 }
 
-func TestAdminSubjectMatchesCommaSeparatedList(t *testing.T) {
-	if !adminSubjectMatches("user-2", "user-1, user-2") {
-		t.Fatal("configured subject should match")
-	}
-	if adminSubjectMatches("user-", "user-1, user-2") {
-		t.Fatal("subject matching must be exact")
-	}
-	if adminSubjectMatches("user-1", "") {
-		t.Fatal("empty configuration must not grant admin access")
-	}
-}
-
 func TestAdminOnlyHTTPRequiresConfiguredCredential(t *testing.T) {
 	called := false
 	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true })
@@ -99,12 +87,13 @@ func TestAdminOnlyHTTPOpensWithoutCredentialWhenAuthIsDisabled(t *testing.T) {
 		t.Fatalf("configured admin token ignored: status=%d called=%v", response.Code, called)
 	}
 
-	// With authentication on and nothing configured, the page stays closed.
+	// With authentication on, an administrator account in the users table is
+	// the usual credential, so an anonymous request is asked to log in.
 	called = false
 	closed := adminOnlyHTTP(&bootstrap.Context{Config: &config.Config{AuthMode: "token"}, Brain: &brain.Brain{}}, next)
 	response = httptest.NewRecorder()
 	closed.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/admin/llm/status", nil))
-	if response.Code != http.StatusServiceUnavailable || called {
-		t.Fatalf("token mode without admin config status=%d called=%v, want 503", response.Code, called)
+	if response.Code != http.StatusUnauthorized || called {
+		t.Fatalf("token mode without a session status=%d called=%v, want 401", response.Code, called)
 	}
 }

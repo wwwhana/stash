@@ -54,6 +54,7 @@ func New(ctx context.Context) (*Context, error) {
 		RefreshTokenTTL: cfg.AuthRefreshTokenTTL,
 		SessionTTL:      cfg.AuthSessionTTL,
 		StdioToken:      cfg.AuthStdioToken,
+		AdminSubjects:   cfg.AdminSubjects,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("initialize authentication: %w", err)
@@ -65,6 +66,24 @@ func New(ctx context.Context) (*Context, error) {
 	}
 	if authProvider != nil {
 		authProvider.SetTokenPool(pool)
+	}
+	if strings.TrimSpace(cfg.AdminUser) != "" {
+		if authProvider == nil {
+			logger.Warn("STASH_ADMIN_USER is set but STASH_AUTH_MODE=none performs no login; the account is not created")
+		} else if authProvider.Mode() == "stdio" {
+			logger.Warn("STASH_ADMIN_USER is ignored in stdio mode")
+		} else {
+			created, err := authProvider.SeedLocalAdmin(ctx, cfg.AdminUser, cfg.AdminPassword)
+			if err != nil {
+				pool.Close()
+				return nil, fmt.Errorf("seed local administrator: %w", err)
+			}
+			if created {
+				logger.Info("local administrator created from STASH_ADMIN_USER", "username", strings.ToLower(strings.TrimSpace(cfg.AdminUser)))
+			} else {
+				logger.Info("local administrator exists; STASH_ADMIN_PASSWORD was not applied", "username", strings.ToLower(strings.TrimSpace(cfg.AdminUser)))
+			}
+		}
 	}
 
 	keyring, err := secrets.NewKeyring(cfg.SecretsKey, strings.Split(cfg.SecretsKeyPrevious, ",")...)

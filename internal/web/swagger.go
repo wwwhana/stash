@@ -162,6 +162,34 @@ const openAPISpec = `{
         }
       }
     },
+    "/auth/login": {
+      "get": {
+        "tags": ["Service"],
+        "summary": "로그인 페이지",
+        "description": "provider를 생략하면 비밀번호 계정이 있을 때 아이디/비밀번호 폼을, 아니면 토큰 폼 또는 SSO 리다이렉트를 보여 줍니다.",
+        "operationId": "authLoginPage",
+        "parameters": [{"name": "provider", "in": "query", "schema": {"type": "string", "enum": ["local", "token", "oidc"]}}],
+        "responses": {"200": {"description": "HTML 로그인 폼", "content": {"text/html": {"schema": {"type": "string"}}}}, "302": {"description": "SSO 제공자로 리다이렉트"}}
+      },
+      "post": {
+        "tags": ["Service"],
+        "summary": "콘솔 로그인",
+        "description": "username/password 또는 token 폼 필드를 받아 세션 쿠키를 발급합니다. 실패하면 401과 X-Stash-Login-Error(invalid|throttled) 헤더를 돌려줍니다.",
+        "operationId": "authLogin",
+        "requestBody": {"content": {"application/x-www-form-urlencoded": {"schema": {"type": "object", "properties": {"username": {"type": "string"}, "password": {"type": "string", "format": "password"}, "token": {"type": "string", "description": "API 토큰 로그인에만 사용"}}}}}},
+        "responses": {"303": {"description": "로그인 성공, 세션 쿠키 설정 후 / 로 이동"}, "401": {"description": "자격 증명이 틀리거나 잠시 차단됨", "headers": {"X-Stash-Login-Error": {"schema": {"type": "string", "enum": ["invalid", "throttled"]}}}}}
+      }
+    },
+    "/auth/password": {
+      "post": {
+        "tags": ["Service"],
+        "summary": "내 비밀번호 변경",
+        "description": "브라우저 세션으로만 호출할 수 있습니다. 현재 비밀번호가 맞아야 하며, Bearer 토큰 요청은 거부됩니다.",
+        "operationId": "authPassword",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["current_password", "new_password"], "properties": {"current_password": {"type": "string", "format": "password"}, "new_password": {"type": "string", "format": "password", "minLength": 8, "maxLength": 72}}}}}},
+        "responses": {"204": {"description": "변경 완료"}, "400": {"$ref": "#/components/responses/BadRequest"}, "401": {"description": "세션이 없거나 현재 비밀번호가 틀림"}, "403": {"description": "비밀번호가 없는 계정(SSO 전용)이거나 교차 출처 요청"}, "404": {"description": "계정 기능을 사용할 수 없음"}, "429": {"description": "로그인 실패가 너무 많음"}}
+      }
+    },
     "/auth/token": {
       "post": {
         "tags": ["Service"],
@@ -381,7 +409,11 @@ const openAPISpec = `{
         "properties": {
           "auth_mode": {"type": "string", "example": "token"},
           "authenticated": {"type": "boolean"},
-          "user": {"type": "string"}
+          "user": {"type": "string", "description": "세션 주체. 사용자 테이블의 username이며 네임스페이스와 토큰의 소유자 키"},
+          "admin": {"type": "boolean", "description": "서버 설정 페이지를 열 수 있는지 (users.is_admin 또는 STASH_ADMIN_SUBJECTS)"},
+          "has_password": {"type": "boolean", "description": "로그인한 사용자가 비밀번호를 가졌는지 (비밀번호 변경 가능 여부)"},
+          "local_login": {"type": "boolean", "description": "아이디/비밀번호 로그인 폼을 보여 줄지"},
+          "sso_login": {"type": "boolean", "description": "SSO(OIDC) 로그인이 설정됐는지"}
         }
       },
       "ApiToken": {

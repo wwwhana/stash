@@ -137,6 +137,14 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,su
 .stash-login-card .stash-brand { padding:0; margin-bottom:28px; }
 .stash-login-card h1 { font-size:22px; font-weight:600; }
 .stash-login-card .stash-button { width:100%; margin-top:12px; }
+.stash-login-form { display:grid; gap:10px; margin-top:16px; }
+.stash-login-form .stash-error { margin:0; }
+.stash-login-alt { display:block; margin-top:14px; color:var(--app-muted); font-size:13px; text-align:center; text-decoration:none; }
+.stash-login-alt:hover { text-decoration:underline; }
+.stash-account-user { margin:12px 0 0; color:var(--app-muted); font-size:13px; }
+.stash-account-user strong { color:var(--app-ink); }
+.stash-password-form { display:grid; gap:8px; margin-top:16px; padding-top:14px; border-top:1px solid var(--app-border); }
+.stash-password-form .stash-error,.stash-password-form .stash-context-note { margin:0; }
 .stash-guide { display:grid; gap:20px; padding:20px; border:1px solid var(--app-border); border-radius:9px; background:var(--app-surface); }
 .stash-guide details { overflow-wrap:anywhere; }
 .stash-guide summary { padding:8px 0; }

@@ -1145,13 +1145,23 @@ func serveMCPHTTP(ctx context.Context, bc *bootstrap.Context, options mcpHTTPOpt
 	if bc.Auth != nil && bc.Auth.Mode() == "stdio" {
 		return fmt.Errorf("STASH_AUTH_MODE=stdio can only be used with `mcp execute`")
 	}
-	if err := validateListenAddress(options.Addr, bc.Auth); err != nil {
+	trustedNetwork := bc.Config != nil && bc.Config.AuthTrustedNetwork
+	if err := validateListenAddress(options.Addr, bc.Auth, trustedNetwork); err != nil {
 		return err
 	}
 
 	handler := newStashHTTPHandler(bc)
 	if bc.Auth == nil || bc.Auth.Mode() == "none" {
-		handler = unauthenticatedLoopbackOnly(handler)
+		if trustedNetwork {
+			// The operator declared the whole network trusted. Keep the
+			// cross-origin check so a web page cannot drive the server.
+			if bc.Logger != nil {
+				bc.Logger.Warn("STASH_AUTH_TRUSTED_NETWORK=true: serving without authentication beyond loopback; every client that can reach this port has full access")
+			}
+			handler = http.NewCrossOriginProtection().Handler(handler)
+		} else {
+			handler = unauthenticatedLoopbackOnly(handler)
+		}
 	}
 	httpServer := &http.Server{
 		Addr:    options.Addr,
@@ -1215,8 +1225,11 @@ func serveMCPHTTP(ctx context.Context, bc *bootstrap.Context, options mcpHTTPOpt
 	}
 }
 
-func validateListenAddress(addr string, provider *auth.Provider) error {
+func validateListenAddress(addr string, provider *auth.Provider, trustedNetwork bool) error {
 	if provider != nil && provider.Mode() != "none" {
+		return nil
+	}
+	if trustedNetwork {
 		return nil
 	}
 	host, _, err := net.SplitHostPort(addr)
@@ -1329,6 +1342,7 @@ func newStashHTTPHandler(bc *bootstrap.Context) http.Handler {
 	mux.HandleFunc("/auth/token", bc.Auth.HandleGenerateToken)
 	mux.HandleFunc("/auth/tokens", bc.Auth.HandleTokens)
 	mux.HandleFunc("/auth/tokens/", bc.Auth.HandleRevokeToken)
+	mux.HandleFunc("/auth/password", bc.Auth.HandlePassword)
 	registerDocumentationRoutes(mux)
 	registerOperationalRoutes(mux, bc)
 	registerAdminRoutes(mux, bc)

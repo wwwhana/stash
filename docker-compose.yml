@@ -80,6 +80,10 @@ services:
       # to a separate X-Stash-Admin-Token credential.
       STASH_ADMIN_SUBJECTS: ${STASH_ADMIN_SUBJECTS:-}
       STASH_ADMIN_TOKEN: ${STASH_ADMIN_TOKEN:-}
+      # First console administrator (username + password login).
+      STASH_ADMIN_USER: ${STASH_ADMIN_USER:-}
+      STASH_ADMIN_PASSWORD: ${STASH_ADMIN_PASSWORD:-}
+      STASH_AUTH_TRUSTED_NETWORK: ${STASH_AUTH_TRUSTED_NETWORK:-false}
       # Optional consolidation configs
       STASH_CONSOLIDATE_NAMESPACES: ${STASH_CONSOLIDATE_NAMESPACES:-/projects}
       STASH_CONSOLIDATION_BATCH_SIZE: 100

@@ -207,8 +207,10 @@ If tools fail, check `.env`:
 | `STASH_EMBEDDING_RETRY_MAX_INTERVAL` | Maximum exponential backoff (default `1h`) |
 | `STASH_EMBEDDING_RETRY_BATCH_SIZE` | Maximum pending rows considered per pass (default `100`) |
 | `STASH_EMBEDDING_CONTEXT_TOKENS` | Embedding model input window; `0` uses adaptive splitting after a provider context error |
-| `STASH_ADMIN_SUBJECTS` | Comma-separated OIDC subjects allowed to open embedding maintenance |
-| `STASH_ADMIN_TOKEN` | Optional separate token for embedding maintenance (`X-Stash-Admin-Token`) |
+| `STASH_ADMIN_USER` | Username of the first administrator; created at startup when missing, otherwise promoted and re-enabled |
+| `STASH_ADMIN_PASSWORD` | Password for that first administrator (8–72 characters); not applied to an existing user that already has one |
+| `STASH_ADMIN_SUBJECTS` | Comma-separated subjects allowed on the server settings pages next to `is_admin` users |
+| `STASH_ADMIN_TOKEN` | Optional separate token for the admin endpoints (`X-Stash-Admin-Token`) |
 | `STASH_REASONER_MODEL` | Optional. Model used for consolidation, `validate_work_plan`, and `wiki_compile` unless Model settings assigns another provider per feature |
 | `STASH_REASONER_CONTEXT_TOKENS` | Full reasoning-model context window; `0` uses adaptive splitting after a provider context error |
 | `STASH_REASONER_RESERVED_TOKENS` | Tokens kept for instructions and the JSON answer (default `4096`) |
@@ -216,6 +218,7 @@ If tools fail, check `.env`:
 | `STASH_MCP_MAX_RESPONSE_BYTES` | Maximum JSON bytes in one MCP tool result (default `32768`); large pages return `next_offset` |
 | `STASH_MCP_TOOL_TIMEOUT` | Maximum time for one MCP tool call (default `2m`) |
 | `STASH_AUTH_MODE` | `none`, `token`, `oauth`, or `stdio` |
+| `STASH_AUTH_TRUSTED_NETWORK` | `true` lets `STASH_AUTH_MODE=none` bind beyond loopback on a network you trust (logs a warning) |
 | `STASH_AUTH_API_SECRET` | At least 32 random bytes used to sign Stash tokens and sessions |
 | `STASH_AUTH_TOKEN_TTL` | Lifetime of issued API tokens (default `720h`) |
 | `STASH_AUTH_ACCESS_TOKEN_TTL` | OAuth access-token lifetime (default and maximum `1h`) |
@@ -250,10 +253,31 @@ For a local CLI process, use `STASH_AUTH_MODE=stdio`; STDIO does not use MCP
 OAuth discovery. `STASH_AUTH_MODE=none` disables HTTP authentication and is
 accepted only when the server listens on a loopback address.
 
+### Console login and users
+
+With `STASH_AUTH_MODE=token` or `oauth`, people sign in to the console with a
+username and password. Set `STASH_ADMIN_USER` and `STASH_ADMIN_PASSWORD` for
+the first administrator; it is created at the first start. Then manage users
+on the server host:
+
+```bash
+stash user add alice --password-stdin --display-name "Alice"
+stash user set alice --admin        # or --no-admin, --disable, --enable
+stash user passwd alice --password-stdin
+stash user remove alice             # revokes its API tokens; memory stays
+```
+
+A user is a person; `stash user list` also shows how each one signs in
+(a password, an SSO subject, or both). SSO logins are matched to users by
+issuer and subject and provisioned on first login. The login page shows the
+password form first; `/auth/login?provider=token` keeps the API-token form
+for a client that only has a token.
+
 ### Embedding maintenance
 
-The web console can expose an **Embedding maintenance** page when
-`STASH_ADMIN_SUBJECTS` or `STASH_ADMIN_TOKEN` is configured. It shows pending
+The web console exposes the **Server settings** pages (Model settings and
+Embedding maintenance) to administrators: `is_admin` users, subjects in
+`STASH_ADMIN_SUBJECTS`, or requests with `STASH_ADMIN_TOKEN`. It shows pending
 rows, rows ready now, the latest provider error, model, and vector dimension.
 **Retry pending** wakes scheduled failures without interrupting active work.
 **Reindex all** clears stored vectors and the disposable cache, then queues
