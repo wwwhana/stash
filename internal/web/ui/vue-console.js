@@ -13,7 +13,7 @@
         <p v-if="loginError" class="stash-error" role="alert">{{ t(loginError) }}</p>
         <button type="submit" class="stash-button is-primary" :disabled="loginBusy">{{ loginBusy ? t('auth.loggingIn') : t('auth.login') }}</button>
       </form>
-      <a v-if="canSSOLogin" class="stash-button" :class="{'is-primary': !canLocalLogin}" href="/auth/login?provider=oidc" @click.prevent="beginLogin('oidc')">{{ t('auth.sso') }}</a>
+      <a v-for="provider in ssoProviders" :key="provider.slug" class="stash-button" :class="{'is-primary': !canLocalLogin}" :href="'/auth/login?sso=' + encodeURIComponent(provider.slug)" @click.prevent="beginLogin('sso', provider.slug)">{{ t('auth.ssoWith', { name: provider.name }) }}</a>
       <a v-if="!canLocalLogin && !canSSOLogin" class="stash-button is-primary" href="/auth/login" @click.prevent="beginLogin()">{{ t('auth.login') }}</a>
       <a v-else class="stash-login-alt" href="/auth/login?provider=token" @click.prevent="beginLogin('token')">{{ t('auth.withToken') }}</a>
     </template>
@@ -23,7 +23,7 @@
   <aside class="stash-sidebar" :aria-label="t('nav.main')">
     <div class="stash-brand"><span class="stash-brand-mark">S</span><span>Stash</span></div>
     <label class="stash-root-select"><span>{{ t('nav.workspaces') }}</span><select v-model="rootSlug" :title="rootSlug" @change="changeRoot"><option v-for="item in rootOptions" :key="item.slug" :value="item.slug">{{ item.name || (item.slug === '/' ? t('workspace.default') : item.slug) }}</option></select></label>
-    <select class="stash-mobile-nav" :aria-label="t('nav.page')" :value="route.route === 'wiki_page' ? 'wiki' : route.route" @change="navigate($event.target.value)"><optgroup :label="t('nav.sectionWiki')"><option value="wiki">{{ t('nav.wikiHome') }}</option></optgroup><optgroup :label="t('nav.sectionMemory')"><option value="list_memories">{{ t('nav.memories') }}</option><option value="list_goals">{{ t('nav.goals') }}</option><option v-for="item in navItems" :key="item.route" :value="item.route">{{ item.label }}</option></optgroup><optgroup :label="t('nav.sectionServer')"><option v-if="showAdminNav" value="llm">{{ t('nav.llm') }}</option><option v-if="showAdminNav" value="maintenance">{{ t('nav.maintenance') }}</option><option value="list_namespaces">{{ t('nav.manageWorkspaces') }}</option><option value="tokens">{{ t('nav.tokens') }}</option><option value="agent">{{ t('nav.agent') }}</option></optgroup></select>
+    <select class="stash-mobile-nav" :aria-label="t('nav.page')" :value="route.route === 'wiki_page' ? 'wiki' : route.route" @change="navigate($event.target.value)"><optgroup :label="t('nav.sectionWiki')"><option value="wiki">{{ t('nav.wikiHome') }}</option></optgroup><optgroup :label="t('nav.sectionMemory')"><option value="list_memories">{{ t('nav.memories') }}</option><option value="list_goals">{{ t('nav.goals') }}</option><option v-for="item in navItems" :key="item.route" :value="item.route">{{ item.label }}</option></optgroup><optgroup :label="t('nav.sectionServer')"><option v-if="showAdminNav" value="llm">{{ t('nav.llm') }}</option><option v-if="showAdminNav" value="maintenance">{{ t('nav.maintenance') }}</option><option v-if="showAdminNav && canLogin" value="access">{{ t('nav.access') }}</option><option value="list_namespaces">{{ t('nav.manageWorkspaces') }}</option><option value="tokens">{{ t('nav.tokens') }}</option><option value="agent">{{ t('nav.agent') }}</option></optgroup></select>
     <nav class="stash-nav">
       <span class="stash-nav-label">{{ t('nav.sectionWiki') }}</span>
       <a :href="navHref('wiki')" :class="{'is-active': ['wiki', 'wiki_page'].includes(route.route)}" :aria-current="['wiki', 'wiki_page'].includes(route.route) ? 'page' : null" @click.prevent="navigate('wiki')"><span class="stash-nav-icon">▤</span><span>{{ t('nav.wikiHome') }}</span></a>
@@ -34,6 +34,7 @@
       <span class="stash-nav-label">{{ t('nav.sectionServer') }}</span>
       <a v-if="showAdminNav" :href="navHref('llm')" :class="{'is-active': route.route === 'llm'}" @click.prevent="navigate('llm')"><span class="stash-nav-icon">⚙</span><span>{{ t('nav.llm') }}</span></a>
       <a v-if="showAdminNav" :href="navHref('maintenance')" :class="{'is-active': route.route === 'maintenance'}" @click.prevent="navigate('maintenance')"><span class="stash-nav-icon">↻</span><span>{{ t('nav.maintenance') }}</span></a>
+      <a v-if="showAdminNav && canLogin" :href="navHref('access')" :class="{'is-active': route.route === 'access'}" @click.prevent="navigate('access')"><span class="stash-nav-icon">⚷</span><span>{{ t('nav.access') }}</span></a>
       <a :href="navHref('list_namespaces')" :class="{'is-active': route.route === 'list_namespaces'}" @click.prevent="navigate('list_namespaces')"><span class="stash-nav-icon">◌</span><span>{{ t('nav.manageWorkspaces') }}</span></a>
       <a :href="navHref('tokens')" :class="{'is-active': route.route === 'tokens'}" @click.prevent="navigate('tokens')"><span class="stash-nav-icon">⚿</span><span>{{ t('nav.tokens') }}</span></a>
       <a :href="navHref('agent')" :class="{'is-active': route.route === 'agent'}" @click.prevent="navigate('agent')"><span class="stash-nav-icon">☰</span><span>{{ t('nav.agent') }}</span></a>
@@ -73,6 +74,7 @@
     </section>
 
     <section class="stash-surface">
+      <div v-if="workspaceMissing && !error && !['llm', 'maintenance', 'access', 'tokens', 'agent', 'list_namespaces'].includes(route.route)" class="stash-empty stash-workspace-missing"><strong>{{ t('workspace.missing') }}</strong><span>{{ t('workspace.missingHint') }}</span><button type="button" class="stash-button is-primary" :disabled="workspaceInitializing" @click="initializeWorkspace">{{ workspaceInitializing ? t('workspace.initializing') : t('workspace.initialize') }}</button></div>
       <div v-if="error" class="stash-error" role="alert">{{ t(error) }} <button type="button" class="stash-button" @click="loadRoute()">{{ t('action.retry') }}</button> <button v-if="['goal-map', 'monitor'].includes(route.route)" type="button" class="stash-button" @click="navigate('board')">{{ t('view.workList') }}</button></div>
       <div v-if="refreshError" class="stash-context-note" role="status">{{ t(refreshError) }} <button type="button" class="stash-button" :disabled="refreshing" @click="refreshVisible">{{ t('action.retry') }}</button></div>
       <div v-if="loading" class="stash-loading" role="status">{{ t('view.loading') }}</div>
@@ -226,6 +228,36 @@
             </section>
           </template>
           <template v-else-if="route.route === 'agent'"><div class="stash-guide"><button type="button" class="stash-button" @click="copyAgentGuide">{{ t(copyStatus) }}</button><details><summary>{{ t('agent.allRules') }}</summary><textarea :aria-label="t('agent.rulesLabel')" readonly :value="agentGuide"></textarea></details></div></template>
+          <template v-else-if="route.route === 'access' && sso">
+            <div class="stash-guide stash-llm stash-access">
+              <p class="stash-llm-intro">{{ t('access.description') }}</p>
+              <p v-if="!sso.secrets_enabled" class="stash-llm-warning" role="status">{{ t('access.noSecretsKey') }}</p>
+              <p v-if="ssoNotice" class="stash-llm-notice" role="status">{{ t(ssoNotice) }}</p>
+              <p v-if="ssoError" class="stash-error" role="alert">{{ t(ssoError) }}</p>
+              <section class="stash-llm-section" :aria-label="t('access.sso')">
+                <header class="stash-llm-head"><h3>{{ t('access.sso') }}</h3><div class="stash-llm-actions"><button v-if="sso.environment_issuer && !sso.providers.some(item => item.source === 'environment' && item.id)" type="button" class="stash-button" :disabled="ssoBusy" @click="importSSOEnvironment">{{ t('access.importEnv') }}</button><button type="button" class="stash-button" :disabled="ssoBusy || !sso.secrets_enabled" @click="openSSOForm(null)">{{ t('access.addProvider') }}</button></div></header>
+                <p class="stash-access-hint">{{ t('access.callbackHint', { url: ssoCallbackURL }) }}</p>
+                <div v-if="!sso.providers.length && !ssoForm" class="stash-empty"><strong>{{ t('access.noProviders') }}</strong><span>{{ t('access.noProvidersHint') }}</span></div>
+                <ul v-else-if="sso.providers.length" class="stash-llm-providers">
+                  <li v-for="provider in sso.providers" :key="provider.id || provider.slug" :class="{ 'is-disabled': !provider.enabled }">
+                    <div><strong>{{ provider.display_name || provider.slug }}</strong><small>{{ provider.issuer }} · {{ provider.client_id }}<template v-if="provider.source === 'environment'"> · {{ provider.id ? t('access.fromEnvironment') : t('access.environmentOnly') }}</template></small><small :class="{ 'stash-llm-error': provider.status === 'error' }">{{ t('access.status.' + provider.status) }}<template v-if="provider.error"> · {{ provider.error }}</template><template v-if="ssoTest[String(provider.id)]"> · {{ ssoTest[String(provider.id)].ok ? t('access.testOk') : t('access.testFailed', { message: ssoTest[String(provider.id)].error || '' }) }}</template></small></div>
+                    <div v-if="provider.id" class="stash-llm-actions"><button type="button" class="stash-button" :disabled="ssoBusy" @click="testSSOProvider(provider)">{{ t('access.test') }}</button><button type="button" class="stash-button" :disabled="ssoBusy" @click="openSSOForm(provider)">{{ t('llm.edit') }}</button><button type="button" class="stash-button is-danger" :disabled="ssoBusy" @click="deleteSSOProvider(provider)">{{ t('llm.delete') }}</button></div>
+                  </li>
+                </ul>
+                <form v-if="ssoForm" class="stash-llm-form" @submit.prevent="saveSSOProvider">
+                  <h4>{{ ssoForm.id ? t('access.editProvider') : t('access.addProvider') }}</h4>
+                  <label class="stash-field"><span>{{ t('access.slug') }}</span><input v-model="ssoForm.slug" required pattern="[a-z0-9][a-z0-9_\\-]{0,63}" autocomplete="off" :disabled="ssoBusy" placeholder="authentik"></label>
+                  <label class="stash-field"><span>{{ t('access.displayName') }}</span><input v-model="ssoForm.display_name" autocomplete="off" :disabled="ssoBusy" :placeholder="t('access.displayNamePlaceholder')"></label>
+                  <label class="stash-field"><span>{{ t('access.issuer') }}</span><input v-model="ssoForm.issuer" required type="url" autocomplete="off" :disabled="ssoBusy" placeholder="https://auth.example.com/application/o/stash/"></label>
+                  <label class="stash-field"><span>{{ t('access.clientId') }}</span><input v-model="ssoForm.client_id" required autocomplete="off" :disabled="ssoBusy"></label>
+                  <label class="stash-field"><span>{{ t('access.clientSecret') }}</span><input v-model="ssoForm.client_secret" type="password" autocomplete="off" :required="!ssoForm.id" :disabled="ssoBusy" :placeholder="ssoForm.id ? t('access.keepSecret') : ''"></label>
+                  <label class="stash-field"><span>{{ t('access.redirectUrl') }}</span><input v-model="ssoForm.redirect_url" required type="url" autocomplete="off" :disabled="ssoBusy"></label>
+                  <label class="stash-check"><input v-model="ssoForm.enabled" type="checkbox" :disabled="ssoBusy"><span>{{ t('llm.enabled') }}</span></label>
+                  <div class="stash-llm-actions"><button type="submit" class="stash-button is-primary" :disabled="ssoBusy">{{ t('llm.save') }}</button><button type="button" class="stash-button" :disabled="ssoBusy" @click="ssoForm = null">{{ t('action.cancel') }}</button></div>
+                </form>
+              </section>
+            </div>
+          </template>
           <template v-else-if="route.route === 'llm' && llm">
             <div class="stash-guide stash-llm">
               <p class="stash-llm-intro">{{ t('llm.description') }}</p>
@@ -254,7 +286,7 @@
                 </ul>
                 <form v-if="llmProviderForm" class="stash-llm-form" @submit.prevent="saveProvider">
                   <h4>{{ llmProviderForm.id ? t('llm.editProvider') : t('llm.addProvider') }}</h4>
-                  <label class="stash-field"><span>{{ t('llm.name') }}</span><input v-model="llmProviderForm.name" required pattern="[a-z0-9][a-z0-9_-]{0,63}" autocomplete="off" :disabled="llmBusy" placeholder="openai"></label>
+                  <label class="stash-field"><span>{{ t('llm.name') }}</span><input v-model="llmProviderForm.name" required pattern="[a-z0-9][a-z0-9_\\-]{0,63}" autocomplete="off" :disabled="llmBusy" placeholder="openai"></label>
                   <label class="stash-field"><span>{{ t('llm.baseUrl') }}</span><input v-model="llmProviderForm.base_url" required type="url" autocomplete="off" :disabled="llmBusy" placeholder="https://api.openai.com/v1"></label>
                   <label class="stash-field"><span>{{ t('llm.apiKey') }}</span><input v-model="llmProviderForm.api_key" type="password" autocomplete="off" :disabled="llmBusy || !llm.secrets_enabled" :placeholder="llmProviderForm.keep_key ? t('llm.keepKey') : t('llm.apiKeyOptional')"></label>
                   <label v-if="llmProviderForm.id && llmProviderForm.keep_key" class="stash-check"><input v-model="llmProviderForm.clear_key" type="checkbox" :disabled="llmBusy"><span>{{ t('llm.clearKey') }}</span></label>

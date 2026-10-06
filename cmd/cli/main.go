@@ -562,6 +562,7 @@ func main() {
 			},
 			wikiCommand(),
 			userCommand(),
+			ssoCommand(),
 			llmCommand(),
 			{
 				Name:  "mcp",

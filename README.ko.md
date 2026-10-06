@@ -117,9 +117,33 @@ stash user list                     # 사용자와 인증 수단 목록
 그 계정에 비밀번호를 붙이거나 비활성화할 수 있습니다. 아이디는 어디서나 세션
 주체로 쓰여 네임스페이스, API 토큰, 위키 작성자가 모두 아이디 기준입니다.
 
-로그인 페이지는 비밀번호 폼을 먼저 보여 주고, `STASH_AUTH_MODE=oauth`가
-설정돼 있으면 SSO 버튼을, 그리고 API 토큰 폼을 링크 하나 거리에 둡니다.
-로그인한 사용자는 **계정** 패널에서 자기 비밀번호를 바꿉니다.
+로그인 페이지는 비밀번호 폼을 먼저 보여 주고, 등록된 SSO 제공자마다 버튼을,
+그리고 API 토큰 폼을 링크 하나 거리에 둡니다. 로그인한 사용자는 **계정**
+패널에서 자기 비밀번호를 바꿉니다.
+
+### SSO 제공자
+
+SSO 제공자는 DB(`sso_providers`)에 저장되는 OIDC 발급자이며, 클라이언트
+시크릿은 `STASH_SECRETS_KEY`로 봉인됩니다. 첫 제공자는 환경 변수로 등록합니다.
+`STASH_AUTH_ISSUER`, `STASH_AUTH_CLIENT_ID`, `STASH_AUTH_CLIENT_SECRET`,
+`STASH_AUTH_REDIRECT_URL`이 설정돼 있으면 서버가 시작할 때 한 번 테이블로
+가져오고, 그 뒤의 수정은 테이블에서 이루어집니다. 이후에는 관리자가 콘솔의
+**로그인·SSO** 페이지나 CLI로 제공자를 관리합니다.
+
+```bash
+stash sso list
+stash sso add authentik --name "회사 SSO" --issuer https://auth.example.com/application/o/stash/ \
+  --client-id stash --client-secret-env SSO_SECRET --redirect-url https://stash.example.com/auth/callback
+stash sso test 1
+stash sso set 1 --disable
+```
+
+제공자는 로드할 때 OIDC 검색(discovery)을 거치며, 실패한 제공자는 페이지에
+오류로 표시되고 로그인 화면에서만 빠질 뿐 다른 제공자에 영향을 주지
+않습니다. 어떤 제공자로 처음 로그인한 사람은 발급자의 subject를 아이디로
+하는 사용자가 되므로, 관리자가 나중에 그 계정에 비밀번호를 붙이거나 관리자로
+올리거나 비활성화할 수 있습니다. `STASH_SECRETS_KEY`가 없으면 환경 변수
+제공자는 메모리에서만 동작하고 아무것도 저장하지 못합니다.
 
 관리 API와 **서버 설정** 화면은 관리자만 씁니다. `is_admin`이 켜진 사용자
 (`STASH_ADMIN_USER` 또는 `stash user set --admin`), `STASH_ADMIN_SUBJECTS`에

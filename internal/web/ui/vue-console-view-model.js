@@ -117,6 +117,8 @@
                     detailLoading: false, detailError: '', detailGeneration: 0,
                     maintenance: null, maintenanceAction: false, maintenanceNotice: '',
                     llm: null, llmBusy: false, llmNotice: '', llmError: '', llmProviderForm: null, llmProbe: {}, llmAssignmentForms: {},
+                    sso: null, ssoBusy: false, ssoNotice: '', ssoError: '', ssoForm: null, ssoTest: {},
+                    workspaceMissing: false, workspaceInitializing: false,
                     wikiPages: [], wikiLog: [], wikiLint: null, wikiPage: null, wikiRendered: '', wikiHistory: [], wikiHistoryOpen: false, wikiEdit: null, wikiBusy: false, wikiCompiling: false, wikiNotice: '', wikiError: '', wikiFocusedSource: '',
                     wikiFilters: { kind: route.kind, tag: route.tag, stale: route.stale }, wikiKinds: ['article', 'index', 'entity', 'decision', 'log'],
                     copyStatus: 'action.copyGuide',
@@ -177,7 +179,9 @@
                 },
                 needsLogin() { return this.canLogin && !this.auth.authenticated; },
                 canLocalLogin() { return this.auth.local_login === true; },
-                canSSOLogin() { return this.auth.sso_login === true; },
+                canSSOLogin() { return this.auth.sso_login === true && this.ssoProviders.length > 0; },
+                ssoProviders() { return Array.isArray(this.auth.sso_providers) ? this.auth.sso_providers.filter(item => item && item.slug) : []; },
+                ssoCallbackURL() { return window.location.origin + '/auth/callback'; },
                 // The server settings pages answer 403 for a signed-in user who is
                 // not an administrator; without authentication they are open.
                 showAdminNav() { return !this.auth.authenticated || this.auth.admin !== false; },
@@ -322,7 +326,7 @@
             methods: {
                 refreshVisible() {
                     if (!this.authChecked || this.authLoading || this.needsLogin || this.loading || this.refreshing || this.selectionLoading || this.detailLoading || this.maintenanceAction || document.visibilityState === 'hidden') return;
-                    if (!['goal-map', 'monitor', 'plan', 'board', 'graph', 'maintenance', 'tokens'].includes(this.route.route)) return;
+                    if (!['goal-map', 'monitor', 'plan', 'board', 'graph', 'maintenance', 'access', 'tokens'].includes(this.route.route)) return;
                     const focused = document.activeElement;
                     if (focused && focused.matches('input:not([type=checkbox]), textarea:not([readonly])')) return;
                     return this.loadRoute(false, true);
@@ -444,6 +448,43 @@
                     } finally { this.llmBusy = false; }
                 },
                 async reloadLLM() { const status = await this.llmRequest('/admin/llm/status', {}); if (status) this.applyLLM(status); },
+                // Access page: SSO providers. Same shape as the model settings page.
+                async ssoRequest(path, options, notice) {
+                    this.ssoBusy = true; this.ssoError = ''; this.ssoNotice = '';
+                    try {
+                        const result = await api.adminRequest(path, options);
+                        if (notice) this.ssoNotice = notice;
+                        return result;
+                    } catch (error) {
+                        this.ssoError = [401, 403].includes(error.status) ? 'error.admin' : { key: 'access.failed', params: { message: error.message } };
+                        return null;
+                    } finally { this.ssoBusy = false; }
+                },
+                async reloadSSO() { const status = await this.ssoRequest('/admin/sso/status', {}); if (status) { status.providers = Array.isArray(status.providers) ? status.providers : []; this.sso = status; } },
+                openSSOForm(provider) {
+                    this.ssoForm = provider
+                        ? { id: provider.id, slug: provider.slug, display_name: provider.display_name || '', issuer: provider.issuer, client_id: provider.client_id, client_secret: '', redirect_url: provider.redirect_url, enabled: provider.enabled }
+                        : { id: 0, slug: '', display_name: '', issuer: '', client_id: '', client_secret: '', redirect_url: this.ssoCallbackURL, enabled: true };
+                },
+                async saveSSOProvider() {
+                    const form = this.ssoForm; if (!form) return;
+                    const body = { slug: text(form.slug), display_name: text(form.display_name), issuer: text(form.issuer), client_id: text(form.client_id), redirect_url: text(form.redirect_url), enabled: !!form.enabled };
+                    if (text(form.client_secret)) body.client_secret = text(form.client_secret);
+                    const result = await this.ssoRequest(form.id ? '/admin/sso/providers/' + form.id : '/admin/sso/providers', this.llmJSON(form.id ? 'PUT' : 'POST', body), 'access.providerSaved');
+                    if (result) { this.ssoForm = null; await this.reloadSSO(); }
+                },
+                async deleteSSOProvider(provider) {
+                    if (!window.confirm(this.t('access.deleteConfirm', { name: provider.display_name || provider.slug }))) return;
+                    if (await this.ssoRequest('/admin/sso/providers/' + provider.id, { method: 'DELETE' }, 'access.providerDeleted')) await this.reloadSSO();
+                },
+                async testSSOProvider(provider) {
+                    const result = await this.ssoRequest('/admin/sso/providers/' + provider.id + '/test', { method: 'POST' }, '');
+                    if (result) this.ssoTest = { ...this.ssoTest, [String(provider.id)]: result };
+                },
+                async importSSOEnvironment() {
+                    const result = await this.ssoRequest('/admin/sso/import-environment', { method: 'POST' }, '');
+                    if (result) { this.ssoNotice = result.imported ? 'access.imported' : 'access.alreadyImported'; await this.reloadSSO(); }
+                },
                 openProviderForm(provider) {
                     this.llmProbe = { ...this.llmProbe, form: undefined };
                     this.llmProviderForm = provider
@@ -782,6 +823,19 @@
                     if (found) this.selected.item = { ...found.item, ...this.selected.item };
                     this.selectionLoading = false;
                 },
+                // Creates the signed-in person's workspace (the same scaffold the
+                // `init` MCP tool builds) and reloads the page.
+                async initializeWorkspace() {
+                    if (this.workspaceInitializing) return;
+                    this.workspaceInitializing = true; this.error = '';
+                    try {
+                        unwrap(await api.invokeTool('init', {}));
+                        await this.fetchNamespaces();
+                        this.workspaceMissing = false;
+                        await this.loadRoute();
+                    } catch (error) { this.error = i18n.errorMessage(error, 'error.workspaceInit'); }
+                    finally { this.workspaceInitializing = false; }
+                },
                 async fetchNamespaces() {
                     const items = []; let offset = 0;
                     for (;;) {
@@ -810,7 +864,11 @@
                                 this.syncFiltersFromRoute(); this.syncURL();
                             }
                         } catch (_) { /* Session storage may be unavailable. */ }
-                        await this.fetchNamespaces();
+                        // A person who has never used this server has no workspace yet;
+                        // the console still opens so they can create one or reach the
+                        // server settings.
+                        try { await this.fetchNamespaces(); this.workspaceMissing = false; }
+                        catch (error) { if (i18n.errorMessage(error, 'error.page') !== 'error.workspaceNotFound') throw error; this.namespaces = []; this.workspaceMissing = true; }
                         await this.loadRoute();
                     } catch (error) { this.error = i18n.errorMessage(error, 'error.page'); }
                     finally { this.authLoading = false; }
@@ -841,6 +899,9 @@
                         } else if (route.route === 'llm') {
                             const status = await api.adminRequest('/admin/llm/status');
                             if (generation === this.loadGeneration) { this.llmProviderForm = null; this.llmError = ''; this.llmNotice = ''; this.applyLLM(status); }
+                        } else if (route.route === 'access') {
+                            const status = await api.adminRequest('/admin/sso/status');
+                            if (generation === this.loadGeneration) { this.ssoForm = null; this.ssoError = ''; this.ssoNotice = ''; this.ssoTest = {}; status.providers = Array.isArray(status.providers) ? status.providers : []; this.sso = status; }
                         } else if (route.route === 'tokens') {
                             await this.loadAuthTokens();
                         } else if (route.route === 'graph') {
@@ -880,8 +941,9 @@
                         this.lastRefreshedAt = Date.now();
                         document.title = this.pageTitle + ' · Stash';
                     } catch (error) {
-                        if (generation === this.loadGeneration && background) this.refreshError = 'refresh.failed';
-                        else if (generation === this.loadGeneration) this.error = ['maintenance', 'llm'].includes(route.route) && [401, 403, 503].includes(error.status) ? (error.status === 503 ? 'error.adminUnavailable' : 'error.admin') : i18n.errorMessage(error, 'error.page');
+                        if (generation === this.loadGeneration && this.workspaceMissing && !background && i18n.errorMessage(error, 'error.page') === 'error.workspaceNotFound') { this.error = ''; Object.assign(this, { map: emptyMap(), listItems: [], page: { hasMore: false, nextOffset: 0 } }); }
+                        else if (generation === this.loadGeneration && background) this.refreshError = 'refresh.failed';
+                        else if (generation === this.loadGeneration) this.error = ['maintenance', 'llm', 'access'].includes(route.route) && [401, 403, 503].includes(error.status) ? (error.status === 503 ? 'error.adminUnavailable' : 'error.admin') : i18n.errorMessage(error, 'error.page');
                     } finally { if (generation === this.loadGeneration) { this.loading = false; this.refreshing = false; } }
                 },
                 listItemKey(item) { return mapItemKey(this.listKind, item); },
@@ -904,9 +966,10 @@
                     this.authTokens = [];
                     this.tokenError = 'error.session';
                 },
-                beginLogin(provider) {
+                beginLogin(provider, slug) {
                     try { window.sessionStorage.setItem('stash.loginReturn', window.location.pathname + window.location.search); } catch (_) {}
-                    window.location.assign('/auth/login' + (['oidc', 'token'].includes(provider) ? '?provider=' + provider : ''));
+                    const query = provider === 'sso' && text(slug) ? '?sso=' + encodeURIComponent(text(slug)) : ['oidc', 'token'].includes(provider) ? '?provider=' + provider : '';
+                    window.location.assign('/auth/login' + query);
                 },
                 async submitLogin() {
                     if (this.loginBusy) return;

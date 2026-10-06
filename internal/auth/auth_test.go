@@ -136,66 +136,90 @@ func TestSigningSecretMustBeAtLeast32Bytes(t *testing.T) {
 
 func TestOAuthConfigurationFailsBeforeProviderDiscovery(t *testing.T) {
 	base := Config{
-		Mode:      "oauth",
-		Issuer:    "https://auth.example.com/",
-		APISecret: testSigningSecret,
+		Mode:         "oauth",
+		Issuer:       "https://auth.example.com/",
+		ClientID:     "browser-client",
+		ClientSecret: "browser-secret",
+		RedirectURL:  "https://stash.example.com/auth/callback",
+		CookieSecure: true,
+		APISecret:    testSigningSecret,
 	}
-	missingIssuer := base
-	missingIssuer.Issuer = ""
-	if _, err := Init(context.Background(), missingIssuer); err == nil || !strings.Contains(err.Error(), "requires an issuer") {
-		t.Fatalf("missing issuer error = %v", err)
+	// A complete environment provider is accepted without contacting the
+	// issuer; discovery happens later in ReloadSSO.
+	if p, err := Init(context.Background(), base); err != nil || p == nil || p.Mode() != "oidc" && p.Mode() != "oauth" {
+		t.Fatalf("complete SSO config = %v, %v", p, err)
 	}
-	weakSecret := base
-	weakSecret.APISecret = "short"
-	if _, err := Init(context.Background(), weakSecret); err == nil || !strings.Contains(err.Error(), "at least 32 bytes") {
-		t.Fatalf("weak OAuth secret error = %v", err)
+	// Without any SSO variables the profile is plain token login.
+	if p, err := Init(context.Background(), Config{Mode: "oauth", APISecret: testSigningSecret}); err != nil || p == nil || p.browserLoginConfigured() {
+		t.Fatalf("SSO-less oauth mode = %v, %v", p, err)
 	}
-	halfClient := base
-	halfClient.ClientID = "browser-client"
-	if _, err := Init(context.Background(), halfClient); err == nil || !strings.Contains(err.Error(), "supplied together") {
-		t.Fatalf("client ID without secret error = %v", err)
-	}
-	insecureIssuer := base
-	insecureIssuer.Issuer = "http://auth.example.com/"
-	if _, err := Init(context.Background(), insecureIssuer); err == nil || !strings.Contains(err.Error(), "issuer must use HTTPS") {
-		t.Fatalf("insecure issuer error = %v", err)
-	}
-	insecureRedirect := base
-	insecureRedirect.ClientID = "browser-client"
-	insecureRedirect.ClientSecret = "browser-secret"
-	insecureRedirect.RedirectURL = "http://stash.example.com/auth/callback"
-	if _, err := Init(context.Background(), insecureRedirect); err == nil || !strings.Contains(err.Error(), "redirect URL must use HTTPS") {
-		t.Fatalf("insecure redirect error = %v", err)
-	}
-	insecureCookie := base
-	insecureCookie.ClientID = "browser-client"
-	insecureCookie.ClientSecret = "browser-secret"
-	insecureCookie.RedirectURL = "https://stash.example.com/auth/callback"
-	if _, err := Init(context.Background(), insecureCookie); err == nil || !strings.Contains(err.Error(), "requires secure cookies") {
-		t.Fatalf("insecure cookie error = %v", err)
+	for name, mutate := range map[string]func(*Config){
+		"weak secret":       func(c *Config) { c.APISecret = "short" },
+		"half client":       func(c *Config) { c.ClientSecret = "" },
+		"missing redirect":  func(c *Config) { c.RedirectURL = "" },
+		"insecure issuer":   func(c *Config) { c.Issuer = "http://auth.example.com/" },
+		"insecure redirect": func(c *Config) { c.RedirectURL = "http://stash.example.com/auth/callback" },
+		"insecure cookie":   func(c *Config) { c.CookieSecure = false },
+	} {
+		cfg := base
+		mutate(&cfg)
+		if _, err := Init(context.Background(), cfg); err == nil {
+			t.Fatalf("%s was accepted", name)
+		}
 	}
 }
 
 func TestOAuthLoginDefaultsToBrowserRedirect(t *testing.T) {
-	p := newLocalOAuthProvider()
-	p.oauth2Config.Endpoint.AuthURL = "https://auth.example.com/application/o/authorize/"
+	p, rt := newLocalOAuthProvider()
 	rec := httptest.NewRecorder()
 	p.HandleLogin(rec, httptest.NewRequest(http.MethodGet, "/auth/login", nil))
 	if rec.Code != http.StatusFound {
 		t.Fatalf("OAuth login status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	location := rec.Header().Get("Location")
-	if !strings.HasPrefix(location, p.oauth2Config.Endpoint.AuthURL) || !strings.Contains(location, "client_id=authentik-stash") || !strings.Contains(location, "state=") {
+	if !strings.HasPrefix(location, rt.oauth2Config.Endpoint.AuthURL) || !strings.Contains(location, "client_id=authentik-stash") || !strings.Contains(location, "state=authentik.") {
 		t.Fatalf("OAuth login location = %q", location)
+	}
+	var stateCookie *http.Cookie
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == stateCookieName {
+			stateCookie = cookie
+		}
+	}
+	if stateCookie == nil || !strings.HasPrefix(stateCookie.Value, "authentik.") {
+		t.Fatalf("state cookie = %#v", stateCookie)
+	}
+	// Naming the provider works too; an unknown one does not start a login.
+	named := httptest.NewRecorder()
+	p.HandleLogin(named, httptest.NewRequest(http.MethodGet, "/auth/login?sso=authentik", nil))
+	if named.Code != http.StatusFound {
+		t.Fatalf("named SSO login status = %d", named.Code)
+	}
+	unknown := httptest.NewRecorder()
+	p.HandleLogin(unknown, httptest.NewRequest(http.MethodGet, "/auth/login?sso=nope", nil))
+	if unknown.Code != http.StatusServiceUnavailable {
+		t.Fatalf("unknown SSO login status = %d", unknown.Code)
+	}
+	// With two providers the page lets the person choose.
+	second := &ssoRuntime{SSOProvider: SSOProvider{Slug: "okta", DisplayName: "Okta", Enabled: true}, oauth2Config: oauth2.Config{ClientID: "okta-stash", Endpoint: oauth2.Endpoint{AuthURL: "https://okta.example.com/authorize"}}, verifier: &oidc.IDTokenVerifier{}}
+	p.installSSO(rt, second)
+	choose := httptest.NewRecorder()
+	p.HandleLogin(choose, httptest.NewRequest(http.MethodGet, "/auth/login", nil))
+	if choose.Code != http.StatusOK || !strings.Contains(choose.Body.String(), "sso=authentik") || !strings.Contains(choose.Body.String(), "sso=okta") || !strings.Contains(choose.Body.String(), "Okta") {
+		t.Fatalf("two-provider login page status=%d body=%s", choose.Code, choose.Body.String())
+	}
+	status := httptest.NewRecorder()
+	p.HandleStatus(status, httptest.NewRequest(http.MethodGet, "/auth/status", nil))
+	if !strings.Contains(status.Body.String(), `"sso_login":true`) || !strings.Contains(status.Body.String(), `"slug":"okta"`) {
+		t.Fatalf("status = %s", status.Body.String())
 	}
 }
 
 func TestOAuthLoginCanUseTokenFormExplicitly(t *testing.T) {
-	p := newLocalOAuthProvider()
-	p.oauth2Config.Endpoint.AuthURL = "https://auth.example.com/application/o/authorize/"
+	p, _ := newLocalOAuthProvider()
 	rec := httptest.NewRecorder()
 	p.HandleLogin(rec, httptest.NewRequest(http.MethodGet, "/auth/login?provider=token", nil))
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `name="token"`) || !strings.Contains(rec.Body.String(), `provider=oidc`) {
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `name="token"`) || !strings.Contains(rec.Body.String(), `sso=authentik`) {
 		t.Fatalf("explicit token login status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 }
@@ -343,7 +367,7 @@ func TestMCPAcceptsOnlyStoredAPITokens(t *testing.T) {
 
 // authTestMigrations are the auth-only migrations, which need PostgreSQL but
 // not pgvector, so these checks run in a plain isolated schema.
-var authTestMigrations = []string{"00040_add_auth_tokens.sql", "00041_add_auth_token_expiry.sql", "00045_add_users.sql"}
+var authTestMigrations = []string{"00040_add_auth_tokens.sql", "00041_add_auth_token_expiry.sql", "00045_add_users.sql", "00047_add_sso_providers.sql"}
 
 // openAuthTestSchema returns a pool whose search_path is a fresh schema with
 // the auth migrations applied. afterMigration runs after each migration so a
@@ -570,17 +594,17 @@ func TestHandleStatusReportsConfiguredAuthMode(t *testing.T) {
 	}
 }
 
-func newLocalOAuthProvider() *Provider {
-	return &Provider{
-		config: Config{
-			Mode:        "oauth",
-			Issuer:      "https://auth.example.com/",
-			APISecret:   "test-secret",
-			APITokenTTL: time.Hour,
-		},
-		oauth2Config: oauth2.Config{ClientID: "authentik-stash"},
+// newLocalOAuthProvider returns a provider with one ready SSO runtime
+// installed without discovery.
+func newLocalOAuthProvider() (*Provider, *ssoRuntime) {
+	p := &Provider{config: Config{Mode: "oauth", APISecret: "test-secret", APITokenTTL: time.Hour}}
+	rt := &ssoRuntime{
+		SSOProvider:  SSOProvider{Slug: "authentik", DisplayName: "Authentik", Issuer: "https://auth.example.com/", ClientID: "authentik-stash", Enabled: true},
+		oauth2Config: oauth2.Config{ClientID: "authentik-stash", Endpoint: oauth2.Endpoint{AuthURL: "https://auth.example.com/application/o/authorize/"}},
 		verifier:     &oidc.IDTokenVerifier{},
 	}
+	p.installSSO(rt)
+	return p, rt
 }
 
 func TestHMACOIDCVerifierAcceptsAuthentikStyleIDToken(t *testing.T) {
@@ -644,11 +668,9 @@ func TestLoginAccessTokenIntrospectionRequiresBrowserAudience(t *testing.T) {
 	}))
 	defer server.Close()
 
-	p := &Provider{
-		config:                Config{ClientID: "browser-client", ClientSecret: "client-secret"},
-		introspectionEndpoint: server.URL,
-	}
-	subject, gotExpiry, err := p.introspectLoginAccessToken(context.Background(), "access-token")
+	p := &Provider{}
+	rt := &ssoRuntime{SSOProvider: SSOProvider{Slug: "sso", ClientID: "browser-client"}, clientSecret: "client-secret", introspectionEndpoint: server.URL}
+	subject, gotExpiry, err := p.introspectLoginAccessToken(rt, context.Background(), "access-token")
 	if err != nil {
 		t.Fatalf("introspect login token: %v", err)
 	}
@@ -657,7 +679,7 @@ func TestLoginAccessTokenIntrospectionRequiresBrowserAudience(t *testing.T) {
 	}
 
 	audience = []string{"mcp-client"}
-	if _, _, err := p.introspectLoginAccessToken(context.Background(), "access-token"); err == nil || !strings.Contains(err.Error(), "unexpected audience") {
+	if _, _, err := p.introspectLoginAccessToken(rt, context.Background(), "access-token"); err == nil || !strings.Contains(err.Error(), "unexpected audience") {
 		t.Fatalf("unexpected audience result = %v", err)
 	}
 }
@@ -688,12 +710,10 @@ func TestCompleteOIDCLoginFallsBackToIntrospection(t *testing.T) {
 	defer server.Close()
 
 	verifier := newHMACVerifier("https://auth.example.com/", "browser-client", "wrong-secret", false)
-	p := &Provider{
-		config: Config{
-			ClientID:     "browser-client",
-			ClientSecret: "client-secret",
-			RedirectURL:  "https://stash.example.com/auth/callback",
-		},
+	p := &Provider{}
+	rt := &ssoRuntime{
+		SSOProvider:  SSOProvider{Slug: "sso", Issuer: "https://auth.example.com/", ClientID: "browser-client", RedirectURL: "https://stash.example.com/auth/callback", Enabled: true},
+		clientSecret: "client-secret",
 		oauth2Config: oauth2.Config{
 			ClientID:     "browser-client",
 			ClientSecret: "client-secret",
@@ -706,11 +726,11 @@ func TestCompleteOIDCLoginFallsBackToIntrospection(t *testing.T) {
 		hmacVerifier:          verifier,
 		introspectionEndpoint: server.URL + "/introspect",
 	}
-	req := httptest.NewRequest(http.MethodGet, "https://stash.example.com/auth/callback?state=internal-state&code=auth-code", nil)
-	req.AddCookie(&http.Cookie{Name: stateCookieName, Value: "internal-state"})
+	req := httptest.NewRequest(http.MethodGet, "https://stash.example.com/auth/callback?state=sso.internal-state&code=auth-code", nil)
+	req.AddCookie(&http.Cookie{Name: stateCookieName, Value: "sso.internal-state"})
 	req.AddCookie(&http.Cookie{Name: nonceCookieName, Value: "nonce"})
 	rec := httptest.NewRecorder()
-	subject, gotExpiry, authErr := p.completeOIDCLogin(req, "internal-state", rec)
+	subject, gotExpiry, authErr := p.completeOIDCLogin(rt, req, "sso.internal-state", rec)
 	if authErr != nil {
 		t.Fatalf("complete login error = %v", authErr)
 	}

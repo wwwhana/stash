@@ -22,6 +22,7 @@
         agent: '/ui/agent-guide',
         llm: '/ui/llm',
         maintenance: '/ui/maintenance',
+        access: '/ui/access',
         tokens: '/ui/tokens'
     });
     const routeTitles = Object.freeze({
@@ -41,6 +42,7 @@
         agent: 'nav.agent',
         llm: 'nav.llm',
         maintenance: 'nav.maintenance',
+        access: 'nav.access',
         tokens: 'nav.tokens'
     });
     const pathRoutes = new Map(Object.entries(routePaths).map(([route, path]) => [path, route]));
@@ -189,7 +191,7 @@
             setText(params, 'focus', value.focus);
             if (value.detail) params.set('detail', '1');
         }
-        if (['agent', 'llm', 'maintenance', 'tokens'].includes(selected)) setNamespace(params, value.namespace || value.project);
+        if (['agent', 'llm', 'maintenance', 'access', 'tokens'].includes(selected)) setNamespace(params, value.namespace || value.project);
         if (['goal-map', 'monitor', 'graph', 'board'].includes(selected)) {
             const issueID = positiveInteger(value.issueID);
             if (issueID) params.set('issue', String(issueID));

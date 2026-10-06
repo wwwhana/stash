@@ -88,7 +88,20 @@ func New(ctx context.Context) (*Context, error) {
 		return nil, fmt.Errorf("load secrets key: %w", err)
 	}
 	if keyring == nil {
-		logger.Warn("STASH_SECRETS_KEY is not set; provider API keys cannot be stored in the database")
+		logger.Warn("STASH_SECRETS_KEY is not set; provider API keys and SSO client secrets cannot be stored in the database")
+	}
+	if authProvider != nil && authProvider.Mode() != "stdio" {
+		authProvider.SetSecrets(keyring)
+		// The environment registers the first SSO provider; afterwards the
+		// table is the source of truth and the console edits it.
+		if imported, ok, err := authProvider.ImportEnvironmentSSO(ctx); err != nil {
+			logger.Warn("SSO provider from the environment was not imported", "error", err)
+		} else if ok {
+			logger.Info("SSO provider imported from the environment", "slug", imported.Slug, "issuer", imported.Issuer)
+		}
+		if err := authProvider.ReloadSSO(ctx); err != nil {
+			logger.Warn("load SSO providers", "error", err)
+		}
 	}
 
 	store := llm.NewStore(pool, keyring)

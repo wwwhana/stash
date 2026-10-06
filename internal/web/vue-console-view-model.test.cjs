@@ -608,3 +608,25 @@ test('password change validates locally and maps server answers to messages', as
         assert.equal(state.passwordError, message);
     }
 });
+
+test('a signed-in person without a workspace still gets the console and can create one', async () => {
+    const calls = [];
+    let created = false;
+    const { state, window } = setup('/ui/wiki', async (tool, args) => {
+        calls.push(tool);
+        if (tool === 'init') { created = true; return { ok: true }; }
+        if (!created) { const error = new Error('namespace "/sso/u_x": brain: namespace not found — call create_namespace first'); throw error; }
+        if (tool === 'list_namespaces') return { items: [{ slug: '/', name: 'Workspace' }], has_more: false };
+        return { items: [], pages: [], has_more: false };
+    });
+    window.fetch = async () => ({ ok: true, json: async () => ({ auth_mode: 'token', authenticated: true, user: 'dana', admin: false }) });
+    await state.bootstrap();
+    assert.equal(state.authChecked, true);
+    assert.equal(state.workspaceMissing, true);
+    assert.equal(state.error, '', 'the missing workspace is not a page error');
+    assert.deepEqual(state.namespaces, []);
+    await state.initializeWorkspace();
+    assert.ok(calls.includes('init'));
+    assert.equal(state.workspaceMissing, false);
+    assert.equal(state.namespaces.length, 1);
+});

@@ -125,9 +125,35 @@ it already had stay its own, and an administrator can later add a password to
 it or disable it. The username is the session subject everywhere: namespaces,
 API tokens, and wiki authorship are keyed by it.
 
-The login page offers the password form first, SSO when `STASH_AUTH_MODE=oauth`
-is configured, and an API token form one link away. Signed-in users change
-their own password from the **Account** panel.
+The login page offers the password form first, a button per registered SSO
+provider, and an API token form one link away. Signed-in users change their
+own password from the **Account** panel.
+
+### SSO providers
+
+SSO providers are OIDC issuers stored in the database (`sso_providers`), with
+the client secret sealed by `STASH_SECRETS_KEY`. The environment registers
+the first one: when `STASH_AUTH_ISSUER`, `STASH_AUTH_CLIENT_ID`,
+`STASH_AUTH_CLIENT_SECRET`, and `STASH_AUTH_REDIRECT_URL` are set, the server
+imports them into the table at startup (once; later edits happen in the
+table). From then on administrators manage providers on the **Login & SSO**
+page of the console or with the CLI:
+
+```bash
+stash sso list
+stash sso add authentik --name "Company SSO" --issuer https://auth.example.com/application/o/stash/ \
+  --client-id stash --client-secret-env SSO_SECRET --redirect-url https://stash.example.com/auth/callback
+stash sso test 1
+stash sso set 1 --disable
+```
+
+Each provider is discovered on load; one that fails discovery is reported on
+the page and skipped on the login screen without affecting the others. A
+person who signs in through a provider for the first time becomes a user
+named after the issuer's subject, so an administrator can later give that
+account a password, make it an administrator, or disable it. Without
+`STASH_SECRETS_KEY` the environment provider still works from memory, but
+nothing can be stored.
 
 See [Getting Started](docs/GETTING_STARTED.md) for a fuller configuration checklist.
 

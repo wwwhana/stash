@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"log"
 	"net/http"
@@ -18,8 +19,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/alash3al/stash/internal/secrets"
 	"github.com/coreos/go-oidc/v3/oidc"
 	jose "github.com/go-jose/go-jose/v4"
 	"github.com/jackc/pgx/v5"
@@ -61,15 +64,13 @@ type Config struct {
 }
 
 type Provider struct {
-	config                Config
-	tokenPool             *pgxpool.Pool
-	oidcProvider          *oidc.Provider
-	oauth2Config          oauth2.Config
-	verifier              *oidc.IDTokenVerifier
-	hmacVerifier          *oidc.IDTokenVerifier
-	introspectionEndpoint string
-	mu                    sync.Mutex
-	loginFailures         map[string]*loginFailure
+	config        Config
+	tokenPool     *pgxpool.Pool
+	secrets       *secrets.Keyring
+	sso           atomic.Pointer[ssoSet]
+	ssoMu         sync.Mutex
+	mu            sync.Mutex
+	loginFailures map[string]*loginFailure
 }
 
 // APIToken is the metadata shown in the token management page. The raw token
@@ -145,98 +146,36 @@ func Init(ctx context.Context, cfg Config) (*Provider, error) {
 		log.Println("Auth mode: stdio (credentials come from the process environment)")
 		return &Provider{config: cfg}, nil
 	}
-	if mode == "token" {
-		if err := validateSigningSecret(cfg.APISecret); err != nil {
-			return nil, fmt.Errorf("token mode requires STASH_AUTH_API_SECRET: %w", err)
-		}
-		if cfg.APITokenTTL <= 0 {
-			cfg.APITokenTTL = defaultTokenTTL
-		}
-		log.Println("Auth mode: token (Stash API tokens; OIDC is not used)")
-		return &Provider{config: cfg}, nil
-	}
-	if mode != "oauth" {
+	if mode != "token" && mode != "oauth" {
 		return nil, fmt.Errorf("unsupported auth mode: %q", cfg.Mode)
-	}
-	if cfg.Issuer == "" {
-		return nil, errors.New("OAuth mode requires an issuer")
-	}
-	if !validResourceURL(cfg.Issuer) {
-		return nil, errors.New("OAuth issuer must use HTTPS or loopback HTTP")
 	}
 	if err := validateSigningSecret(cfg.APISecret); err != nil {
 		return nil, fmt.Errorf("HTTP authentication requires STASH_AUTH_API_SECRET: %w", err)
 	}
-	// The browser login is optional: MCP clients authenticate with API tokens,
-	// so a deployment may run with SSO only for the console. A client
-	// ID/secret pair may be supplied without a redirect URI for opaque-token
-	// introspection only. Once a redirect URI is supplied, require the
-	// complete browser-login set so a half-configured /auth/login path cannot
-	// fail later with a cryptic error.
-	if (cfg.ClientID == "") != (cfg.ClientSecret == "") {
-		return nil, errors.New("OAuth client ID and client secret must be supplied together")
-	}
-	webLoginConfigured := cfg.RedirectURL != ""
-	if webLoginConfigured && (cfg.ClientID == "" || cfg.ClientSecret == "") {
-		return nil, errors.New("browser OAuth login requires client ID, client secret, and redirect URL together")
-	}
-	if webLoginConfigured && !validRedirectURI(cfg.RedirectURL) {
-		return nil, errors.New("browser OAuth redirect URL must use HTTPS or loopback HTTP")
-	}
-	if webLoginConfigured {
-		redirect, _ := url.Parse(cfg.RedirectURL)
-		if redirect.Scheme == "https" && !cfg.CookieSecure {
-			return nil, errors.New("browser OAuth over HTTPS requires secure cookies")
-		}
-		if redirect.Scheme == "http" && cfg.CookieSecure {
-			return nil, errors.New("loopback HTTP browser OAuth requires STASH_AUTH_COOKIE_SECURE=false")
-		}
-	}
-	if webLoginConfigured && cfg.APISecret == "" {
-		return nil, errors.New("browser OAuth login requires STASH_AUTH_API_SECRET for the session signer")
-	}
 	if cfg.APITokenTTL <= 0 {
 		cfg.APITokenTTL = defaultTokenTTL
 	}
-	discoveryCtx, discoveryCancel := context.WithTimeout(ctx, oauthProviderTimeout)
-	defer discoveryCancel()
-	provider, err := oidc.NewProvider(discoveryCtx, cfg.Issuer)
-	if err != nil {
-		return nil, fmt.Errorf("initialize OIDC provider: %w", err)
-	}
-
-	var oauth2Config oauth2.Config
-	var verifier *oidc.IDTokenVerifier
-	if webLoginConfigured {
-		endpoint := provider.Endpoint()
-		if !validRedirectURI(endpoint.AuthURL) || !validRedirectURI(endpoint.TokenURL) {
-			return nil, errors.New("OIDC provider returned an unsafe authorization or token endpoint")
+	p := &Provider{config: cfg}
+	// The environment may describe the first SSO provider. Reject a
+	// half-configured one here so /auth/login cannot fail later with a
+	// cryptic error; discovery itself happens in ReloadSSO once the database
+	// is attached, and a provider that fails discovery is reported, not fatal.
+	if cfg.Issuer != "" || cfg.ClientID != "" || cfg.ClientSecret != "" || cfg.RedirectURL != "" {
+		if (cfg.ClientID == "") != (cfg.ClientSecret == "") {
+			return nil, errors.New("STASH_AUTH_CLIENT_ID and STASH_AUTH_CLIENT_SECRET must be supplied together")
 		}
-		oauth2Config = oauth2.Config{
-			ClientID:     cfg.ClientID,
-			ClientSecret: cfg.ClientSecret,
-			RedirectURL:  cfg.RedirectURL,
-			Endpoint:     endpoint,
-			Scopes:       []string{oidc.ScopeOpenID},
+		if cfg.Issuer == "" || cfg.ClientID == "" || cfg.RedirectURL == "" {
+			return nil, errors.New("SSO needs STASH_AUTH_ISSUER, STASH_AUTH_CLIENT_ID, STASH_AUTH_CLIENT_SECRET, and STASH_AUTH_REDIRECT_URL together")
 		}
-		verifier = provider.Verifier(&oidc.Config{ClientID: cfg.ClientID})
+		env, _, _ := p.envSSO()
+		if err := p.validateSSO(env); err != nil {
+			return nil, err
+		}
+		log.Printf("Auth mode: %s (console SSO via %s; MCP clients use API tokens)", mode, cfg.Issuer)
+	} else {
+		log.Printf("Auth mode: %s (password and API-token login; SSO providers come from the database)", mode)
 	}
-	// Authentik can issue HS256 ID tokens when its provider has no asymmetric
-	// signing key. go-oidc intentionally excludes symmetric algorithms from
-	// discovery, so verify HS256 separately with the confidential client's
-	// secret. This remains bound to the configured issuer and audience through
-	// go-oidc's normal claim checks.
-	hmacVerifier := newHMACVerifier(cfg.Issuer, cfg.ClientID, cfg.ClientSecret, false)
-	introspectionEndpoint := providerIntrospectionEndpoint(provider)
-	log.Printf("Auth mode: oauth (console SSO via %s; MCP clients use API tokens)", cfg.Issuer)
-	return &Provider{
-		config:                cfg,
-		oidcProvider:          provider,
-		oauth2Config:          oauth2Config,
-		verifier:              verifier,
-		hmacVerifier:          hmacVerifier,
-		introspectionEndpoint: introspectionEndpoint,
-	}, nil
+	return p, nil
 }
 
 // SetTokenPool connects durable API-token storage after database migrations
@@ -262,10 +201,6 @@ func (p *Provider) Mode() string {
 		return "oauth"
 	}
 	return mode
-}
-
-func (p *Provider) oauthMode() bool {
-	return p != nil && (p.Mode() == "oauth" || p.Mode() == "oidc")
 }
 
 // HTTPAuthEnabled reports whether the HTTP MCP transports require a bearer
@@ -299,7 +234,7 @@ func (p *Provider) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
 		if err := r.ParseForm(); err != nil {
-			writeTokenLoginPage(w, true, p.browserLoginConfigured())
+			p.writeTokenLoginPage(w, true)
 			return
 		}
 		if _, ok := r.PostForm["username"]; ok {
@@ -314,36 +249,46 @@ func (p *Provider) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	provider := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("provider")))
-	if provider != "" && provider != "oidc" && provider != "token" && provider != "local" {
+	ssoSlug := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("sso")))
+	if ssoSlug != "" {
+		provider = "sso"
+	}
+	if provider != "" && provider != "oidc" && provider != "sso" && provider != "token" && provider != "local" {
 		http.Error(w, "unsupported login provider", http.StatusBadRequest)
 		return
 	}
-	page := loginPageOptions{OAuthEnabled: p.browserLoginConfigured(), LocalEnabled: p.LocalLoginAvailable(r.Context())}
+	page := loginPageOptions{SSO: p.SSOOptions(), LocalEnabled: p.LocalLoginAvailable(r.Context())}
 	page.TokenForm = provider == "token" || !page.LocalEnabled
-	if p.Mode() == "token" || provider == "token" || provider == "local" || !page.OAuthEnabled || page.LocalEnabled && provider == "" {
+	startSSO := provider == "oidc" || provider == "sso"
+	if !startSSO && (provider != "" || page.LocalEnabled || len(page.SSO) == 0) {
 		// A deployment with local accounts shows the password form first;
 		// SSO stays one link away. Without accounts the token form remains.
 		writeLoginPage(w, page)
 		return
 	}
-	if p.verifier == nil || p.oauth2Config.ClientID == "" {
-		http.Error(w, "browser login is not configured", http.StatusServiceUnavailable)
+	rt, err := p.ssoRuntimeFor(ssoSlug)
+	if err != nil {
+		if len(page.SSO) > 1 && ssoSlug == "" {
+			writeLoginPage(w, page)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
+	p.startSSOLogin(w, r, rt)
+}
 
-	state, nonce, err := setOAuthCookies(w, p.config.CookieSecure)
+// startSSOLogin sends the browser to the issuer. The state carries the
+// provider slug so the callback knows which client to finish with.
+func (p *Provider) startSSOLogin(w http.ResponseWriter, r *http.Request, rt *ssoRuntime) {
+	state, nonce, err := setOAuthCookies(w, p.config.CookieSecure, rt.Slug)
 	if err != nil {
 		http.Error(w, "could not start login", http.StatusInternalServerError)
 		return
 	}
-
-	url := p.oauth2Config.AuthCodeURL(state, oauth2.SetAuthURLParam("nonce", nonce))
+	url := rt.oauth2Config.AuthCodeURL(state, oauth2.SetAuthURLParam("nonce", nonce))
 	w.Header().Set("Cache-Control", "no-store")
 	http.Redirect(w, r, url, http.StatusFound)
-}
-
-func (p *Provider) browserLoginConfigured() bool {
-	return p != nil && p.oauthMode() && p.verifier != nil && strings.TrimSpace(p.oauth2Config.ClientID) != ""
 }
 
 func (p *Provider) handleTokenLogin(w http.ResponseWriter, r *http.Request) {
@@ -353,13 +298,13 @@ func (p *Provider) handleTokenLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
 	if err := r.ParseForm(); err != nil {
-		writeTokenLoginPage(w, true, p.browserLoginConfigured())
+		p.writeTokenLoginPage(w, true)
 		return
 	}
 	rawToken := strings.TrimSpace(r.PostFormValue("token"))
 	subject, expiresAt, err := p.verifyAPIToken(r.Context(), rawToken)
 	if err != nil {
-		writeTokenLoginPage(w, true, p.browserLoginConfigured())
+		p.writeTokenLoginPage(w, true)
 		return
 	}
 	// A session backed by an unlimited token slides like an OIDC session; one
@@ -377,17 +322,17 @@ func (p *Provider) handleTokenLogin(w http.ResponseWriter, r *http.Request) {
 type loginPageOptions struct {
 	Failed       bool
 	Throttled    bool
-	OAuthEnabled bool
+	SSO          []SSOOption
 	LocalEnabled bool
 	TokenForm    bool
 }
 
-func writeTokenLoginPage(w http.ResponseWriter, failed, oauthEnabled bool) {
-	writeLoginPage(w, loginPageOptions{Failed: failed, OAuthEnabled: oauthEnabled, TokenForm: true})
+func (p *Provider) writeTokenLoginPage(w http.ResponseWriter, failed bool) {
+	writeLoginPage(w, loginPageOptions{Failed: failed, SSO: p.SSOOptions(), TokenForm: true})
 }
 
 func writeLoginPage(w http.ResponseWriter, o loginPageOptions) {
-	failed, oauthEnabled := o.Failed, o.OAuthEnabled
+	failed := o.Failed
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
 	w.Header().Set("Referrer-Policy", "no-referrer")
@@ -435,8 +380,8 @@ func writeLoginPage(w http.ResponseWriter, o loginPageOptions) {
 		}
 		_, _ = io.WriteString(w, `<button type="submit">로그인</button></form><a href="/auth/login?provider=token">토큰으로 로그인</a>`)
 	}
-	if oauthEnabled {
-		_, _ = io.WriteString(w, `<a href="/auth/login?provider=oidc">계정(SSO)으로 로그인</a>`)
+	for _, option := range o.SSO {
+		_, _ = io.WriteString(w, `<a href="/auth/login?sso=`+url.QueryEscape(option.Slug)+`">`+html.EscapeString(option.Name)+` 계정으로 로그인 (SSO)</a>`)
 	}
 	_, _ = io.WriteString(w, `<a href="/">돌아가기</a></main></body></html>`)
 }
@@ -450,18 +395,21 @@ func (p *Provider) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "authentication is disabled", http.StatusNotFound)
 		return
 	}
-	if p.verifier == nil || p.oauth2Config.ClientID == "" {
-		http.Error(w, "browser login is not configured", http.StatusServiceUnavailable)
+	state := r.FormValue("state")
+	slug, _, _ := strings.Cut(state, ".")
+	rt := p.ssoBySlug(slug)
+	if rt == nil || !rt.ready() {
+		http.Error(w, "SSO login is not configured", http.StatusServiceUnavailable)
 		return
 	}
-	login, expiresAt, err := p.completeOIDCLogin(r, r.FormValue("state"), w)
+	login, expiresAt, err := p.completeOIDCLogin(rt, r, state, w)
 	if err != nil {
 		http.Error(w, err.Error(), err.status)
 		return
 	}
 	// The identity token names a subject at the issuer; the session is for
 	// the user that identity belongs to.
-	username, resolveErr := p.resolveOIDCUser(r.Context(), p.config.Issuer, login.Subject, login.Profile)
+	username, resolveErr := p.resolveOIDCUser(r.Context(), rt.Issuer, login.Subject, login.Profile)
 	if errors.Is(resolveErr, ErrUserDisabled) {
 		http.Error(w, "login was denied: this account is disabled", http.StatusForbidden)
 		return
@@ -489,7 +437,7 @@ type oidcLogin struct {
 	Profile oidcProfile
 }
 
-func (p *Provider) completeOIDCLogin(r *http.Request, providedState string, w http.ResponseWriter) (oidcLogin, time.Time, *authHTTPError) {
+func (p *Provider) completeOIDCLogin(rt *ssoRuntime, r *http.Request, providedState string, w http.ResponseWriter) (oidcLogin, time.Time, *authHTTPError) {
 	stateCookie, err := r.Cookie(stateCookieName)
 	if err != nil || stateCookie.Value == "" {
 		return oidcLogin{}, time.Time{}, &authHTTPError{http.StatusBadRequest, "login state is missing"}
@@ -512,7 +460,7 @@ func (p *Provider) completeOIDCLogin(r *http.Request, providedState string, w ht
 
 	providerCtx, cancel := context.WithTimeout(r.Context(), oauthProviderTimeout)
 	defer cancel()
-	token, err := p.oauth2Config.Exchange(providerCtx, code)
+	token, err := rt.oauth2Config.Exchange(providerCtx, code)
 	if err != nil {
 		return oidcLogin{}, time.Time{}, &authHTTPError{http.StatusBadGateway, "could not complete login"}
 	}
@@ -521,7 +469,7 @@ func (p *Provider) completeOIDCLogin(r *http.Request, providedState string, w ht
 		return oidcLogin{}, time.Time{}, &authHTTPError{http.StatusBadGateway, "identity token is missing"}
 	}
 
-	idToken, err := p.verifyIdentityToken(providerCtx, rawIDToken)
+	idToken, err := p.verifyIdentityToken(rt, providerCtx, rawIDToken)
 	if err != nil {
 		// Some OAuth providers expose an opaque access token and publish no
 		// usable JWKS for their ID token. The authorization-code exchange has
@@ -529,7 +477,7 @@ func (p *Provider) completeOIDCLogin(r *http.Request, providedState string, w ht
 		// introspection result bound to that same client is a safe OAuth
 		// compatibility fallback. Keep the verifier error in the log so the
 		// provider can still be configured for normal OIDC validation later.
-		if subject, _, introspectionErr := p.introspectLoginAccessToken(providerCtx, token.AccessToken); introspectionErr == nil {
+		if subject, _, introspectionErr := p.introspectLoginAccessToken(rt, providerCtx, token.AccessToken); introspectionErr == nil {
 			log.Printf("OIDC identity token verification failed; accepted introspected access token: %v", err)
 			return oidcLogin{Subject: subject}, time.Now().Add(p.sessionTTL()), nil
 		} else {
@@ -560,22 +508,22 @@ func (p *Provider) completeOIDCLogin(r *http.Request, providedState string, w ht
 // providers such as Authentik when no signing key is selected. The HMAC path
 // is deliberately separate so an asymmetric token can never be verified with
 // the client secret.
-func (p *Provider) verifyIdentityToken(ctx context.Context, raw string) (*oidc.IDToken, error) {
+func (p *Provider) verifyIdentityToken(rt *ssoRuntime, ctx context.Context, raw string) (*oidc.IDToken, error) {
 	var hmacErr error
-	if p.hmacVerifier != nil {
-		if token, err := p.hmacVerifier.Verify(ctx, raw); err == nil {
+	if rt.hmacVerifier != nil {
+		if token, err := rt.hmacVerifier.Verify(ctx, raw); err == nil {
 			return token, nil
 		} else {
 			hmacErr = err
 		}
 	}
-	if p.verifier == nil {
+	if rt.verifier == nil {
 		if hmacErr != nil {
 			return nil, fmt.Errorf("HMAC identity-token verification failed: %w", hmacErr)
 		}
 		return nil, errors.New("OIDC identity-token verifier is unavailable")
 	}
-	token, err := p.verifier.Verify(ctx, raw)
+	token, err := rt.verifier.Verify(ctx, raw)
 	if err != nil && hmacErr != nil {
 		return nil, fmt.Errorf("HMAC identity-token verification failed: %v; standard verification failed: %w", hmacErr, err)
 	}
@@ -587,8 +535,8 @@ func (p *Provider) verifyIdentityToken(ctx context.Context, raw string) (*oidc.I
 // reports as active and whose audience is the configured browser client. A
 // resource-server audience is deliberately not enough here: that token must
 // be issued for this login client, not merely for Stash's MCP endpoint.
-func (p *Provider) introspectLoginAccessToken(ctx context.Context, rawToken string) (string, time.Time, error) {
-	if p == nil || p.introspectionEndpoint == "" || strings.TrimSpace(p.config.ClientID) == "" || p.config.ClientSecret == "" {
+func (p *Provider) introspectLoginAccessToken(rt *ssoRuntime, ctx context.Context, rawToken string) (string, time.Time, error) {
+	if p == nil || rt == nil || rt.introspectionEndpoint == "" || strings.TrimSpace(rt.ClientID) == "" || rt.clientSecret == "" {
 		return "", time.Time{}, errors.New("OIDC login introspection is not configured")
 	}
 	rawToken = strings.TrimSpace(rawToken)
@@ -596,12 +544,12 @@ func (p *Provider) introspectLoginAccessToken(ctx context.Context, rawToken stri
 		return "", time.Time{}, errors.New("access token is missing")
 	}
 	form := url.Values{"token": {rawToken}, "token_type_hint": {"access_token"}}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, p.introspectionEndpoint, strings.NewReader(form.Encode()))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, rt.introspectionEndpoint, strings.NewReader(form.Encode()))
 	if err != nil {
 		return "", time.Time{}, err
 	}
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	request.SetBasicAuth(p.config.ClientID, p.config.ClientSecret)
+	request.SetBasicAuth(rt.ClientID, rt.clientSecret)
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
 		return "", time.Time{}, err
@@ -626,7 +574,7 @@ func (p *Provider) introspectLoginAccessToken(ctx context.Context, rawToken stri
 	if err != nil {
 		return "", time.Time{}, err
 	}
-	if !audienceContains(audience, strings.TrimSpace(p.config.ClientID)) {
+	if !audienceContains(audience, strings.TrimSpace(rt.ClientID)) {
 		return "", time.Time{}, errors.New("OIDC login access token has unexpected audience")
 	}
 	return result.Sub, time.Unix(result.Exp, 0), nil
@@ -773,6 +721,7 @@ func (p *Provider) HandleStatus(w http.ResponseWriter, r *http.Request) {
 		status["auth_mode"] = p.Mode()
 		status["local_login"] = p.LocalLoginAvailable(r.Context())
 		status["sso_login"] = p.browserLoginConfigured()
+		status["sso_providers"] = p.SSOOptions()
 		if user, err := p.VerifyRequest(r); err == nil && user != "" {
 			status["authenticated"] = true
 			status["user"] = user
@@ -1213,11 +1162,14 @@ func bearerToken(r *http.Request) string {
 	return ""
 }
 
-func setOAuthCookies(w http.ResponseWriter, secure bool) (string, string, error) {
+func setOAuthCookies(w http.ResponseWriter, secure bool, slug string) (string, string, error) {
 	state, err := randomToken(32)
 	if err != nil {
 		return "", "", err
 	}
+	// The slug prefix tells the callback which provider to finish with; the
+	// random part still binds the response to this browser.
+	state = slug + "." + state
 	nonce, err := randomToken(32)
 	if err != nil {
 		return "", "", err

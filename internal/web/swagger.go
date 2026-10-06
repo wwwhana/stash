@@ -237,6 +237,60 @@ const openAPISpec = `{
         }
       }
     },
+    "/admin/sso/status": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "SSO 제공자 상태",
+        "description": "저장된 OIDC 제공자와 로드 상태(ready/error/disabled), 시크릿 저장 가능 여부, 환경 변수 발급자를 돌려줍니다.",
+        "operationId": "adminSSOStatus",
+        "security": [{"adminToken": []}, {"bearerAuth": []}],
+        "responses": {"200": {"description": "SSO 상태", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SSOStatus"}}}}, "401": {"$ref": "#/components/responses/Unauthorized"}}
+      }
+    },
+    "/admin/sso/providers": {
+      "get": {
+        "tags": ["Admin"], "summary": "SSO 제공자 목록", "operationId": "adminSSOProviders",
+        "security": [{"adminToken": []}, {"bearerAuth": []}],
+        "responses": {"200": {"description": "제공자 목록", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/SSOProvider"}}}}}}
+      },
+      "post": {
+        "tags": ["Admin"], "summary": "SSO 제공자 등록",
+        "description": "클라이언트 시크릿은 STASH_SECRETS_KEY로 봉인해 저장합니다. 저장 직후 OIDC 검색(discovery)을 실행하고 결과를 status에 반영합니다.",
+        "operationId": "adminSSOCreateProvider",
+        "security": [{"adminToken": []}, {"bearerAuth": []}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SSOProviderInput"}}}},
+        "responses": {"201": {"description": "등록된 제공자", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SSOProvider"}}}}, "400": {"$ref": "#/components/responses/BadRequest"}, "409": {"description": "같은 식별자가 이미 있음"}}
+      }
+    },
+    "/admin/sso/providers/{id}": {
+      "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer", "format": "int64"}}],
+      "put": {
+        "tags": ["Admin"], "summary": "SSO 제공자 수정", "description": "client_secret을 생략하거나 비우면 저장된 시크릿을 유지합니다.", "operationId": "adminSSOUpdateProvider",
+        "security": [{"adminToken": []}, {"bearerAuth": []}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SSOProviderInput"}}}},
+        "responses": {"200": {"description": "수정된 제공자", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SSOProvider"}}}}, "404": {"description": "제공자를 찾을 수 없음"}}
+      },
+      "delete": {
+        "tags": ["Admin"], "summary": "SSO 제공자 삭제", "description": "이 제공자로 로그인했던 사용자와 identity 행은 남습니다.", "operationId": "adminSSODeleteProvider",
+        "security": [{"adminToken": []}, {"bearerAuth": []}],
+        "responses": {"200": {"description": "삭제 완료"}, "404": {"description": "제공자를 찾을 수 없음"}}
+      }
+    },
+    "/admin/sso/providers/{id}/test": {
+      "post": {
+        "tags": ["Admin"], "summary": "SSO 제공자 연결 확인", "description": "저장된 설정으로 OIDC 검색 문서를 읽어 봅니다. 로그인 화면에 반영하지는 않습니다.", "operationId": "adminSSOTestProvider",
+        "security": [{"adminToken": []}, {"bearerAuth": []}],
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer", "format": "int64"}}],
+        "responses": {"200": {"description": "확인 결과", "content": {"application/json": {"schema": {"type": "object", "properties": {"ok": {"type": "boolean"}, "error": {"type": "string"}}}}}}}
+      }
+    },
+    "/admin/sso/import-environment": {
+      "post": {
+        "tags": ["Admin"], "summary": "환경 변수 SSO 설정 가져오기", "description": "STASH_AUTH_ISSUER/CLIENT_ID/CLIENT_SECRET/REDIRECT_URL을 테이블에 한 번 저장합니다. 서버 시작 시에도 자동으로 실행됩니다.", "operationId": "adminSSOImportEnvironment",
+        "security": [{"adminToken": []}, {"bearerAuth": []}],
+        "responses": {"200": {"description": "가져올 것이 없음"}, "201": {"description": "저장됨", "content": {"application/json": {"schema": {"type": "object", "properties": {"imported": {"type": "boolean"}, "provider": {"$ref": "#/components/schemas/SSOProvider"}}}}}}}
+      }
+    },
     "/admin/llm/status": {
       "get": {
         "tags": ["Admin"],
@@ -403,6 +457,33 @@ const openAPISpec = `{
         "additionalProperties": false
       },
       "JsonRpcResponse": {"type": "object", "description": "MCP JSON-RPC 응답. 메서드에 따라 result 또는 error가 포함됩니다.", "additionalProperties": true},
+      "SSOProvider": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "integer", "format": "int64", "description": "0이면 환경 변수에서만 읽은 미저장 제공자"},
+          "slug": {"type": "string"}, "display_name": {"type": "string"}, "issuer": {"type": "string"}, "client_id": {"type": "string"},
+          "has_client_secret": {"type": "boolean"}, "redirect_url": {"type": "string"}, "enabled": {"type": "boolean"},
+          "source": {"type": "string", "enum": ["environment", "console"]},
+          "status": {"type": "string", "enum": ["ready", "error", "disabled"]}, "error": {"type": "string"},
+          "created_at": {"type": "string", "format": "date-time"}, "updated_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "SSOProviderInput": {
+        "type": "object",
+        "properties": {
+          "slug": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"}, "display_name": {"type": "string"},
+          "issuer": {"type": "string", "format": "uri"}, "client_id": {"type": "string"}, "client_secret": {"type": "string", "format": "password", "description": "등록 시 필수, 수정 시 비우면 유지"},
+          "redirect_url": {"type": "string", "format": "uri"}, "enabled": {"type": "boolean"}
+        }
+      },
+      "SSOStatus": {
+        "type": "object",
+        "properties": {
+          "providers": {"type": "array", "items": {"$ref": "#/components/schemas/SSOProvider"}},
+          "secrets_enabled": {"type": "boolean"}, "cookie_secure": {"type": "boolean"},
+          "environment_issuer": {"type": "string"}, "callback_path": {"type": "string", "example": "/auth/callback"}
+        }
+      },
       "AuthStatus": {
         "type": "object",
         "required": ["auth_mode", "authenticated"],
@@ -413,7 +494,8 @@ const openAPISpec = `{
           "admin": {"type": "boolean", "description": "서버 설정 페이지를 열 수 있는지 (users.is_admin 또는 STASH_ADMIN_SUBJECTS)"},
           "has_password": {"type": "boolean", "description": "로그인한 사용자가 비밀번호를 가졌는지 (비밀번호 변경 가능 여부)"},
           "local_login": {"type": "boolean", "description": "아이디/비밀번호 로그인 폼을 보여 줄지"},
-          "sso_login": {"type": "boolean", "description": "SSO(OIDC) 로그인이 설정됐는지"}
+          "sso_login": {"type": "boolean", "description": "SSO(OIDC) 로그인이 설정됐는지"},
+          "sso_providers": {"type": "array", "description": "로그인 버튼으로 보여 줄 제공자", "items": {"type": "object", "properties": {"slug": {"type": "string"}, "name": {"type": "string"}}}}
         }
       },
       "ApiToken": {

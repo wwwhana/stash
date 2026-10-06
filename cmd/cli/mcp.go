@@ -1485,6 +1485,11 @@ func runLLMReloadTicker(ctx context.Context, bc *bootstrap.Context) {
 			if _, err := bc.LLM.ReloadIfChanged(ctx); err != nil && ctx.Err() == nil && bc.Logger != nil {
 				bc.Logger.Error("reload model routing", "error", err)
 			}
+			if bc.Auth != nil {
+				if _, err := bc.Auth.ReloadSSOIfChanged(ctx); err != nil && ctx.Err() == nil && bc.Logger != nil {
+					bc.Logger.Error("reload SSO providers", "error", err)
+				}
+			}
 		}
 	}
 }

@@ -649,11 +649,11 @@ func (p *Provider) handleLocalLogin(w http.ResponseWriter, r *http.Request) {
 	subject, err := p.authenticateLocal(r.Context(), r, username, password)
 	if err != nil {
 		if errors.Is(err, ErrAccountsUnavailable) {
-			writeTokenLoginPage(w, false, p.browserLoginConfigured())
+			p.writeTokenLoginPage(w, false)
 			return
 		}
 		log.Printf("local login rejected for %q: %v", strings.ToLower(strings.TrimSpace(username)), err)
-		writeLoginPage(w, loginPageOptions{Failed: true, Throttled: errors.Is(err, ErrLoginThrottled), OAuthEnabled: p.browserLoginConfigured(), LocalEnabled: true})
+		writeLoginPage(w, loginPageOptions{Failed: true, Throttled: errors.Is(err, ErrLoginThrottled), SSO: p.SSOOptions(), LocalEnabled: true})
 		return
 	}
 	p.setSessionCookie(w, subject, time.Now().Add(p.sessionTTL()), true)

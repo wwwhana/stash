@@ -25,6 +25,7 @@ func registerAdminRoutes(mux *http.ServeMux, bc *bootstrap.Context) {
 		adminEmbeddingReindexHandler(bc, w, r)
 	})))
 	registerLLMAdminRoutes(mux, bc)
+	registerSSOAdminRoutes(mux, bc)
 }
 
 func adminOnlyHTTP(bc *bootstrap.Context, next http.Handler) http.Handler {

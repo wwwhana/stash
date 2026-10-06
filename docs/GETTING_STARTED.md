@@ -217,7 +217,8 @@ If tools fail, check `.env`:
 | `STASH_CONSOLIDATE_NAMESPACES` | Non-root namespaces processed by Docker Compose background consolidation (default `/projects`) |
 | `STASH_MCP_MAX_RESPONSE_BYTES` | Maximum JSON bytes in one MCP tool result (default `32768`); large pages return `next_offset` |
 | `STASH_MCP_TOOL_TIMEOUT` | Maximum time for one MCP tool call (default `2m`) |
-| `STASH_AUTH_MODE` | `none`, `token`, `oauth`, or `stdio` |
+| `STASH_AUTH_MODE` | `none`, `token`, `oauth` (same as `token`; kept for existing deployments), or `stdio` |
+| `STASH_AUTH_ISSUER`, `STASH_AUTH_CLIENT_ID`, `STASH_AUTH_CLIENT_SECRET`, `STASH_AUTH_REDIRECT_URL` | The first SSO (OIDC) provider; imported into the `sso_providers` table at startup and managed in the console afterwards |
 | `STASH_AUTH_TRUSTED_NETWORK` | `true` lets `STASH_AUTH_MODE=none` bind beyond loopback on a network you trust (logs a warning) |
 | `STASH_AUTH_API_SECRET` | At least 32 random bytes used to sign Stash tokens and sessions |
 | `STASH_AUTH_TOKEN_TTL` | Default lifetime of tokens issued by `stash mcp token` (default `720h`; `--ttl 0` means no expiry) |
@@ -266,6 +267,14 @@ A user is a person; `stash user list` also shows how each one signs in
 issuer and subject and provisioned on first login. The login page shows the
 password form first; `/auth/login?provider=token` keeps the API-token form
 for a client that only has a token.
+
+SSO providers live in the database. Set `STASH_AUTH_ISSUER`,
+`STASH_AUTH_CLIENT_ID`, `STASH_AUTH_CLIENT_SECRET`, and
+`STASH_AUTH_REDIRECT_URL` once to register the first one; the server imports
+it at startup when `STASH_SECRETS_KEY` is set (the secret is sealed with it).
+Add, test, disable, or remove providers on the console's **Login & SSO** page
+or with `stash sso list|add|set|test|remove`. Register
+`https://<stash>/auth/callback` as the redirect URL at the identity provider.
 
 ### Embedding maintenance
 
