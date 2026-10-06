@@ -196,17 +196,20 @@ If tools fail, check `.env`:
 | Variable | Purpose |
 |----------|---------|
 | `STASH_OPENAI_API_KEY` | Embeddings + reasoner; optional for endpoints without authentication |
-| `STASH_OPENAI_BASE_URL` | API base URL |
+| `STASH_OPENAI_BASE_URL` | API base URL. Every `STASH_OPENAI_*` and model variable is optional: providers can instead be registered in **Model settings** (`/ui/llm`) or with `stash llm`, per feature, and `stash llm import-env` copies these variables into that registry |
+| `STASH_SECRETS_KEY` | 64 hex characters (`openssl rand -hex 32`) that seal API keys stored in the database; without it only key-less providers can be registered |
+| `STASH_SECRETS_KEY_PREVIOUS` | Comma-separated older secrets keys kept readable during a rotation |
+| `STASH_EMBEDDING_CACHE` | Cache computed vectors in PostgreSQL (default `true`) |
 | `STASH_OPENAI_REQUEST_TIMEOUT` | Maximum time for one provider request attempt (default `2m`) |
-| `STASH_EMBEDDING_MODEL` | Must match `STASH_VECTOR_DIM` (1536 for `text-embedding-3-small`) |
-| `STASH_VECTOR_DIM` | Output dimension of the embedding model; changing it on restart automatically queues a full reindex |
+| `STASH_EMBEDDING_MODEL` | Optional. Must match `STASH_VECTOR_DIM` (1536 for `text-embedding-3-small`); without any embedding provider Stash stores memories and searches them by keyword until one is assigned |
+| `STASH_VECTOR_DIM` | Output dimension of the embedding model; changing it (or the model, here or in Model settings) automatically queues a full reindex |
 | `STASH_EMBEDDING_RETRY_INTERVAL` | How often pending embeddings are retried (default `1m`) |
 | `STASH_EMBEDDING_RETRY_MAX_INTERVAL` | Maximum exponential backoff (default `1h`) |
 | `STASH_EMBEDDING_RETRY_BATCH_SIZE` | Maximum pending rows considered per pass (default `100`) |
 | `STASH_EMBEDDING_CONTEXT_TOKENS` | Embedding model input window; `0` uses adaptive splitting after a provider context error |
 | `STASH_ADMIN_SUBJECTS` | Comma-separated OIDC subjects allowed to open embedding maintenance |
 | `STASH_ADMIN_TOKEN` | Optional separate token for embedding maintenance (`X-Stash-Admin-Token`) |
-| `STASH_REASONER_MODEL` | Model used for consolidation and `validate_work_plan` |
+| `STASH_REASONER_MODEL` | Optional. Model used for consolidation, `validate_work_plan`, and `wiki_compile` unless Model settings assigns another provider per feature |
 | `STASH_REASONER_CONTEXT_TOKENS` | Full reasoning-model context window; `0` uses adaptive splitting after a provider context error |
 | `STASH_REASONER_RESERVED_TOKENS` | Tokens kept for instructions and the JSON answer (default `4096`) |
 | `STASH_CONSOLIDATE_NAMESPACES` | Non-root namespaces processed by Docker Compose background consolidation (default `/projects`) |

@@ -504,7 +504,18 @@
                         if (generation === this.loadGeneration) { this.wikiPage = null; this.startWikiEdit(null); }
                         return;
                     }
-                    const document = await this.fetchWikiPage(route.slug, route.revision);
+                    let document;
+                    try { document = await this.fetchWikiPage(route.slug, route.revision); }
+                    catch (error) {
+                        // A link to a page nobody wrote yet opens the editor for it
+                        // instead of a dead end; the broken link is the invitation.
+                        if (!/not found/i.test(error.message || '')) throw error;
+                        if (generation !== this.loadGeneration) return;
+                        this.wikiPage = null; this.startWikiEdit(null);
+                        this.wikiEdit.slug = route.slug;
+                        this.wikiEdit.title = route.slug.split('/').pop().replace(/[-_]+/g, ' ').replace(/^./, c => c.toUpperCase());
+                        return;
+                    }
                     if (generation !== this.loadGeneration) return;
                     this.wikiPage = document; this.wikiRendered = this.renderWikiMarkdown(document.content); this.wikiHistory = []; this.wikiHistoryOpen = false; this.wikiFocusedSource = '';
                     this.wikiEdit = route.edit && document.revision === document.page.revision ? this.editorFrom(document) : null;
