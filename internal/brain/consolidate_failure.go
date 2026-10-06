@@ -2,11 +2,12 @@ package brain
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/alash3al/stash/internal/embedder"
 	"github.com/alash3al/stash/internal/models"
-	"github.com/pgvector/pgvector-go"
 )
 
 func (b *Brain) consolidateFailurePatterns(ctx context.Context, nsID int64, cp *models.ConsolidationProgress) (repeats, patterns, llmCalls int, errs []string) {
@@ -61,7 +62,7 @@ func (b *Brain) consolidateFailurePatterns(ctx context.Context, nsID int64, cp *
 	var maxEpisodeID int64
 	for epRows.Next() {
 		var e models.Episode
-		if err := epRows.Scan(&e.ID, &e.NamespaceID, &e.Content, &e.Embedding, &e.EmbeddingModel, &e.OccurredAt, &e.CreatedAt); err != nil {
+		if err := epRows.Scan(&e.ID, &e.NamespaceID, &e.Content, nullVector{&e.Embedding}, &e.EmbeddingModel, &e.OccurredAt, &e.CreatedAt); err != nil {
 			errs = append(errs, fmt.Sprintf("scan episode for failures: %v", err))
 			continue
 		}
@@ -109,14 +110,16 @@ func (b *Brain) consolidateFailurePatterns(ctx context.Context, nsID int64, cp *
 				continue
 			}
 			vec, embErr := b.embedder.Embed(ctx, r.PatternFact)
-			if embErr != nil {
-				errs = append(errs, fmt.Sprintf("embed failure pattern fact: %v", embErr))
-				continue
+			if embErr != nil && !errors.Is(embErr, embedder.ErrUnavailable) {
+				errs = append(errs, fmt.Sprintf("embed failure pattern fact (queued for retry): %v", embErr))
 			}
+			write := b.embeddingWrite(vec, embErr)
 			_, err := b.pool.Exec(ctx,
-				`INSERT INTO facts (namespace_id, content, embedding, embedding_model, confidence, valid_from)
-				 VALUES ($1, $2, $3, $4, $5, $6)`,
-				nsID, r.PatternFact, pgvector.NewVector(vec), b.embedder.Model(), r.Confidence, time.Now().UTC(),
+				`INSERT INTO facts (namespace_id, content, embedding, embedding_model, confidence, valid_from,
+				                    embedding_attempts, embedding_last_error, embedding_retry_at, embedding_updated_at)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())`,
+				nsID, r.PatternFact, write.vector, write.model, r.Confidence, time.Now().UTC(),
+				write.attempts, write.lastError, write.retryAt,
 			)
 			if err != nil {
 				errs = append(errs, fmt.Sprintf("insert failure pattern fact: %v", err))

@@ -39,7 +39,9 @@ func rememberCmd(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	message := "Memory remembered successfully"
-	if !remembered.Indexed {
+	if remembered.EmbeddingUnavailable {
+		message = "Memory saved; no embedding provider is configured, so recall uses keyword search until one is assigned"
+	} else if !remembered.Indexed {
 		message = "Memory saved; indexing is pending and will retry automatically"
 	}
 	output := map[string]any{

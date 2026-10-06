@@ -205,7 +205,9 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 			return nil, err
 		}
 		message := "Memory remembered successfully"
-		if !remembered.Indexed {
+		if remembered.EmbeddingUnavailable {
+			message = "Memory saved; no embedding provider is configured, so recall uses keyword search until one is assigned in model settings"
+		} else if !remembered.Indexed {
 			message = "Memory saved; indexing is pending and will retry automatically"
 			recordEmbeddingQueued()
 			if bc.Logger != nil {

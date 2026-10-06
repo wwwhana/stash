@@ -2,7 +2,9 @@ package brain
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"github.com/alash3al/stash/internal/embedder"
 	"math/rand"
 	"strings"
 	"time"
@@ -39,20 +41,75 @@ type EmbeddingRetryResult struct {
 	Error string `json:"error,omitempty"`
 }
 
+// embeddingWrite carries the embedding columns for a new episode or fact.
+// A row is written whether or not a vector was obtained: a failed or
+// unavailable embedding is queued for the retry worker instead of blocking
+// the write, so memory never depends on the provider being up.
+type embeddingWrite struct {
+	vector    any
+	model     string
+	attempts  int
+	lastError any
+	retryAt   any
+}
+
+func (b *Brain) embeddingWrite(vec []float32, cause error) embeddingWrite {
+	w := embeddingWrite{model: b.embedder.Model()}
+	if cause == nil && vec != nil {
+		w.vector = pgvector.NewVector(vec)
+		return w
+	}
+	w.lastError = embeddingErrorText(cause)
+	now := time.Now().UTC()
+	if errors.Is(cause, embedder.ErrUnavailable) {
+		// Nothing was attempted. The row becomes due the moment a provider is
+		// assigned instead of waiting out a backoff.
+		w.retryAt = now
+		return w
+	}
+	interval := b.config.EmbeddingRetryInterval
+	if interval <= 0 {
+		interval = DefaultConfig().EmbeddingRetryInterval
+	}
+	w.attempts = 1
+	w.retryAt = now.Add(interval)
+	return w
+}
+
+// embeddingAvailable reports whether the embedder currently has a provider.
+// Embedders that cannot say are assumed available.
+func (b *Brain) embeddingAvailable() bool {
+	probe, ok := b.embedder.(interface{ Available() bool })
+	return !ok || probe.Available()
+}
+
+// nullVector scans a NULL embedding as an empty vector so rows that are still
+// waiting for indexing flow through the stages that do not need the vector.
+type nullVector struct{ vec *pgvector.Vector }
+
+func (n nullVector) Scan(src any) error {
+	if src == nil {
+		*n.vec = pgvector.Vector{}
+		return nil
+	}
+	return n.vec.Scan(src)
+}
+
 // EmbeddingMaintenanceStatus is the operator-facing state of the durable
 // embedding queue. It intentionally excludes memory content.
 type EmbeddingMaintenanceStatus struct {
-	Model           string `json:"model"`
-	Dimensions      int    `json:"dimensions"`
-	EpisodesTotal   int64  `json:"episodes_total"`
-	FactsTotal      int64  `json:"facts_total"`
-	EpisodesPending int64  `json:"episodes_pending"`
-	FactsPending    int64  `json:"facts_pending"`
-	Pending         int64  `json:"pending"`
-	Due             int64  `json:"due"`
-	Failed          int64  `json:"failed"`
-	Paused          int64  `json:"paused,omitempty"`
-	LatestError     string `json:"latest_error,omitempty"`
+	Model             string `json:"model"`
+	Dimensions        int    `json:"dimensions"`
+	ProviderAvailable bool   `json:"provider_available"`
+	EpisodesTotal     int64  `json:"episodes_total"`
+	FactsTotal        int64  `json:"facts_total"`
+	EpisodesPending   int64  `json:"episodes_pending"`
+	FactsPending      int64  `json:"facts_pending"`
+	Pending           int64  `json:"pending"`
+	Due               int64  `json:"due"`
+	Failed            int64  `json:"failed"`
+	Paused            int64  `json:"paused,omitempty"`
+	LatestError       string `json:"latest_error,omitempty"`
 }
 
 // EmbeddingRetryWake returns the notification channel used by the background
@@ -83,7 +140,7 @@ func (b *Brain) EmbeddingMaintenanceStatus(ctx context.Context) (EmbeddingMainte
 	if err := b.ensureEmbeddingMaintenanceReady(); err != nil {
 		return EmbeddingMaintenanceStatus{}, err
 	}
-	status := EmbeddingMaintenanceStatus{Model: b.embedder.Model(), Dimensions: b.embedder.Dims()}
+	status := EmbeddingMaintenanceStatus{Model: b.embedder.Model(), Dimensions: b.embedder.Dims(), ProviderAvailable: b.embeddingAvailable()}
 	for _, table := range []string{"episodes", "facts"} {
 		var total, pending, due, failed, paused int64
 		query := fmt.Sprintf(`
@@ -248,7 +305,7 @@ func (b *Brain) RetryPendingEmbeddings(ctx context.Context, batchSize int) (Embe
 	// Without a provider there is nothing to try. Leave the rows untouched so
 	// they are not counted as failed attempts or paused before a provider is
 	// assigned.
-	if probe, ok := b.embedder.(interface{ Available() bool }); ok && !probe.Available() {
+	if !b.embeddingAvailable() {
 		result.Pending, _ = b.PendingEmbeddingCount(ctx)
 		return result, nil
 	}

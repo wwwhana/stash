@@ -58,6 +58,11 @@ STASH_REASONER_MODEL=llama3
 STASH_VECTOR_DIM=384
 ```
 
+Every model setting is optional. Without an embedding provider Stash still
+stores memories and finds them with trigram keyword search; vectors are
+computed later, once a provider is assigned. Without a reasoning provider,
+consolidation and plan validation report that no provider is available.
+
 ### Provider registry (per-feature routing)
 
 The console's **Model settings** page (`/ui/llm`), the `/admin/llm/*` API, and

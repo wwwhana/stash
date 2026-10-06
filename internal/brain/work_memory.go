@@ -8,6 +8,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/alash3al/stash/internal/embedder"
 	"github.com/alash3al/stash/internal/models"
 	"github.com/jackc/pgx/v5"
 	"github.com/pgvector/pgvector-go"
@@ -217,9 +218,6 @@ func (b *Brain) RememberForWork(ctx context.Context, workItemID int64, content, 
 		return nil, fmt.Errorf("commit work memory receipt read: %w", err)
 	}
 
-	if b.embedder == nil {
-		return nil, fmt.Errorf("brain: embedder is required for work memory")
-	}
 	occurredAt := time.Now().UTC()
 	vector, embedErr := b.embedder.Embed(ctx, content)
 	persistCtx := ctx
@@ -283,23 +281,22 @@ func (b *Brain) RememberForWork(ctx context.Context, workItemID int64, content, 
 		}
 	}
 	if embedErr != nil {
-		retryDelay := b.config.EmbeddingRetryInterval
-		if retryDelay <= 0 {
-			retryDelay = DefaultConfig().EmbeddingRetryInterval
-		}
-		retryAt := time.Now().UTC().Add(retryDelay)
+		write := b.embeddingWrite(nil, embedErr)
 		if err := tx.QueryRow(persistCtx,
 			`INSERT INTO episodes (
 			    namespace_id, content, embedding, embedding_model, occurred_at,
 			    embedding_attempts, embedding_last_error, embedding_retry_at, embedding_updated_at
-			 ) VALUES ($1, $2, NULL, $3, $4, 1, $5, $6, now()) RETURNING id`,
-			namespaceID, content, b.embedder.Model(), occurredAt, embeddingErrorText(embedErr), retryAt,
+			 ) VALUES ($1, $2, NULL, $3, $4, $5, $6, $7, now()) RETURNING id`,
+			namespaceID, content, write.model, occurredAt, write.attempts, write.lastError, write.retryAt,
 		).Scan(&remembered.ID); err != nil {
 			return nil, fmt.Errorf("insert pending work memory: %w", err)
 		}
 		remembered.Indexed = false
 		remembered.IndexingStatus = "pending"
-		remembered.RetryAt = &retryAt
+		if retryAt, ok := write.retryAt.(time.Time); ok {
+			remembered.RetryAt = &retryAt
+		}
+		remembered.EmbeddingUnavailable = errors.Is(embedErr, embedder.ErrUnavailable)
 	}
 
 	link := models.WorkItemMemoryLink{

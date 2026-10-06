@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/alash3al/stash/internal/embedder"
 	"github.com/pgvector/pgvector-go"
 )
 
@@ -29,6 +30,11 @@ type ReindexResult struct {
 // the background retry worker instead of leaving an old-model vector in place.
 func (b *Brain) Reindex(ctx context.Context, dryRun bool, progress func(table string, done, total int)) (ReindexResult, error) {
 	var res ReindexResult
+	if !dryRun && !b.embeddingAvailable() {
+		// Clearing vectors without a provider to recompute them would only
+		// take recall offline until one is assigned.
+		return res, fmt.Errorf("reindex: %w", embedder.ErrUnavailable)
+	}
 	if !dryRun {
 		// The brain receives the cached embedder. Drop disposable entries before
 		// recomputing so a same-model reindex cannot silently reuse an old vector

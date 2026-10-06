@@ -2,9 +2,11 @@ package brain
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/alash3al/stash/internal/embedder"
 	"github.com/alash3al/stash/internal/models"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -26,6 +28,9 @@ type RememberResult struct {
 	Indexed        bool       `json:"indexed"`
 	IndexingStatus string     `json:"indexing_status"`
 	RetryAt        *time.Time `json:"retry_at,omitempty"`
+	// EmbeddingUnavailable marks a memory saved while no embedding provider
+	// is configured. It is searchable by keyword and indexed once one exists.
+	EmbeddingUnavailable bool `json:"embedding_unavailable,omitempty"`
 }
 
 // RememberWithStatus preserves the raw memory even when the embedding endpoint
@@ -127,18 +132,21 @@ func (b *Brain) insertPendingEpisode(_ context.Context, namespaceID int64, conte
 	// insert its own short database deadline.
 	persistCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	retryAt := time.Now().UTC().Add(b.config.EmbeddingRetryInterval)
+	write := b.embeddingWrite(nil, cause)
 	err := b.pool.QueryRow(persistCtx,
 		`INSERT INTO episodes (
 			namespace_id, content, embedding, embedding_model, occurred_at,
 			embedding_attempts, embedding_last_error, embedding_retry_at, embedding_updated_at
-		 ) VALUES ($1, $2, NULL, $3, $4, 1, $5, $6, now()) RETURNING id`,
-		namespaceID, content, b.embedder.Model(), occurred, embeddingErrorText(cause), retryAt,
+		 ) VALUES ($1, $2, NULL, $3, $4, $5, $6, $7, now()) RETURNING id`,
+		namespaceID, content, write.model, occurred, write.attempts, write.lastError, write.retryAt,
 	).Scan(&result.ID)
 	if err != nil {
 		return RememberResult{}, fmt.Errorf("insert pending episode: %w", err)
 	}
-	result.RetryAt = &retryAt
+	if retryAt, ok := write.retryAt.(time.Time); ok {
+		result.RetryAt = &retryAt
+	}
+	result.EmbeddingUnavailable = errors.Is(cause, embedder.ErrUnavailable)
 	return result, nil
 }
 
@@ -209,31 +217,38 @@ func (b *Brain) ForgetEpisodeMatch(
 		return res, err
 	}
 
-	vec, err := b.embedder.EmbedQuery(ctx, query)
-	if err != nil {
-		return res, fmt.Errorf("embed: %w", err)
-	}
-	pgVec := pgvector.NewVector(vec)
-
-	const selectOne = `SELECT id, content, 1 - (embedding <=> $2) AS score
-	                   FROM episodes
-	                   WHERE %s AND deleted_at IS NULL AND embedding IS NOT NULL
-	                   ORDER BY embedding <=> $2 LIMIT 1`
-
-	if len(nsIDs) == 1 {
-		err = b.pool.QueryRow(ctx,
-			fmt.Sprintf(selectOne, "namespace_id = $1"), nsIDs[0], pgVec,
-		).Scan(&res.ID, &res.Content, &res.Score)
-	} else {
-		err = b.pool.QueryRow(ctx,
-			fmt.Sprintf(selectOne, "namespace_id = ANY($1)"), nsIDs, pgVec,
-		).Scan(&res.ID, &res.Content, &res.Score)
-	}
-	if err != nil {
-		if err == pgx.ErrNoRows {
-			return res, ErrEpisodeNotFound
+	vec, embedErr := b.embedder.EmbedQuery(ctx, query)
+	if embedErr != nil {
+		// Same policy as recall: a provider outage or a server without an
+		// embedding provider must not make stored memories unreachable.
+		match, err := b.keywordEpisodeMatch(ctx, nsIDs, query)
+		if err != nil {
+			return res, fmt.Errorf("embed query failed: %s; trigram fallback failed: %w", embeddingErrorText(embedErr), err)
 		}
-		return res, fmt.Errorf("find episode to forget: %w", err)
+		res.ID, res.Content, res.Score = match.ID, match.Content, match.Score
+	} else {
+		pgVec := pgvector.NewVector(vec)
+
+		const selectOne = `SELECT id, content, 1 - (embedding <=> $2) AS score
+		                   FROM episodes
+		                   WHERE %s AND deleted_at IS NULL AND embedding IS NOT NULL
+		                   ORDER BY embedding <=> $2 LIMIT 1`
+
+		if len(nsIDs) == 1 {
+			err = b.pool.QueryRow(ctx,
+				fmt.Sprintf(selectOne, "namespace_id = $1"), nsIDs[0], pgVec,
+			).Scan(&res.ID, &res.Content, &res.Score)
+		} else {
+			err = b.pool.QueryRow(ctx,
+				fmt.Sprintf(selectOne, "namespace_id = ANY($1)"), nsIDs, pgVec,
+			).Scan(&res.ID, &res.Content, &res.Score)
+		}
+		if err != nil {
+			if err == pgx.ErrNoRows {
+				return res, ErrEpisodeNotFound
+			}
+			return res, fmt.Errorf("find episode to forget: %w", err)
+		}
 	}
 
 	if opts.MinScore > 0 && res.Score < opts.MinScore {
@@ -324,4 +339,23 @@ func (b *Brain) GetEpisode(ctx context.Context, episodeID int64) (*models.Episod
 		e.Embedding = *embedding
 	}
 	return &e, nil
+}
+
+// keywordEpisodeMatch finds the single best trigram match for a forget query.
+func (b *Brain) keywordEpisodeMatch(ctx context.Context, nsIDs []int64, query string) (RecallResult, error) {
+	var match RecallResult
+	sql, args, err := b.queries.KeywordEpisodes(nsIDs, query, 1)
+	if err != nil {
+		return match, fmt.Errorf("build trigram query: %w", err)
+	}
+	var occurredAt, createdAt time.Time
+	err = b.pool.QueryRow(ctx, sql, args...).Scan(&match.ID, &match.NamespaceID, &match.Content, &occurredAt, &createdAt, &match.Score)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return match, ErrEpisodeNotFound
+		}
+		return match, fmt.Errorf("find episode by keyword: %w", err)
+	}
+	match.Type = "episode"
+	return match, nil
 }

@@ -15,14 +15,17 @@ import (
 type Config struct {
 	// Store (PostgreSQL only)
 	StoreDSN      string `env:"STASH_POSTGRES_DSN,required"`
-	VectorDim     int    `env:"STASH_VECTOR_DIM,required"`
+	VectorDim     int    `env:"STASH_VECTOR_DIM" envDefault:"0"`
 	MaxResultSize int    `env:"STASH_MAX_RESULT_SIZE,required"`
 
-	// OpenAI (embeddings + reasoning)
+	// OpenAI-compatible environment provider. All of these are optional: a
+	// deployment can register providers in the database instead, and a
+	// server without any embedding provider still stores memories and
+	// searches them with trigram matching.
 	OpenAIAPIKey              string        `env:"STASH_OPENAI_API_KEY" envDefault:""`
-	OpenAIBaseURL             string        `env:"STASH_OPENAI_BASE_URL,required"`
-	EmbeddingModel            string        `env:"STASH_EMBEDDING_MODEL,required"`
-	ReasonerModel             string        `env:"STASH_REASONER_MODEL,required"`
+	OpenAIBaseURL             string        `env:"STASH_OPENAI_BASE_URL" envDefault:""`
+	EmbeddingModel            string        `env:"STASH_EMBEDDING_MODEL" envDefault:""`
+	ReasonerModel             string        `env:"STASH_REASONER_MODEL" envDefault:""`
 	EmbeddingRetryInterval    time.Duration `env:"STASH_EMBEDDING_RETRY_INTERVAL" envDefault:"1m"`
 	EmbeddingRetryMaxInterval time.Duration `env:"STASH_EMBEDDING_RETRY_MAX_INTERVAL" envDefault:"1h"`
 	EmbeddingRetryBatchSize   int           `env:"STASH_EMBEDDING_RETRY_BATCH_SIZE" envDefault:"100"`
@@ -182,8 +185,14 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("STASH_AUTH_OAUTH_COOKIE_SECURE must be true or false")
 		}
 	}
-	if c.VectorDim <= 0 {
-		return fmt.Errorf("STASH_VECTOR_DIM must be greater than zero")
+	if c.VectorDim < 0 || c.VectorDim > 2000 {
+		return fmt.Errorf("STASH_VECTOR_DIM must be between 0 and 2000")
+	}
+	if strings.TrimSpace(c.OpenAIBaseURL) == "" && (strings.TrimSpace(c.EmbeddingModel) != "" || strings.TrimSpace(c.ReasonerModel) != "") {
+		return fmt.Errorf("STASH_OPENAI_BASE_URL is required when STASH_EMBEDDING_MODEL or STASH_REASONER_MODEL is set")
+	}
+	if strings.TrimSpace(c.EmbeddingModel) != "" && c.VectorDim <= 0 {
+		return fmt.Errorf("STASH_VECTOR_DIM must be greater than zero when STASH_EMBEDDING_MODEL is set")
 	}
 	if strings.TrimSpace(c.SecretsKey) != "" {
 		if _, err := secrets.ParseKey(c.SecretsKey); err != nil {
