@@ -29,6 +29,7 @@ var uiPageFiles = map[string]string{
 	"/ui/hypotheses":     "vue-console.html",
 	"/ui/goals":          "vue-console.html",
 	"/ui/agent-guide":    "vue-console.html",
+	"/ui/llm":            "vue-console.html",
 	"/ui/maintenance":    "vue-console.html",
 	"/ui/tokens":         "vue-console.html",
 }

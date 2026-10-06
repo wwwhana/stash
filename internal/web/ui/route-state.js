@@ -18,6 +18,7 @@
         list_hypotheses: '/ui/hypotheses',
         list_goals: '/ui/goals',
         agent: '/ui/agent-guide',
+        llm: '/ui/llm',
         maintenance: '/ui/maintenance',
         tokens: '/ui/tokens'
     });
@@ -34,6 +35,7 @@
         list_hypotheses: 'nav.hypotheses',
         list_goals: 'nav.goals',
         agent: 'nav.agent',
+        llm: 'nav.llm',
         maintenance: 'nav.maintenance',
         tokens: 'nav.tokens'
     });
@@ -165,7 +167,7 @@
             setText(params, 'focus', value.focus);
             if (value.detail) params.set('detail', '1');
         }
-        if (['agent', 'maintenance', 'tokens'].includes(selected)) setNamespace(params, value.namespace || value.project);
+        if (['agent', 'llm', 'maintenance', 'tokens'].includes(selected)) setNamespace(params, value.namespace || value.project);
         if (['goal-map', 'monitor', 'graph', 'board'].includes(selected)) {
             const issueID = positiveInteger(value.issueID);
             if (issueID) params.set('issue', String(issueID));

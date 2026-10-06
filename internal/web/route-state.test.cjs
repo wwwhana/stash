@@ -7,7 +7,7 @@ test('every workspace page has a stable address', () => {
         'goal-map': '/ui/goal-map', plan: '/ui/plan', monitor: '/ui/monitor', board: '/ui/issues', graph: '/ui/work-graph',
         worktrees: '/ui/git', list_namespaces: '/ui/namespaces', list_memories: '/ui/memories', query_facts: '/ui/facts',
         list_hypotheses: '/ui/hypotheses', list_goals: '/ui/goals', agent: '/ui/agent-guide',
-        maintenance: '/ui/maintenance', tokens: '/ui/tokens'
+        llm: '/ui/llm', maintenance: '/ui/maintenance', tokens: '/ui/tokens'
     });
     assert.equal(routeTitle('plan'), '작업 계획');
     assert.equal(routeTitle('monitor'), '작업 현황');

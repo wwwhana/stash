@@ -116,6 +116,7 @@
                     gitFormOpen: false, gitSaving: false, gitError: '', gitForm: { repository: '', worktree_path: '', branch: '' },
                     detailLoading: false, detailError: '', detailGeneration: 0,
                     maintenance: null, maintenanceAction: false, maintenanceNotice: '',
+                    llm: null, llmBusy: false, llmNotice: '', llmError: '', llmProviderForm: null, llmProbe: {}, llmAssignmentForms: {},
                     copyStatus: 'action.copyGuide',
                     mapLoaded: false,
                     fitMap: true,
@@ -280,7 +281,7 @@
                     return fields.filter(field => text(field.value));
                 },
                 agentGuide() { return this.t('agent.guide'); },
-                staticTitle() { return this.route.route === 'agent' ? this.t('nav.agent') : this.route.route === 'maintenance' ? this.t('nav.maintenance') : this.t('empty.pageTitle'); },
+                staticTitle() { return this.route.route === 'agent' ? this.t('nav.agent') : this.route.route === 'maintenance' ? this.t('nav.maintenance') : this.route.route === 'llm' ? this.t('nav.llm') : this.t('empty.pageTitle'); },
                 staticText() { return this.t('empty.pageText'); }
             },
             mounted() {
@@ -399,6 +400,75 @@
                         }
                     } catch (error) { if (current()) this.detailError = i18n.errorMessage(error, 'error.original'); }
                     finally { if (current()) this.detailLoading = false; }
+                },
+                // Model settings page. Forms are rebuilt from the server document after
+                // every change, so the page always shows the stored state.
+                applyLLM(status) {
+                    const forms = {};
+                    for (const info of status.features || []) {
+                        const assignment = (status.assignments || []).find(item => item.feature === info.feature);
+                        const route = (status.routes || []).find(item => item.feature === info.feature) || {};
+                        forms[info.feature] = assignment
+                            ? { provider_id: String(assignment.provider_id), model: assignment.model, dimensions: assignment.dimensions || '', context_tokens: assignment.context_tokens || 0, reserved_tokens: assignment.reserved_tokens || 0 }
+                            : { provider_id: '', model: route.model || '', dimensions: route.dimensions || '', context_tokens: route.context_tokens || 0, reserved_tokens: route.reserved_tokens || 0 };
+                    }
+                    this.llm = status; this.llmAssignmentForms = forms;
+                },
+                llmRoute(feature) { return ((this.llm && this.llm.routes) || []).find(item => item.feature === feature) || null; },
+                llmRouteSource(feature) { const route = this.llmRoute(feature); return route && route.source ? route.source : 'none'; },
+                llmModelOptions(feature) { const form = this.llmAssignmentForms[feature]; const probe = form && this.llmProbe[form.provider_id]; return probe && probe.models ? probe.models : []; },
+                llmProbeText(probe) { return probe.ok ? this.t('llm.probeOk', { count: (probe.models || []).length, ms: number(probe.latency_ms) }) : this.t('llm.probeFailed', { message: probe.error || '' }); },
+                async llmRequest(path, options, notice) {
+                    this.llmBusy = true; this.llmError = ''; this.llmNotice = '';
+                    try {
+                        const result = await api.adminRequest(path, options);
+                        if (notice) this.llmNotice = notice;
+                        return result;
+                    } catch (error) {
+                        this.llmError = [401, 403].includes(error.status) ? 'error.admin' : { key: 'llm.failed', params: { message: error.message } };
+                        return null;
+                    } finally { this.llmBusy = false; }
+                },
+                async reloadLLM() { const status = await this.llmRequest('/admin/llm/status', {}); if (status) this.applyLLM(status); },
+                openProviderForm(provider) {
+                    this.llmProbe = { ...this.llmProbe, form: undefined };
+                    this.llmProviderForm = provider
+                        ? { id: provider.id, name: provider.name, base_url: provider.base_url, api_key: '', keep_key: provider.has_api_key, clear_key: false, request_timeout_seconds: provider.request_timeout_seconds, enabled: provider.enabled }
+                        : { id: 0, name: '', base_url: '', api_key: '', keep_key: false, clear_key: false, request_timeout_seconds: 120, enabled: true };
+                },
+                llmJSON(method, body) { return { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }; },
+                async saveProvider() {
+                    const form = this.llmProviderForm; if (!form) return;
+                    const body = { name: text(form.name), base_url: text(form.base_url), request_timeout_seconds: number(form.request_timeout_seconds) || 120, enabled: !!form.enabled };
+                    if (text(form.api_key)) body.api_key = text(form.api_key); else if (form.id && form.clear_key) body.api_key = '';
+                    const result = await this.llmRequest(form.id ? '/admin/llm/providers/' + form.id : '/admin/llm/providers', this.llmJSON(form.id ? 'PUT' : 'POST', body), 'llm.providerSaved');
+                    if (result) { this.llmProviderForm = null; await this.reloadLLM(); }
+                },
+                async deleteProvider(provider) {
+                    if (!window.confirm(this.t('llm.deleteConfirm', { name: provider.name }))) return;
+                    if (await this.llmRequest('/admin/llm/providers/' + provider.id, { method: 'DELETE' }, 'llm.providerDeleted')) await this.reloadLLM();
+                },
+                async probeProvider(provider) {
+                    const body = {};
+                    if (provider.id) body.provider_id = provider.id;
+                    if (text(provider.base_url) && (!provider.id || text(provider.api_key) || provider.clear_key)) body.base_url = text(provider.base_url);
+                    if (text(provider.api_key)) body.api_key = text(provider.api_key); else if (provider.clear_key) body.api_key = '';
+                    const result = await this.llmRequest('/admin/llm/probe', this.llmJSON('POST', body), '');
+                    // The edit form carries keep_key; a stored row does not.
+                    if (result) this.llmProbe = { ...this.llmProbe, [provider.keep_key === undefined ? String(provider.id) : 'form']: result };
+                },
+                async saveAssignment(feature) {
+                    const form = this.llmAssignmentForms[feature]; if (!form) return;
+                    if (!form.provider_id) { await this.clearAssignment(feature); return; }
+                    const body = { provider_id: number(form.provider_id), model: text(form.model), dimensions: number(form.dimensions) || 0, context_tokens: number(form.context_tokens) || 0, reserved_tokens: number(form.reserved_tokens) || 0 };
+                    if (await this.llmRequest('/admin/llm/assignments/' + feature, this.llmJSON('PUT', body), 'llm.assignmentSaved')) await this.reloadLLM();
+                },
+                async clearAssignment(feature) {
+                    if (await this.llmRequest('/admin/llm/assignments/' + feature, { method: 'DELETE' }, 'llm.assignmentCleared')) await this.reloadLLM();
+                },
+                async importEnvironment() {
+                    if (!window.confirm(this.t('llm.importConfirm'))) return;
+                    if (await this.llmRequest('/admin/llm/import-environment', { method: 'POST' }, 'llm.imported')) await this.reloadLLM();
                 },
                 async runMaintenance(action) {
                     if (this.maintenanceAction || !this.maintenance || !['retry', 'reindex'].includes(action)) return;
@@ -612,6 +682,9 @@
                         if (route.route === 'maintenance') {
                             const maintenance = await api.adminRequest('/admin/maintenance/embeddings');
                             if (generation === this.loadGeneration) this.maintenance = maintenance;
+                        } else if (route.route === 'llm') {
+                            const status = await api.adminRequest('/admin/llm/status');
+                            if (generation === this.loadGeneration) { this.llmProviderForm = null; this.llmError = ''; this.llmNotice = ''; this.applyLLM(status); }
                         } else if (route.route === 'tokens') {
                             await this.loadAuthTokens();
                         } else if (route.route === 'graph') {
@@ -652,7 +725,7 @@
                         document.title = this.pageTitle + ' · Stash';
                     } catch (error) {
                         if (generation === this.loadGeneration && background) this.refreshError = 'refresh.failed';
-                        else if (generation === this.loadGeneration) this.error = route.route === 'maintenance' && [401, 403, 503].includes(error.status) ? (error.status === 503 ? 'error.adminUnavailable' : 'error.admin') : i18n.errorMessage(error, 'error.page');
+                        else if (generation === this.loadGeneration) this.error = ['maintenance', 'llm'].includes(route.route) && [401, 403, 503].includes(error.status) ? (error.status === 503 ? 'error.adminUnavailable' : 'error.admin') : i18n.errorMessage(error, 'error.page');
                     } finally { if (generation === this.loadGeneration) { this.loading = false; this.refreshing = false; } }
                 },
                 listItemKey(item) { return mapItemKey(this.listKind, item); },

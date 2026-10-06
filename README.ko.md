@@ -28,26 +28,24 @@ docker compose up
 
 **완전한 로컬 환경 (클라우드 API 없음):** [Ollama setup guide](docs/LOCAL_OLLAMA.md) — Ollama와 Docker Compose를 사용하여 프라이빗 임베딩 및 추론 모델을 로컬에서 호스팅하는 방법입니다.
 
-## LLM 제공자 설정 (OpenAI 기본 및 로컬 예제)
+## 모델 제공자 설정
 
-Stash는 벡터화(Vectorization)와 추론(Reasoning)을 위해 외부 LLM에 의존합니다. OpenAI 같은 표준 클라우드 제공자나 Ollama 같은 로컬 서버를 모두 사용할 수 있습니다.
+Stash는 임베딩과 추론에 OpenAI 호환 엔드포인트를 사용합니다. 환경 변수로 제공자
+하나를 지정할 수도 있고, 데이터베이스에 여러 제공자를 등록한 뒤 기능별로 어떤
+제공자와 모델을 쓸지 정할 수도 있습니다.
 
-### 기본 설정 (OpenAI)
-
-`.env` 파일을 다음과 같이 설정하세요:
+### 환경 변수 (빠른 시작)
 
 ```bash
+STASH_OPENAI_BASE_URL=https://api.openai.com/v1
 STASH_OPENAI_API_KEY=sk-your-openai-api-key
 STASH_EMBEDDING_MODEL=text-embedding-3-small
 STASH_REASONER_MODEL=gpt-4o-mini
 STASH_VECTOR_DIM=1536
 ```
 
-### 로컬/커스텀 LLM (Ollama, LM Studio)
-
-로컬 서버나 커스텀 OpenAI 호환 서버를 사용하려면 Base URL을 변경하세요.
-해당 서버가 인증을 요구하지 않으면 API 키를 비워도 됩니다.
-**튜닝 팁:** `multilingual-e5-small`과 같은 비대칭 모델을 사용할 경우, 모델의 출력 차원에 맞게 `STASH_VECTOR_DIM`을 반드시 일치시켜야 합니다 (예: `384`).
+Ollama, LM Studio 같은 로컬 서버는 base URL만 바꾸고 키는 비워 둡니다.
+`STASH_VECTOR_DIM`은 임베딩 모델의 출력 차원과 맞춰야 합니다(예: `multilingual-e5-small`은 `384`).
 
 ```bash
 STASH_OPENAI_BASE_URL=http://host.docker.internal:11434/v1
@@ -57,7 +55,34 @@ STASH_REASONER_MODEL=llama3
 STASH_VECTOR_DIM=384
 ```
 
-전체 설정 체크리스트는 [Getting Started](docs/GETTING_STARTED.md)를 참고하세요.
+### 제공자 레지스트리 (기능별 라우팅)
+
+콘솔의 **모델 설정** 화면(`/ui/llm`), `/admin/llm/*` API, `stash llm` 명령으로
+PostgreSQL에 저장된 제공자를 관리합니다. 기능(`embedding`, `consolidation`,
+`plan_validation`, `wiki`)마다 제공자와 모델을 따로 지정할 수 있고, 지정하지 않은
+기능은 `STASH_OPENAI_*` 환경 변수를 계속 사용합니다. 변경은 재시작 없이 바로
+적용되며, 임베딩 모델이나 차원이 바뀌면 시작 시 환경 변수가 바뀐 경우와 똑같이
+벡터 컬럼을 조정하고 백그라운드 재색인을 예약합니다.
+
+저장되는 API 키는 `STASH_SECRETS_KEY`(`openssl rand -hex 32`)로 AES-256-GCM
+봉인됩니다. 이 키가 없으면 키가 필요 없는 제공자만 등록할 수 있습니다.
+`STASH_SECRETS_KEY_PREVIOUS`에 이전 키를 두면 키 교체 중에도 기존 값을 읽습니다.
+
+```bash
+stash llm provider add openai --base-url https://api.openai.com/v1 --api-key-env OPENAI_API_KEY
+stash llm provider probe openai                # 엔드포인트가 제공하는 모델 목록
+stash llm assign embedding --provider openai --model text-embedding-3-small --dimensions 1536
+stash llm assign plan_validation --provider openai --model gpt-4o
+stash llm import-env                           # STASH_OPENAI_* 설정을 레지스트리로 복사
+stash llm status
+```
+
+관리 엔드포인트는 `X-Stash-Admin-Token`(`STASH_ADMIN_TOKEN`) 또는
+`STASH_ADMIN_SUBJECTS`에 등록된 로그인 주체가 필요합니다. 루프백에서만 듣는
+`STASH_AUTH_MODE=none`에서는 서버의 다른 부분과 같이 열려 있습니다.
+계산된 벡터를 PostgreSQL에 캐시하지 않으려면 `STASH_EMBEDDING_CACHE=false`로 둡니다.
+
+자세한 설정 점검 목록은 [시작 가이드](docs/GETTING_STARTED.md)를 참고하세요.
 
 ## MCP 클라이언트 설정
 

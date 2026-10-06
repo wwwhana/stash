@@ -30,26 +30,25 @@ That's it. Postgres + pgvector, migrations, MCP/metrics servers, and background 
 
 **Fully local (no cloud API):** [Ollama setup guide](docs/LOCAL_OLLAMA.md) — host Ollama + Docker Compose, private embeddings and reasoner.
 
-## LLM Provider Setup (OpenAI Default &amp; Local Example)
+## Model Providers
 
-Stash relies on an external LLM provider for vectorization and reasoning. You can use standard cloud providers (like OpenAI) or a local setup (like Ollama).
+Stash calls an OpenAI-compatible endpoint for embeddings and reasoning. You can
+configure one provider through the environment, or register several in the
+database and decide per feature which provider and model to use.
 
-### Default (OpenAI)
-
-Set your `.env` like this:
+### Environment (quick start)
 
 ```bash
+STASH_OPENAI_BASE_URL=https://api.openai.com/v1
 STASH_OPENAI_API_KEY=sk-your-openai-api-key
 STASH_EMBEDDING_MODEL=text-embedding-3-small
 STASH_REASONER_MODEL=gpt-4o-mini
 STASH_VECTOR_DIM=1536
 ```
 
-### Local/Custom LLMs (Ollama, LM Studio)
-
-To point Stash to a local or custom OpenAI-compatible server, specify the base URL.
-The API key may be left empty when that endpoint does not require authentication.
-**Important Tuning Note:** If you are using `multilingual-e5-small` or similar models, make sure you match the `STASH_VECTOR_DIM` to the model's output dimensions (e.g., `384`).
+For a local server such as Ollama or LM Studio, point the base URL at it and
+leave the key empty. Match `STASH_VECTOR_DIM` to the embedding model's output
+size (for example `384` for `multilingual-e5-small`):
 
 ```bash
 STASH_OPENAI_BASE_URL=http://host.docker.internal:11434/v1
@@ -58,6 +57,35 @@ STASH_EMBEDDING_MODEL=multilingual-e5-small
 STASH_REASONER_MODEL=llama3
 STASH_VECTOR_DIM=384
 ```
+
+### Provider registry (per-feature routing)
+
+The console's **Model settings** page (`/ui/llm`), the `/admin/llm/*` API, and
+the `stash llm` command manage providers stored in PostgreSQL. Each feature
+(`embedding`, `consolidation`, `plan_validation`, `wiki`) can be assigned its own
+provider and model; a feature without an assignment keeps using the
+`STASH_OPENAI_*` environment. Changes apply immediately without a restart, and
+changing the embedding model or dimension resizes the vector columns and queues
+a background reindex exactly as an environment change does at startup.
+
+Stored API keys are sealed with AES-256-GCM under `STASH_SECRETS_KEY`
+(`openssl rand -hex 32`). Without that key, only key-less providers can be
+registered. `STASH_SECRETS_KEY_PREVIOUS` keeps older keys readable during a
+rotation.
+
+```bash
+stash llm provider add openai --base-url https://api.openai.com/v1 --api-key-env OPENAI_API_KEY
+stash llm provider probe openai                # lists the models the endpoint exposes
+stash llm assign embedding --provider openai --model text-embedding-3-small --dimensions 1536
+stash llm assign plan_validation --provider openai --model gpt-4o
+stash llm import-env                           # copy STASH_OPENAI_* into the registry
+stash llm status
+```
+
+The admin endpoints require `X-Stash-Admin-Token` (`STASH_ADMIN_TOKEN`) or a
+logged-in subject listed in `STASH_ADMIN_SUBJECTS`. Under `STASH_AUTH_MODE=none`,
+which only listens on loopback, they are open like the rest of the server.
+Set `STASH_EMBEDDING_CACHE=false` to stop caching computed vectors in PostgreSQL.
 
 See [Getting Started](docs/GETTING_STARTED.md) for a fuller configuration checklist.
 

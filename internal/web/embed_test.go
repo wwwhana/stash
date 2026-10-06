@@ -9,7 +9,7 @@ import (
 
 func TestUIPageRoutesServeTheWorkspace(t *testing.T) {
 	handler := GetUIHandler()
-	for _, path := range []string{"/", "/ui/goal-map", "/ui/plan?project=%2Fprojects%2Fdemo", "/ui/monitor-alpine?project=%2Fprojects%2Fdemo&status=doing", "/ui/work-graph?status=doing", "/ui/tokens"} {
+	for _, path := range []string{"/", "/ui/goal-map", "/ui/plan?project=%2Fprojects%2Fdemo", "/ui/monitor-alpine?project=%2Fprojects%2Fdemo&status=doing", "/ui/work-graph?status=doing", "/ui/tokens", "/ui/llm"} {
 		t.Run(path, func(t *testing.T) {
 			response := httptest.NewRecorder()
 			handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
