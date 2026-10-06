@@ -1,9 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const { performance } = require('node:perf_hooks');
 const { buildWorkGraphLayout } = require('./ui/work-graph-layout.js');
-const { createWorkGraphViewModel } = require('./ui/work-graph-view-model.js');
 
 function node(id, status = 'ready', position = 0) {
     return { id, issue_key: id, title: `Task ${id}`, status, position };
@@ -15,13 +13,6 @@ function edge(id, from, to, edgeType = 'blocks') {
 
 function placed(layout, id) {
     return layout.nodes.find(item => item.item.id === id);
-}
-
-function workGraphViewModel() {
-    return {
-        ...createWorkGraphViewModel(), loading: false, view: 'graph',
-        syncRoute() {}, statusLabel(value) { return value; }, $nextTick() {}
-    };
 }
 
 test('fork and join use the longest predecessor depth', () => {
@@ -261,39 +252,6 @@ test('hiding blocking links keeps dependency placement', () => {
     }
 });
 
-test('focused work highlights every blocking predecessor and successor path', () => {
-    const viewModel = workGraphViewModel();
-    viewModel.setWorkGraph({
-        nodes: ['A', 'B', 'C', 'D'].map(id => node(id)),
-        edges: [edge(1, 'A', 'B'), edge(2, 'B', 'C'), edge(3, 'C', 'D')],
-        worktrees: []
-    });
-    viewModel.focusGraphNode('C', false);
-
-    const byKey = key => viewModel.workGraphLayout.edges.find(item => item.key === key);
-    assert.equal(viewModel.graphEdgeClasses(byKey('work-edge-1'))['is-upstream'], true);
-    assert.equal(viewModel.graphEdgeClasses(byKey('work-edge-2'))['is-upstream'], true);
-    assert.equal(viewModel.graphEdgeClasses(byKey('work-edge-3'))['is-downstream'], true);
-    for (const id of ['A', 'B', 'C', 'D']) {
-        assert.equal(viewModel.graphNodeClasses(placed(viewModel.workGraphLayout, id))['is-path'], true);
-    }
-});
-
-test('one SVG layer contains every generated relation path', () => {
-    const viewModel = workGraphViewModel();
-    viewModel.setWorkGraph({
-        nodes: [node('P'), { ...node('C'), parent_id: 'P' }, node('N')],
-        edges: [edge(1, 'N', 'C')],
-        worktrees: []
-    });
-
-    const markup = viewModel.graphEdgesMarkup();
-    assert.equal((markup.match(/<path\b/g) || []).length, viewModel.workGraphLayout.edges.length);
-    assert.match(markup, /d="M [^"]+"/);
-    assert.match(markup, /url\(#stash-work-graph-arrow-blocks\)/);
-    assert.match(markup, /url\(#stash-work-graph-arrow-part-of\)/);
-});
-
 test('relation filters hide only selected links and keep parent-child navigation data', () => {
     const nodes = [
         node('P'), { ...node('C'), parent_id: 'P' }, node('A'), node('B')
@@ -306,126 +264,4 @@ test('relation filters hide only selected links and keep parent-child navigation
     assert.equal(placed(layout, 'C').parentItem.id, 'P');
     assert.deepEqual(placed(layout, 'P').childItems.map(item => item.id), ['C']);
     assert.equal(placed(layout, 'B').depth, placed(layout, 'A').depth + 1);
-});
-
-test('focused work can move to every child and back to its parent while filters stay active', () => {
-    const viewModel = workGraphViewModel();
-    viewModel.setWorkGraph({
-        nodes: [node('P'), { ...node('C1'), parent_id: 'P' }, { ...node('C2'), parent_id: 'P' }],
-        edges: [], worktrees: []
-    });
-
-    viewModel.graphFilter.query = 'Task P';
-    viewModel.refreshWorkGraphLayout();
-    viewModel.focusGraphNode('P', false);
-    assert.deepEqual(viewModel.graphFocusedChildren().map(item => item.id), ['C1', 'C2']);
-
-    viewModel.focusGraphNodeByID('C2');
-    assert.equal(viewModel.graphFocusedParent().id, 'P');
-    assert.ok(placed(viewModel.workGraphLayout, 'C2'));
-    assert.ok(placed(viewModel.workGraphLayout, 'P'));
-
-    viewModel.toggleGraphRelation('part_of');
-    assert.equal(viewModel.workGraphLayout.edges.some(item => item.type === 'part_of'), false);
-    assert.equal(viewModel.graphFocusedParent().id, 'P');
-});
-
-test('closing the graph filter restores focus after the menu is hidden', () => {
-    let nextTick = null;
-    let focusOptions = null;
-    const viewModel = {
-        ...createWorkGraphViewModel(),
-        $nextTick(callback) { nextTick = callback; }
-    };
-    const trigger = {
-        isConnected: true,
-        focus(options) { focusOptions = options; }
-    };
-
-    viewModel.toggleGraphFilterMenu(trigger);
-    assert.equal(viewModel.graphFilterOpen, true);
-    nextTick();
-    nextTick = null;
-
-    viewModel.closeGraphFilterMenu(true);
-    assert.equal(viewModel.graphFilterOpen, false);
-    assert.equal(focusOptions, null);
-    assert.equal(typeof nextTick, 'function');
-
-    nextTick();
-    assert.deepEqual(focusOptions, { preventScroll: true });
-});
-
-test('the graph UI renders filter selection and direct parent-child navigation', () => {
-    const html = fs.readFileSync(require.resolve('./ui/index.html'), 'utf8');
-    const graphArea = html.match(/<div x-show="view === 'graph'"[\s\S]*?<div x-show="view === 'worktrees'"/)?.[0] || '';
-
-    assert.match(graphArea, /x-for="node in workGraphLayout\.nodes"/);
-    assert.match(graphArea, /:class="graphNodeClasses\(node\)"/);
-    assert.match(graphArea, /graphNodeMeta\(node\)/);
-    assert.match(graphArea, /graphFilter\.query/);
-    assert.match(graphArea, /graphFilter\.status/);
-    assert.match(graphArea, /graphFilter\.agent/);
-    assert.match(graphArea, /changeWorkGraphProject\(\)/);
-    assert.match(graphArea, /class="stash-filter-trigger"/);
-    assert.match(graphArea, /toggleGraphRelation\('part_of'\)/);
-    assert.match(graphArea, /class="stash-filter-chips"/);
-    assert.match(graphArea, /class="stash-graph-navigator"/);
-    assert.match(graphArea, /focusGraphNodeByID\(graphFocusedParent\(\)\.id, true\)/);
-    assert.match(graphArea, /x-for="child in graphFocusedChildren\(\)"/);
-    assert.match(graphArea, /data-graph-node-key/);
-    assert.match(graphArea, /class="stash-graph-node__actions"/);
-    assert.match(graphArea, /class="stash-graph-canvas-tools"/);
-    assert.match(graphArea, /<g x-html="graphEdgesMarkup\(\)"><\/g>/);
-    assert.doesNotMatch(graphArea, /<template x-for="edge in workGraphLayout\.edges"[^>]*><path/);
-    assert.match(graphArea, /graphViewportWheel/);
-    assert.match(graphArea, /graphViewportKeydown/);
-    assert.match(graphArea, /graphViewportFit/);
-    assert.match(graphArea, /class="stash-graph-inspector"/);
-    assert.match(graphArea, /class="stash-work-monitor"/);
-    assert.match(graphArea, />받은 내용</);
-    assert.match(graphArea, />다음 할 일</);
-    assert.doesNotMatch(graphArea, /workGraphLayout\.stages|stash-graph-stage/);
-    assert.doesNotMatch(graphArea, /childLayout|stash-graph-child|toggleGraphParent/);
-});
-
-test('drag handles stay in the graph view-model and never persist offsets', () => {
-    const html = fs.readFileSync(require.resolve('./ui/index.html'), 'utf8');
-    const graphViewModel = fs.readFileSync(require.resolve('./ui/work-graph-view-model.js'), 'utf8');
-
-    assert.match(graphViewModel, /graphNodeOffsets: \{\}/);
-    assert.match(graphViewModel, /startGraphNodeDrag\(/);
-    assert.match(graphViewModel, /moveGraphNodeWithKeyboard\(/);
-    assert.match(graphViewModel, /resetGraphLayout\(/);
-    assert.match(graphViewModel, /graphFocusedKey: ''/);
-    assert.match(graphViewModel, /focusGraphNode\(/);
-    assert.match(graphViewModel, /graphFocusedParent\(/);
-    assert.match(graphViewModel, /graphFocusedChildren\(/);
-    assert.match(graphViewModel, /scrollGraphNodeIntoView\(/);
-    assert.match(graphViewModel, /return \{ minX: 0, minY: 0 \}/);
-    assert.doesNotMatch(graphViewModel, /localStorage|sessionStorage/);
-    assert.doesNotMatch(graphViewModel, /invokeTool\([^)]*graphNodeOffsets/);
-    assert.match(html, /data-graph-drag-key/);
-});
-
-test('the graph shell fills its view and always has room for a real horizontal graph', () => {
-    const html = fs.readFileSync(require.resolve('./ui/index.html'), 'utf8');
-    const graphCSS = fs.readFileSync(require.resolve('./ui/work-graph-board.css'), 'utf8');
-    const hierarchy = buildWorkGraphLayout([
-        node('P'), { ...node('C'), parent_id: 'P' }, { ...node('G'), parent_id: 'C' }
-    ], []);
-
-    assert.match(html, /\.stash-main \{[^}]*width: 100% !important;[^}]*max-width: none !important;/);
-    assert.match(html, /@media \(min-width: 981px\) \{[\s\S]*?\.stash-main \{ padding-right: 0 !important; \}/);
-    assert.match(html, /\.stash-graph \{[^}]*height: 100%;[^}]*min-height: 100%;[^}]*display: flex;[^}]*flex-direction: column;/);
-    assert.match(html, /\.stash-graph-content \{[^}]*flex: 1 1 auto;[^}]*flex-direction: column;/);
-    assert.match(html, /class="stash-graph-content"/);
-    assert.match(graphCSS, /\.stash-root\.is-graph-view \.stash-main \{[^}]*height: calc\(100dvh - 46px\);/);
-    assert.match(graphCSS, /\.stash-graph \{[\s\S]*?height: 100%;[\s\S]*?min-height: 0;/);
-    assert.match(graphCSS, /\.stash-graph-content \{[^}]*flex: 1 1 auto;[^}]*flex-direction: column;/);
-    assert.doesNotMatch(html, /<main class="[^"]*max-w-7xl/);
-    assert.ok(hierarchy.width >= 760);
-    assert.ok(hierarchy.height >= 360);
-    assert.equal(Object.hasOwn(hierarchy, 'stages'), false);
-    assert.equal(hierarchy.nodes.some(item => item.isEntry || item.isOutcome), false);
 });

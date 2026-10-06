@@ -6,18 +6,17 @@ export default defineConfig({
     'process.env.NODE_ENV': JSON.stringify('production')
   },
   resolve: {
-    // The monitor uses a template string so the standalone bundle can be
-    // mounted from an embedded HTML entry point.
+    // The console mounts template strings, which requires the runtime compiler.
     alias: {
       vue: 'vue/dist/vue.esm-bundler.js'
     }
   },
   build: {
     lib: {
-      entry: resolve(import.meta.dirname, 'src/monitor.js'),
-      name: 'StashVueMonitor',
+      entry: resolve(import.meta.dirname, 'src/runtime.js'),
+      name: 'StashVueRuntime',
       formats: ['iife'],
-      fileName: () => 'vue-monitor.js'
+      fileName: () => 'vue-runtime.js'
     },
     outDir: resolve(import.meta.dirname, '../internal/web/ui'),
     emptyOutDir: false,

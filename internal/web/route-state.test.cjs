@@ -1,6 +1,5 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const { routePaths, readRoute, buildRoute, routeTitle } = require('./ui/route-state.js');
 
 test('every workspace page has a stable address', () => {
@@ -83,28 +82,6 @@ test('root and unknown paths safely select the goal map', () => {
         { route: readRoute('/missing').route, matched: readRoute('/missing').matched },
         { route: 'goal-map', matched: false }
     );
-});
-
-test('the console restores routes and exposes real navigation links', () => {
-    const html = fs.readFileSync(require.resolve('./ui/index.html'), 'utf8');
-    const viewModel = fs.readFileSync(require.resolve('./ui/route-view-model.js'), 'utf8');
-    const app = fs.readFileSync(require.resolve('./ui/console-app.js'), 'utf8');
-
-    assert.match(html, /<script defer src="\/route-state\.js"><\/script>/);
-    assert.match(html, /<script defer src="\/route-view-model\.js"><\/script>/);
-    assert.match(html, /<script defer src="\/console-app\.js"><\/script>/);
-    assert.match(html, /<a :href="routeHref\('plan'\)" @click\.prevent="loadWorkPlan\(\)"/);
-    assert.match(html, /<a :href="routeHref\('monitor'\)" @click\.prevent="loadProjectMonitor\(\)"/);
-    assert.match(html, /<a :href="routeHref\('graph'\)" @click\.prevent="loadWorkGraph\(\)"/);
-    assert.match(viewModel, /window\.history\[replace \? 'replaceState' : 'pushState'\]/);
-    assert.match(viewModel, /async restoreRoute\(\)/);
-    assert.match(viewModel, /relations: this\.graphFilter\.relations/);
-    assert.match(viewModel, /project: this\.graphProjectSlug/);
-    assert.match(viewModel, /agent: this\.graphFilter\.agent/);
-    assert.match(viewModel, /focus: this\.graphFocusedKey/);
-    assert.match(viewModel, /await this\.focusGraphNodeByID\(route\.focus\)/);
-    assert.match(app, /window\.addEventListener\('popstate'/);
-    assert.match(app, /await this\.restoreRoute\(\)/);
 });
 
 test('all screens retain the selected workspace across reload and copied links', () => {

@@ -1,6 +1,6 @@
 # 웹 화면 구조
 
-`internal/web/embed.go`가 `/`와 `/ui/*` 작업 화면을 `vue-console.html`로 연결한다. 실제 화면은 Vue 3 통합 콘솔이며, 이전 Alpine 화면과 개별 모니터 소스가 남아 있어도 현재 주소에서 그 화면을 사용하는 것은 아니다.
+`internal/web/embed.go`가 `/`와 `/ui/*` 작업 화면을 `vue-console.html`로 연결한다. 실제 화면은 Vue 3 통합 콘솔 하나뿐이다.
 
 | 역할 | 파일 | 담당 |
 | --- | --- | --- |
@@ -34,6 +34,6 @@ npm run build --prefix webui-vue
 go test ./internal/web ./internal/models
 ```
 
-Vite 빌드 결과인 `internal/web/ui/vue-monitor.js`가 Vue 실행 코드를 제공한다. 통합 콘솔 파일과 함께 Go 서버에 포함되므로, 화면 파일 변경도 운영 반영하려면 Go 서버를 다시 빌드하고 배포해야 한다. 운영 서버에 Node를 설치할 필요는 없다.
+Vite 빌드 결과인 `internal/web/ui/vue-runtime.js`가 Vue 실행 코드(`StashVueRuntime.createApp`)만 제공한다. 통합 콘솔 파일과 함께 Go 서버에 포함되므로, 화면 파일 변경도 운영 반영하려면 Go 서버를 다시 빌드하고 배포해야 한다. 운영 서버에 Node를 설치할 필요는 없다.
 
 현재 기능 차이와 후속 수정 방향은 [UI/UX 검토 보고서](UI_UX_REVIEW.md)를 참고한다.

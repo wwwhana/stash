@@ -1,6 +1,5 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const { buildGoalMapLayout, filterGoalMap } = require('./ui/goal-map-layout.js');
 
 function sampleMap() {
@@ -122,76 +121,4 @@ test('empty maps have a stable empty layout', () => {
     assert.deepEqual(buildGoalMapLayout({}), {
         width: 0, height: 0, canvasStyle: '', nodes: [], edges: [], rings: [], focusKey: '', counts: { resource: 0, memory: 0, work: 0, goal: 0 }
     });
-});
-
-test('goal map UI keeps resource and monitoring state in its own view-model', () => {
-    const html = fs.readFileSync(require.resolve('./ui/index.html'), 'utf8');
-    const viewModel = fs.readFileSync(require.resolve('./ui/goal-map-view-model.js'), 'utf8');
-    const executionViewModel = fs.readFileSync(require.resolve('./ui/issue-execution-view-model.js'), 'utf8');
-
-    assert.match(viewModel, /resources: \[\]/);
-    assert.match(viewModel, /goalMapAttentionItems\(\)/);
-    assert.match(viewModel, /goalMapFilters:/);
-    assert.match(viewModel, /refreshGoalMapLayout\(\)/);
-    assert.match(viewModel, /goalMapAgents\(\)/);
-    assert.match(viewModel, /required_capabilities/);
-    assert.match(viewModel, /invokeTool\('get_goal_map'/);
-    assert.match(html, /node\.kind === 'resource'/);
-    assert.match(html, />연결 자료</);
-    assert.match(html, /aria-label="목표·지식 지도 필터"/);
-    assert.match(html, /aria-controls="goal-map-filter-menu"/);
-    assert.match(html, /goalMapFilterChips\(\)/);
-    assert.match(viewModel, /goalMapFilterOpen: false/);
-    assert.match(viewModel, /clearGoalMapFilter\(/);
-    assert.match(html, /x-for="ring in goalMapLayout\.rings"/);
-    assert.doesNotMatch(html, /goalMapLayout\.columns|stash-goal-map__column/);
-    assert.match(html, /@submit\.prevent="claimWork"/);
-    assert.match(executionViewModel, /runExecutionMutation\('claim_work'/);
-    assert.match(html, /@media \(max-width: 680px\)[\s\S]*?\.stash-goal-map__summary \{ flex-wrap: wrap; \}/);
-});
-
-test('goal map colors use the shared theme palette', () => {
-    const html = fs.readFileSync(require.resolve('./ui/index.html'), 'utf8');
-    const styles = html.match(/\.stash-goal-map \{[\s\S]*?\.stash-goal-map__unassigned button \{[^}]+\}/)?.[0] || '';
-    assert.match(styles, /var\(--stash-surface\)/);
-    assert.match(styles, /var\(--stash-ink\)/);
-    assert.doesNotMatch(styles, /(?:background|color|border-color):\s*#(?:fff|ffffff)\b/i);
-
-    const graphStyles = fs.readFileSync(require.resolve('./ui/work-graph-board.css'), 'utf8');
-    assert.doesNotMatch(graphStyles, /^:root\s*\{/m);
-});
-
-test('the work plan keeps project scope separate from map and memory scope', () => {
-    const html = fs.readFileSync(require.resolve('./ui/index.html'), 'utf8');
-    const viewModel = fs.readFileSync(require.resolve('./ui/work-plan-view-model.js'), 'utf8');
-
-    assert.match(html, /x-model="planNamespaceSlug" @change="loadWorkPlan\(false\)"/);
-    assert.match(html, /x-for="namespace in planProjects\(\)"/);
-    assert.doesNotMatch(html, /x-model="planNamespaceSlug"[\s\S]{0,300}>기본 공간/);
-    assert.match(viewModel, /planNamespaceSlug: ''/);
-    assert.match(viewModel, /\^\\\/projects\\\/\[\^\/\]\+\$/);
-    assert.match(viewModel, /const mapProject = projects\.find\(item => item\.slug === this\.mapNamespaceSlug\)/);
-    assert.match(viewModel, /planNamespace\(\)/);
-    assert.doesNotMatch(viewModel, /return this\.mapNamespaceSlug \|\| '\/'/);
-    assert.match(viewModel, /const namespace = this\.planNamespace\(\)/);
-    assert.match(viewModel, /get_work_plan', \{ namespace \}/);
-    assert.match(viewModel, /validate_work_plan', \{ namespace: this\.planNamespace\(\) \}/);
-    assert.match(viewModel, /namespace: this\.planNamespace\(\)/);
-    assert.match(html, /class="stash-plan-toolbar"[\s\S]*class="stash-plan-summary"/);
-    assert.doesNotMatch(html, /stash-plan-intro/);
-    assert.match(html, />맡는 범위</);
-    assert.doesNotMatch(html, /5~9개/);
-});
-
-test('namespace selection is shared by relation views and memory lists', () => {
-    const html = fs.readFileSync(require.resolve('./ui/index.html'), 'utf8');
-    const scopeViewModel = fs.readFileSync(require.resolve('./ui/map-scope-view-model.js'), 'utf8');
-
-    assert.match(scopeViewModel, /mapNamespaces: \[\]/);
-    assert.match(scopeViewModel, /mapNamespaceSlug: ''/);
-    assert.match(scopeViewModel, /invokeTool\('list_namespaces'/);
-    assert.match(scopeViewModel, /listed\.push\(\.\.\.result\.items\)/);
-    assert.match(html, /x-model="mapNamespaceSlug" @change="loadGoalMap\(false\)"/);
-    assert.match(html, /x-model="mapNamespaceSlug" @change="changeWorkGraphNamespace\(\)"/);
-    assert.match(html, /query_facts', \{namespaces: mapNamespaceSlug \|\| '\/'/);
 });
