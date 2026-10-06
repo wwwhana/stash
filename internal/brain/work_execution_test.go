@@ -7,13 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/alash3al/stash/internal/db"
 	"os"
 	"strings"
 	"testing"
 	"time"
 	"unicode/utf8"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func testCompletionCondition(description string) CompletionConditionInput {
@@ -149,9 +148,9 @@ func TestWorkExecutionDatabaseFlow(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	pool, err := pgxpool.New(ctx, dsn)
+	pool, err := db.OpenPool(ctx, dsn)
 	if err != nil {
-		t.Fatalf("pgxpool.New: %v", err)
+		t.Fatalf("open test database: %v", err)
 	}
 	defer pool.Close()
 	if err := pool.Ping(ctx); err != nil {

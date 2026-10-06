@@ -16,6 +16,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	stashwiki "github.com/alash3al/stash/internal/skills/stash-wiki"
 	stashwork "github.com/alash3al/stash/internal/skills/stash-work"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -24,6 +25,7 @@ import (
 
 const (
 	stashWorkSkillRootURI = "skill://stash-work"
+	stashWikiSkillRootURI = "skill://stash-wiki"
 	stashWorkSkillURI     = stashWorkSkillRootURI + "/SKILL.md"
 	skillsExtensionName   = "io.modelcontextprotocol/skills"
 
@@ -116,11 +118,15 @@ type directoryReadParams struct {
 var bundledStashSkills = mustLoadStashSkillsProtocol()
 
 func mustLoadStashSkillsProtocol() *skillsProtocol {
-	skill, err := loadEmbeddedStashWorkSkill()
+	work, err := loadEmbeddedSkill(stashWorkSkillRootURI, stashwork.Files())
 	if err != nil {
 		panic(fmt.Sprintf("load embedded stash-work skill: %v", err))
 	}
-	protocol, err := newSkillsProtocol([]servedSkill{skill}, defaultSkillPageSize, defaultDirectoryPageSize)
+	wiki, err := loadEmbeddedSkill(stashWikiSkillRootURI, stashwiki.Files())
+	if err != nil {
+		panic(fmt.Sprintf("load embedded stash-wiki skill: %v", err))
+	}
+	protocol, err := newSkillsProtocol([]servedSkill{work, wiki}, defaultSkillPageSize, defaultDirectoryPageSize)
 	if err != nil {
 		panic(fmt.Sprintf("build stash skills protocol: %v", err))
 	}
@@ -143,8 +149,7 @@ func handleStashSkillsMessage(ctx context.Context, message json.RawMessage) (res
 	return bundledStashSkills.HandleMessage(ctx, message)
 }
 
-func loadEmbeddedStashWorkSkill() (servedSkill, error) {
-	contentFS := stashwork.Files()
+func loadEmbeddedSkill(rootURI string, contentFS fs.FS) (servedSkill, error) {
 	files := make([]skillFileSource, 0, 4)
 	var skillMarkdown []byte
 	err := fs.WalkDir(contentFS, ".", func(filePath string, entry fs.DirEntry, walkErr error) error {
@@ -178,7 +183,7 @@ func loadEmbeddedStashWorkSkill() (servedSkill, error) {
 	if err != nil {
 		return servedSkill{}, fmt.Errorf("parse SKILL.md frontmatter: %w", err)
 	}
-	return newServedSkill(stashWorkSkillRootURI, frontmatter, files)
+	return newServedSkill(rootURI, frontmatter, files)
 }
 
 func skillMIMEType(filePath string) string {
@@ -600,7 +605,7 @@ func invalidSkillsParams(id mcp.RequestId, message string) mcp.JSONRPCError {
 func paginateSkillValues[T any](values []T, cursor string, pageSize int, scope string) ([]T, string, error) {
 	start, err := decodeSkillsCursor(cursor, scope)
 	if err != nil || start > len(values) {
-		return nil, "", fmt.Errorf("Invalid pagination cursor")
+		return nil, "", fmt.Errorf("invalid pagination cursor")
 	}
 	end := start + pageSize
 	if end > len(values) {

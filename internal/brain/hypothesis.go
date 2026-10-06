@@ -7,7 +7,6 @@ import (
 
 	"github.com/alash3al/stash/internal/models"
 	"github.com/jackc/pgx/v5"
-	"github.com/pgvector/pgvector-go"
 )
 
 var (
@@ -34,15 +33,6 @@ func isValidTransition(from, to string) bool {
 		}
 	}
 	return false
-}
-
-func scanHypothesis(h *models.Hypothesis, row pgx.Row) error {
-	return row.Scan(
-		&h.ID, &h.NamespaceID, &h.Content, &h.Confidence, &h.Status,
-		&h.VerificationPlan, &h.Method, &h.ConfirmedFactID, &h.RejectionReason,
-		&h.SourceFactIDs, &h.TestedAt, &h.ConfirmedAt, &h.RejectedAt,
-		&h.CreatedAt, &h.UpdatedAt, &h.DeletedAt,
-	)
 }
 
 func scanHypothesisRows(rows pgx.Rows) ([]models.Hypothesis, error) {
@@ -256,10 +246,10 @@ func (b *Brain) ConfirmHypothesis(ctx context.Context, id int64) (*models.Hypoth
 		return nil, nil, fmt.Errorf("%w: %s → confirmed", ErrInvalidHypothesisTransition, current.Status)
 	}
 
-	vec, err := b.embedder.Embed(ctx, current.Content)
-	if err != nil {
-		return nil, nil, fmt.Errorf("embed confirmed hypothesis: %w", err)
-	}
+	// A confirmation is a user decision; it must not fail because the
+	// embedding provider is down or absent. The fact is queued for indexing.
+	vec, embedErr := b.embedder.Embed(ctx, current.Content)
+	write := b.embeddingWrite(vec, embedErr)
 
 	now := time.Now().UTC()
 
@@ -271,9 +261,11 @@ func (b *Brain) ConfirmHypothesis(ctx context.Context, id int64) (*models.Hypoth
 
 	var factID int64
 	err = tx.QueryRow(ctx,
-		`INSERT INTO facts (namespace_id, content, embedding, embedding_model, confidence, valid_from)
-		 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-		current.NamespaceID, current.Content, pgvector.NewVector(vec), b.embedder.Model(), current.Confidence, now,
+		`INSERT INTO facts (namespace_id, content, embedding, embedding_model, confidence, valid_from,
+		                    embedding_attempts, embedding_last_error, embedding_retry_at, embedding_updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now()) RETURNING id`,
+		current.NamespaceID, current.Content, write.vector, write.model, current.Confidence, now,
+		write.attempts, write.lastError, write.retryAt,
 	).Scan(&factID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("insert fact from hypothesis: %w", err)
@@ -305,7 +297,7 @@ func (b *Brain) ConfirmHypothesis(ctx context.Context, id int64) (*models.Hypoth
 		 FROM facts WHERE id = $1`,
 		factID,
 	).Scan(
-		&f.ID, &f.NamespaceID, &f.Content, &f.Embedding, &f.EmbeddingModel,
+		&f.ID, &f.NamespaceID, &f.Content, nullVector{&f.Embedding}, &f.EmbeddingModel,
 		&f.Confidence, &f.Entity, &f.Property, &f.Value,
 		&f.ValidFrom, &f.ValidUntil, &f.CreatedAt, &f.UpdatedAt, &f.DeletedAt,
 	)

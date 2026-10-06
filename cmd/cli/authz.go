@@ -221,3 +221,16 @@ func authorizeRelatedNamespace(ctx context.Context, bc *bootstrap.Context, expec
 	}
 	return nil
 }
+
+// authorizedWorkItem loads a work item and verifies that the caller may act on
+// its namespace, so handlers cannot read an item and forget the scope check.
+func authorizedWorkItem(ctx context.Context, bc *bootstrap.Context, id int64) (*models.WorkItem, error) {
+	item, err := bc.Brain.GetWorkItem(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := authorizeNamespaceID(ctx, bc, item.NamespaceID); err != nil {
+		return nil, err
+	}
+	return item, nil
+}

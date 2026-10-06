@@ -2,11 +2,13 @@ package brain
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
 	"time"
 
+	"github.com/alash3al/stash/internal/embedder"
 	"github.com/alash3al/stash/internal/models"
 	"github.com/alash3al/stash/internal/observability"
 	"github.com/jackc/pgx/v5"
@@ -256,7 +258,7 @@ func (b *Brain) consolidateEpisodesToFacts(ctx context.Context, nsID int64, cp *
 	var episodes []models.Episode
 	for rows.Next() {
 		var e models.Episode
-		if err := rows.Scan(&e.ID, &e.NamespaceID, &e.Content, &e.Embedding, &e.EmbeddingModel, &e.OccurredAt, &e.CreatedAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.NamespaceID, &e.Content, nullVector{&e.Embedding}, &e.EmbeddingModel, &e.OccurredAt, &e.CreatedAt); err != nil {
 			errs = append(errs, fmt.Sprintf("scan episode: %v", err))
 			continue
 		}
@@ -306,15 +308,19 @@ func (b *Brain) consolidateEpisodesToFacts(ctx context.Context, nsID int64, cp *
 			continue
 		}
 
-		// Embed the fact content
-		vec, err := b.embedder.Embed(ctx, sf.Summary)
-		if err != nil {
-			errs = append(errs, fmt.Sprintf("embed fact: %v", err))
-			continue
+		// Embed the fact content. A failed embedding does not drop the fact:
+		// the row is stored with a pending vector and deduplicated by its
+		// structured fields and text instead of by similarity.
+		vec, embedErr := b.embedder.Embed(ctx, sf.Summary)
+		var dupID int64
+		if embedErr == nil {
+			dupID, err = b.findDuplicateFact(ctx, nsID, vec, sf.Entity, sf.Property, sf.Value)
+		} else {
+			if !errors.Is(embedErr, embedder.ErrUnavailable) {
+				errs = append(errs, fmt.Sprintf("embed fact (queued for retry): %v", embedErr))
+			}
+			dupID, err = b.findDuplicateFactByText(ctx, nsID, sf.Summary, sf.Entity, sf.Property, sf.Value)
 		}
-
-		// Check for duplicate fact
-		dupID, err := b.findDuplicateFact(ctx, nsID, vec, sf.Entity, sf.Property, sf.Value)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("check duplicate: %v", err))
 			continue
@@ -348,11 +354,14 @@ func (b *Brain) consolidateEpisodesToFacts(ctx context.Context, nsID int64, cp *
 		now := time.Now().UTC()
 
 		var factID int64
+		write := b.embeddingWrite(vec, embedErr)
 		err = b.pool.QueryRow(ctx,
-			`INSERT INTO facts (namespace_id, content, embedding, embedding_model, confidence, entity, property, value, valid_from)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
-			nsID, sf.Summary, pgvector.NewVector(vec), b.embedder.Model(), confidence,
+			`INSERT INTO facts (namespace_id, content, embedding, embedding_model, confidence, entity, property, value, valid_from,
+			                    embedding_attempts, embedding_last_error, embedding_retry_at, embedding_updated_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now()) RETURNING id`,
+			nsID, sf.Summary, write.vector, write.model, confidence,
 			strPtrOrNull(sf.Entity), strPtrOrNull(sf.Property), strPtrOrNull(sf.Value), now,
+			write.attempts, write.lastError, write.retryAt,
 		).Scan(&factID)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("insert fact: %v", err))
@@ -506,6 +515,35 @@ func (b *Brain) findDuplicateFact(ctx context.Context, nsID int64, vec []float32
 	return 0, nil
 }
 
+// findDuplicateFactByText is the vector-free duplicate check used while a
+// fact has no embedding. It only catches exact restatements: the same
+// entity/property/value triple, or the same content ignoring case and
+// surrounding whitespace. Near-duplicates are caught later by the vector
+// path once the row is indexed and re-observed.
+func (b *Brain) findDuplicateFactByText(ctx context.Context, nsID int64, content, entity, property, value string) (int64, error) {
+	var id int64
+	err := b.pool.QueryRow(ctx,
+		`SELECT id FROM facts
+		 WHERE namespace_id = $1 AND deleted_at IS NULL AND valid_until IS NULL
+		   AND (
+		     lower(btrim(content)) = lower(btrim($2))
+		     OR ($3::text <> '' AND $4::text <> ''
+		         AND entity IS NOT DISTINCT FROM $3::text
+		         AND property IS NOT DISTINCT FROM $4::text
+		         AND COALESCE(value, '') = $5::text)
+		   )
+		 ORDER BY id LIMIT 1`,
+		nsID, content, entity, property, value,
+	).Scan(&id)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("find duplicate fact by text: %w", err)
+	}
+	return id, nil
+}
+
 // reinforceFact records that an existing fact was observed again.
 //
 // Without this, re-observation was invisible: the dedup path simply skipped the
@@ -595,7 +633,7 @@ func (b *Brain) consolidateFactsToRelationships(ctx context.Context, nsID int64,
 	var facts []models.Fact
 	for rows.Next() {
 		var f models.Fact
-		if err := rows.Scan(&f.ID, &f.NamespaceID, &f.Content, &f.Embedding, &f.EmbeddingModel, &f.Confidence, &f.Entity, &f.Property, &f.Value, &f.ValidFrom, &f.ValidUntil, &f.CreatedAt, &f.UpdatedAt); err != nil {
+		if err := rows.Scan(&f.ID, &f.NamespaceID, &f.Content, nullVector{&f.Embedding}, &f.EmbeddingModel, &f.Confidence, &f.Entity, &f.Property, &f.Value, &f.ValidFrom, &f.ValidUntil, &f.CreatedAt, &f.UpdatedAt); err != nil {
 			errs = append(errs, fmt.Sprintf("scan fact: %v", err))
 			continue
 		}
@@ -705,7 +743,7 @@ func (b *Brain) consolidateFactsToCausalLinks(ctx context.Context, nsID int64, c
 	var facts []models.Fact
 	for rows.Next() {
 		var f models.Fact
-		if err := rows.Scan(&f.ID, &f.NamespaceID, &f.Content, &f.Embedding, &f.EmbeddingModel, &f.Confidence, &f.Entity, &f.Property, &f.Value, &f.ValidFrom, &f.ValidUntil, &f.CreatedAt, &f.UpdatedAt); err != nil {
+		if err := rows.Scan(&f.ID, &f.NamespaceID, &f.Content, nullVector{&f.Embedding}, &f.EmbeddingModel, &f.Confidence, &f.Entity, &f.Property, &f.Value, &f.ValidFrom, &f.ValidUntil, &f.CreatedAt, &f.UpdatedAt); err != nil {
 			errs = append(errs, fmt.Sprintf("scan fact for causal: %v", err))
 			continue
 		}
@@ -760,7 +798,7 @@ func (b *Brain) consolidateToPatterns(ctx context.Context, nsID int64, cp *model
 	var facts []models.Fact
 	for factRows.Next() {
 		var f models.Fact
-		if err := factRows.Scan(&f.ID, &f.NamespaceID, &f.Content, &f.Embedding, &f.EmbeddingModel, &f.Confidence, &f.Entity, &f.Property, &f.Value, &f.ValidFrom, &f.ValidUntil, &f.CreatedAt, &f.UpdatedAt); err != nil {
+		if err := factRows.Scan(&f.ID, &f.NamespaceID, &f.Content, nullVector{&f.Embedding}, &f.EmbeddingModel, &f.Confidence, &f.Entity, &f.Property, &f.Value, &f.ValidFrom, &f.ValidUntil, &f.CreatedAt, &f.UpdatedAt); err != nil {
 			errs = append(errs, fmt.Sprintf("scan fact for pattern: %v", err))
 			continue
 		}

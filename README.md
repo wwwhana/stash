@@ -30,26 +30,25 @@ That's it. Postgres + pgvector, migrations, MCP/metrics servers, and background 
 
 **Fully local (no cloud API):** [Ollama setup guide](docs/LOCAL_OLLAMA.md) — host Ollama + Docker Compose, private embeddings and reasoner.
 
-## LLM Provider Setup (OpenAI Default &amp; Local Example)
+## Model Providers
 
-Stash relies on an external LLM provider for vectorization and reasoning. You can use standard cloud providers (like OpenAI) or a local setup (like Ollama).
+Stash calls an OpenAI-compatible endpoint for embeddings and reasoning. You can
+configure one provider through the environment, or register several in the
+database and decide per feature which provider and model to use.
 
-### Default (OpenAI)
-
-Set your `.env` like this:
+### Environment (quick start)
 
 ```bash
+STASH_OPENAI_BASE_URL=https://api.openai.com/v1
 STASH_OPENAI_API_KEY=sk-your-openai-api-key
 STASH_EMBEDDING_MODEL=text-embedding-3-small
 STASH_REASONER_MODEL=gpt-4o-mini
 STASH_VECTOR_DIM=1536
 ```
 
-### Local/Custom LLMs (Ollama, LM Studio)
-
-To point Stash to a local or custom OpenAI-compatible server, specify the base URL.
-The API key may be left empty when that endpoint does not require authentication.
-**Important Tuning Note:** If you are using `multilingual-e5-small` or similar models, make sure you match the `STASH_VECTOR_DIM` to the model's output dimensions (e.g., `384`).
+For a local server such as Ollama or LM Studio, point the base URL at it and
+leave the key empty. Match `STASH_VECTOR_DIM` to the embedding model's output
+size (for example `384` for `multilingual-e5-small`):
 
 ```bash
 STASH_OPENAI_BASE_URL=http://host.docker.internal:11434/v1
@@ -58,6 +57,110 @@ STASH_EMBEDDING_MODEL=multilingual-e5-small
 STASH_REASONER_MODEL=llama3
 STASH_VECTOR_DIM=384
 ```
+
+Every model setting is optional. Without an embedding provider Stash still
+stores memories and finds them with trigram keyword search; vectors are
+computed later, once a provider is assigned. Without a reasoning provider,
+consolidation and plan validation report that no provider is available.
+
+### Provider registry (per-feature routing)
+
+The console's **Model settings** page (`/ui/llm`), the `/admin/llm/*` API, and
+the `stash llm` command manage providers stored in PostgreSQL. Each feature
+(`embedding`, `consolidation`, `plan_validation`, `wiki`) can be assigned its own
+provider and model; a feature without an assignment keeps using the
+`STASH_OPENAI_*` environment. Changes apply immediately without a restart, and
+changing the embedding model or dimension resizes the vector columns and queues
+a background reindex exactly as an environment change does at startup.
+
+Stored API keys are sealed with AES-256-GCM under `STASH_SECRETS_KEY`
+(`openssl rand -hex 32`). Without that key, only key-less providers can be
+registered. `STASH_SECRETS_KEY_PREVIOUS` keeps older keys readable during a
+rotation.
+
+```bash
+stash llm provider add openai --base-url https://api.openai.com/v1 --api-key-env OPENAI_API_KEY
+stash llm provider probe openai                # lists the models the endpoint exposes
+stash llm assign embedding --provider openai --model text-embedding-3-small --dimensions 1536
+stash llm assign plan_validation --provider openai --model gpt-4o
+stash llm import-env                           # copy STASH_OPENAI_* into the registry
+stash llm status
+```
+
+The admin endpoints and the **Server settings** pages are for administrators:
+a user whose `is_admin` flag is set (`STASH_ADMIN_USER` or `stash user set --admin`),
+a subject listed in `STASH_ADMIN_SUBJECTS`, or a request carrying
+`X-Stash-Admin-Token` (`STASH_ADMIN_TOKEN`). Under `STASH_AUTH_MODE=none`,
+which only listens on loopback, they are open like the rest of the server.
+Set `STASH_EMBEDDING_CACHE=false` to stop caching computed vectors in PostgreSQL.
+
+## Console login
+
+People sign in to the console with a username and password. On a server
+with no account yet, the console opens on a **Create the first
+administrator** form: the account made there is the administrator and is
+signed in at once. The environment can do the same at startup, which is the
+better choice for an unattended deployment because the first-run form is
+open to whoever reaches the console first:
+
+```dotenv
+STASH_ADMIN_USER=admin
+STASH_ADMIN_PASSWORD=<at least 8 characters>
+```
+
+An existing user keeps the password it has (so a change made in the console
+survives restarts) but is promoted and re-enabled, which makes these two
+variables the way back in. More accounts come from the **Users & SSO** page
+of the console (add a user with or without a password, set a password, grant
+or remove administrator access, disable, delete, and list or revoke the
+person's API tokens by creation date) or from the CLI:
+
+```bash
+stash user add alice --display-name "Alice" --password-stdin   # or --password-env / --password
+stash user set alice --admin
+stash user passwd alice --password-stdin
+stash user set alice --disable      # takes effect on the next request
+stash user list                     # users with their identities
+```
+
+Users and the ways they sign in are separate tables: a user row is the
+person (username, display name, admin flag), and `user_identities` holds its
+password hash and any SSO subject. An SSO login whose subject is new is
+provisioned as a user named after that subject, so the namespaces and tokens
+it already had stay its own, and an administrator can later add a password to
+it or disable it. The username is the session subject everywhere: namespaces,
+API tokens, and wiki authorship are keyed by it.
+
+The login card shows the password form straight away, a button per
+registered SSO provider, and switches to an API-token form on the same card;
+nothing sends you to another page first. Signed-in users change their own
+password from the **Account** panel.
+
+### SSO providers
+
+SSO providers are OIDC issuers stored in the database (`sso_providers`), with
+the client secret sealed by `STASH_SECRETS_KEY`. The environment registers
+the first one: when `STASH_AUTH_ISSUER`, `STASH_AUTH_CLIENT_ID`,
+`STASH_AUTH_CLIENT_SECRET`, and `STASH_AUTH_REDIRECT_URL` are set, the server
+imports them into the table at startup (once; later edits happen in the
+table). From then on administrators manage providers on the **Users & SSO**
+page of the console or with the CLI:
+
+```bash
+stash sso list
+stash sso add authentik --name "Company SSO" --issuer https://auth.example.com/application/o/stash/ \
+  --client-id stash --client-secret-env SSO_SECRET --redirect-url https://stash.example.com/auth/callback
+stash sso test 1
+stash sso set 1 --disable
+```
+
+Each provider is discovered on load; one that fails discovery is reported on
+the page and skipped on the login screen without affecting the others. A
+person who signs in through a provider for the first time becomes a user
+named after the issuer's subject, so an administrator can later give that
+account a password, make it an administrator, or disable it. Without
+`STASH_SECRETS_KEY` the environment provider still works from memory, but
+nothing can be stored.
 
 See [Getting Started](docs/GETTING_STARTED.md) for a fuller configuration checklist.
 
@@ -124,52 +227,44 @@ You can also use the `stdio` transport and point it to the stash CLI binary:
 }
 ```
 
-For a remote MCP server, use Streamable HTTP. With the `oauth` profile, the
-MCP client follows OAuth Authorization Code login and receives a Stash access
-token bound to the MCP resource after the user approves the Stash access page:
+For a remote MCP server, use Streamable HTTP with a Stash API token. Every
+MCP client authenticates the same way, whatever the profile: a token that
+lives in the database until it expires or is revoked, so an agent's identity
+and history never change underneath it. Issue one from the console's **API
+tokens** page or on the server:
 
 ```bash
-codex mcp add stash --url https://stash.example.com/mcp
-```
-
-For unattended clients, set `STASH_AUTH_MODE=token` and
-`STASH_AUTH_API_SECRET`, then issue a native bearer token:
-
-```bash
-export STASH_MCP_TOKEN="$(stash mcp token --subject codex)"
+export STASH_MCP_TOKEN="$(stash mcp token --subject codex --name laptop)"
 codex mcp add stash --url https://stash.example.com/mcp --bearer-token-env-var STASH_MCP_TOKEN
 ```
 
 Authentication profiles:
 
 - `none`: no HTTP authentication. Stash refuses to bind this mode beyond a
-  loopback address.
-- `oauth` (or the legacy alias `oidc`): OIDC login plus the MCP OAuth
-  Authorization Code flow. MCP and SSE accept the resource-bound Stash OAuth
-  access token and native Stash API bearer tokens.
-- `token`: OIDC-free HTTP authentication using only Stash API bearer tokens.
-- `stdio`: no MCP OAuth discovery. The local process is trusted, or it can
-  validate `STASH_AUTH_STDIO_TOKEN` before using an isolated namespace.
+  loopback address unless `STASH_AUTH_TRUSTED_NETWORK=true` states that the
+  network itself is trusted (a private LAN or a VPN); it then logs a warning
+  and keeps only the cross-origin protection.
+- `oauth` (or the legacy alias `oidc`): adds SSO login to the console through
+  an OIDC provider. MCP clients still use Stash API tokens.
+- `token`: username/password and API-token login only; no OIDC provider is
+  contacted.
+- `stdio`: the local process is trusted, or it can validate a Stash API token
+  given as `STASH_AUTH_STDIO_TOKEN` before using an isolated namespace.
 
-HTTP MCP requests must send `Authorization: Bearer <stash_oauth_token>` or
-`Authorization: Bearer <stash_api_token>`. The browser session cookie is only
-for the embedded console; it is not the standard client credential.
+HTTP MCP requests must send `Authorization: Bearer <stash_api_token>`. Nothing
+else is accepted over MCP: no OAuth access token, no upstream identity token.
+The browser session cookie is only for the embedded console.
 
 The console's **API tokens** page can issue and revoke Stash API tokens after
 browser login. Choose no expiration, a preset duration (1, 7, 30, 90, or 365 days),
 or a custom number of days. Leaving the duration blank means no expiration.
 Revoking a token immediately sets its expiration to the revocation time.
 The list shows expiration dates and expired tokens;
-tokens stop working when they expire or are revoked. Existing tokens keep their
-unlimited lifetime, and the raw value is shown only once. For a server without OIDC, run `stash mcp token --subject <agent>` with
-`STASH_AUTH_API_SECRET`; the command does not open the database or contact an
-OIDC provider. The token lifetime follows `STASH_AUTH_TOKEN_TTL` (30 days by
-default) and can be renewed with the same command.
-
-OAuth access tokens expire after one hour by default; rotated refresh tokens
-expire after 30 days. Configure them with `STASH_AUTH_ACCESS_TOKEN_TTL` and
-`STASH_AUTH_REFRESH_TOKEN_TTL`. The access-token lifetime cannot exceed one
-hour.
+tokens stop working when they expire or are revoked. The raw value is shown
+only once. On the server host, `stash mcp token --subject <agent>` stores a
+token the same way, so it appears in that subject's token list and can be
+revoked there. The lifetime follows `STASH_AUTH_TOKEN_TTL` (30 days by
+default); `--ttl 0` issues one that lasts until revoked.
 
 ### 3. agy (Antigravity)
 
@@ -215,7 +310,7 @@ Prefer the Streamable HTTP URL `http://localhost:8080/mcp`. Use the SSE URL `htt
 
 ## Metrics and Health
 
-`stash serve` uses one HTTP port for MCP, the web console, OAuth endpoints, metrics, and status checks (default `127.0.0.1:8080`). Docker also publishes port 8080 only on the host loopback interface. Prometheus metrics are available at `http://localhost:8080/metrics`; when HTTP authentication is enabled, `/metrics` requires the same bearer credential as MCP. `/healthz` and `/readyz` stay public for load-balancer probes. The metrics cover HTTP requests, authentication outcomes, MCP tool calls, outbound provider calls, namespace-scope decisions, consolidation backlog and latest errors, terminal result-memory coverage, and pending embedding retries. Request, authentication, tool, provider, and scope metrics use bounded labels and do not include user IDs or raw namespace names.
+`stash serve` uses one HTTP port for MCP, the web console, login endpoints, metrics, and status checks (default `127.0.0.1:8080`). Docker also publishes port 8080 only on the host loopback interface. Prometheus metrics are available at `http://localhost:8080/metrics`; when HTTP authentication is enabled, `/metrics` requires the same bearer credential as MCP. `/healthz` and `/readyz` stay public for load-balancer probes. The metrics cover HTTP requests, authentication outcomes, MCP tool calls, outbound provider calls, namespace-scope decisions, consolidation backlog and latest errors, terminal result-memory coverage, and pending embedding retries. Request, authentication, tool, provider, and scope metrics use bounded labels and do not include user IDs or raw namespace names.
 
 The HTTP contract is available as OpenAPI at `http://localhost:8080/openapi.json`; the interactive Swagger UI is at `http://localhost:8080/docs` (also `/swagger`). The UI loads its pinned viewer assets from jsDelivr, while the specification remains available same-origin for offline tooling.
 
@@ -242,6 +337,34 @@ The bundled Codex and Claude Code plugin gives one memory reminder at session st
 Stash is a cognitive layer between your AI agent and the world. Episodes become facts. Facts become relationships. Relationships become patterns. Patterns become wisdom.
 
 A 9-stage consolidation pipeline turns raw observations into structured knowledge — facts, relationships, causal links, patterns, contradictions, goal tracking, failure patterns, and hypothesis verification. Each stage only processes new data since the last run.
+
+## Wiki: the readable layer
+
+Memory is raw: episodes are what happened and facts are what consolidation
+concluded. The wiki is what the project currently believes, written down as
+Markdown pages that cite the memory and work they were built from. People read
+it in the console (`/ui/wiki`, the default page), agents read and write it over
+MCP, and `stash wiki export` turns a namespace into a folder of `.md` files.
+
+- Pages live per namespace with a `slug` such as `ops/deploys` or
+  `decisions/postgres-16`, a kind (article, index, entity, decision, log),
+  tags, and a full revision history.
+- `[[slug]]` links pages; `[@fact:12]`, `[@episode:3]`, and `[@work:W-000123]`
+  cite evidence. Citations are resolved on every read, so a page shows when its
+  evidence changed, was superseded, or was deleted, and `wiki_lint` marks such
+  pages stale.
+- Search works without any model through trigram matching; vectors are added
+  when an embedding provider exists. `recall` returns pages next to episodes
+  and facts by default.
+- Who writes is a choice: agents use `wiki_write` (the bundled `stash-wiki`
+  skill says when), people edit in the console with a live preview, and
+  `wiki_compile` lets the server's reasoner draft a cited page from memory
+  when a model is assigned to the `wiki` feature.
+
+MCP tools: `wiki_search`, `wiki_read`, `wiki_list`, `wiki_write`, `wiki_delete`,
+`wiki_history`, `wiki_log`, `wiki_lint`, `wiki_compile`. CLI: `stash wiki
+list|read|write|delete|history|lint|log|export|compile`. See
+[docs/WIKI.md](docs/WIKI.md).
 
 ## Shared Work Map and Optional Connectors
 

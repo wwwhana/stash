@@ -14,6 +14,8 @@ var uiFS embed.FS
 
 var uiPageFiles = map[string]string{
 	"/":                  "vue-console.html",
+	"/ui/wiki":           "vue-console.html",
+	"/ui/wiki/page":      "vue-console.html",
 	"/index.html":        "vue-console.html",
 	"/ui/goal-map":       "vue-console.html",
 	"/ui/plan":           "vue-console.html",
@@ -29,7 +31,9 @@ var uiPageFiles = map[string]string{
 	"/ui/hypotheses":     "vue-console.html",
 	"/ui/goals":          "vue-console.html",
 	"/ui/agent-guide":    "vue-console.html",
+	"/ui/llm":            "vue-console.html",
 	"/ui/maintenance":    "vue-console.html",
+	"/ui/access":         "vue-console.html",
 	"/ui/tokens":         "vue-console.html",
 }
 

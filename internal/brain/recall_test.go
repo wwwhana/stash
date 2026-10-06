@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/alash3al/stash/internal/db"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/alash3al/stash/internal/queries"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type recallFailingEmbedder struct{}
@@ -33,9 +33,9 @@ func TestRecallUsesTrigramWhenQueryEmbeddingFails(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	p, err := pgxpool.New(ctx, dsn)
+	p, err := db.OpenPool(ctx, dsn)
 	if err != nil {
-		t.Fatalf("pgxpool.New: %v", err)
+		t.Fatalf("open test database: %v", err)
 	}
 	defer p.Close()
 	if err := p.Ping(ctx); err != nil {

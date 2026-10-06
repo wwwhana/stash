@@ -1,6 +1,6 @@
 # 웹 화면 구조
 
-`internal/web/embed.go`가 `/`와 `/ui/*` 작업 화면을 `vue-console.html`로 연결한다. 실제 화면은 Vue 3 통합 콘솔이며, 이전 Alpine 화면과 개별 모니터 소스가 남아 있어도 현재 주소에서 그 화면을 사용하는 것은 아니다.
+`internal/web/embed.go`가 `/`와 `/ui/*` 작업 화면을 `vue-console.html`로 연결한다. 실제 화면은 Vue 3 통합 콘솔 하나뿐이다.
 
 | 역할 | 파일 | 담당 |
 | --- | --- | --- |
@@ -34,6 +34,18 @@ npm run build --prefix webui-vue
 go test ./internal/web ./internal/models
 ```
 
-Vite 빌드 결과인 `internal/web/ui/vue-monitor.js`가 Vue 실행 코드를 제공한다. 통합 콘솔 파일과 함께 Go 서버에 포함되므로, 화면 파일 변경도 운영 반영하려면 Go 서버를 다시 빌드하고 배포해야 한다. 운영 서버에 Node를 설치할 필요는 없다.
+Vite 빌드 결과인 `internal/web/ui/vue-runtime.js`가 Vue 실행 코드(`StashVueRuntime.createApp`)와 위키 본문 렌더링에 쓰는 `marked`, `DOMPurify`를 제공한다. 통합 콘솔 파일과 함께 Go 서버에 포함되므로, 화면 파일 변경도 운영 반영하려면 Go 서버를 다시 빌드하고 배포해야 한다. 운영 서버에 Node를 설치할 필요는 없다.
 
 현재 기능 차이와 후속 수정 방향은 [UI/UX 검토 보고서](UI_UX_REVIEW.md)를 참고한다.
+
+## 화면 구성
+
+콘솔은 세 영역으로 나뉜다.
+
+| 영역 | 화면 | 주소 |
+| --- | --- | --- |
+| 위키 (기본) | 위키 홈(목록·검색·점검·활동), 페이지 보기(본문·근거·연결·이력), 편집기(미리보기, 모델 초안) | `/ui/wiki`, `/ui/wiki/page?slug=…` (`rev`, `edit=1`) |
+| 메모리 | 기억, 목표, 개요, 작업 계획·현황·보드·흐름, Git | 기존 주소 |
+| 서버 설정 | 모델 설정, 기억 검색 관리, 작업 공간 관리, 인증 토큰, 에이전트 규칙 | `/ui/llm` 등 |
+
+루트 `/`와 알 수 없는 주소는 위키 홈으로 간다. 위키 본문은 `marked`로 HTML로 바꾼 뒤 `DOMPurify`로 정리해 표시하며, `[[slug]]`는 페이지 주소로, `[@type:id]`는 근거 패널로 연결된다. 편집은 MCP `wiki_write`를 `author_kind: human`으로 호출한다.

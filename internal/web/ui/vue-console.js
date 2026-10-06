@@ -6,21 +6,55 @@
     <div class="stash-login-language"><select class="stash-language-select" :aria-label="t('language.label')" :value="locale" @change="changeLocale($event.target.value)"><option value="ko">한국어</option><option value="en">English</option></select></div>
     <p v-if="authLoading" role="status">{{ t('auth.checking') }}</p>
     <template v-else-if="!authChecked"><p class="stash-error" role="alert">{{ t(error) }}</p><button type="button" class="stash-button" @click="bootstrap">{{ t('action.retry') }}</button></template>
-    <template v-else><h1>{{ t('auth.heading') }}</h1><a class="stash-button is-primary" href="/auth/login" @click.prevent="beginLogin">{{ t('auth.login') }}</a></template>
+    <template v-else-if="setupRequired"><h1>{{ t('setup.heading') }}</h1><p class="stash-setup-hint">{{ t('setup.hint') }}</p>
+      <form class="stash-login-form" @submit.prevent="submitSetup">
+        <label class="stash-field"><span>{{ t('setup.username') }}</span><input v-model="setupForm.username" name="username" autocomplete="username" autocapitalize="off" spellcheck="false" required autofocus pattern="[a-z0-9][a-z0-9._\\-]{0,63}" placeholder="admin" :disabled="setupBusy"></label>
+        <label class="stash-field"><span>{{ t('users.displayName') }}</span><input v-model="setupForm.display_name" name="display_name" autocomplete="name" :disabled="setupBusy"></label>
+        <label class="stash-field"><span>{{ t('setup.password') }}</span><input v-model="setupForm.password" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required :disabled="setupBusy"></label>
+        <label class="stash-field"><span>{{ t('auth.confirmPassword') }}</span><input v-model="setupForm.confirm" name="password_confirm" type="password" autocomplete="new-password" required :disabled="setupBusy"></label>
+        <p v-if="setupError" class="stash-error" role="alert">{{ t(setupError) }}</p>
+        <button type="submit" class="stash-button is-primary" :disabled="setupBusy">{{ setupBusy ? t('setup.creating') : t('setup.create') }}</button>
+      </form>
+      <a class="stash-login-alt" href="/auth/login?provider=token" @click.prevent="auth = { ...auth, setup_required: false }; loginMode = 'token'">{{ t('auth.withToken') }}</a>
+    </template>
+    <template v-else><h1>{{ t('auth.heading') }}</h1>
+      <form v-if="loginMode === 'password'" class="stash-login-form" @submit.prevent="submitLogin">
+        <label class="stash-field"><span>{{ t('auth.username') }}</span><input v-model="loginForm.username" name="username" autocomplete="username" autocapitalize="off" spellcheck="false" required autofocus :disabled="loginBusy"></label>
+        <label class="stash-field"><span>{{ t('auth.password') }}</span><input v-model="loginForm.password" name="password" type="password" autocomplete="current-password" required :disabled="loginBusy"></label>
+        <p v-if="loginError" class="stash-error" role="alert">{{ t(loginError) }}</p>
+        <button type="submit" class="stash-button is-primary" :disabled="loginBusy">{{ loginBusy ? t('auth.loggingIn') : t('auth.login') }}</button>
+      </form>
+      <form v-else class="stash-login-form" @submit.prevent="submitLogin">
+        <label class="stash-field"><span>{{ t('auth.token') }}</span><input v-model="loginForm.token" name="token" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" required autofocus :placeholder="t('auth.tokenPlaceholder')" :disabled="loginBusy"></label>
+        <p v-if="loginError" class="stash-error" role="alert">{{ t(loginError) }}</p>
+        <button type="submit" class="stash-button is-primary" :disabled="loginBusy">{{ loginBusy ? t('auth.loggingIn') : t('auth.loginWithToken') }}</button>
+      </form>
+      <a v-for="provider in ssoProviders" :key="provider.slug" class="stash-button" :href="'/auth/login?sso=' + encodeURIComponent(provider.slug)" @click.prevent="beginLogin('sso', provider.slug)">{{ t('auth.ssoWith', { name: provider.name }) }}</a>
+      <a v-if="loginMode === 'password'" class="stash-login-alt" href="/auth/login?provider=token" @click.prevent="loginMode = 'token'; loginError = ''">{{ t('auth.withToken') }}</a>
+      <a v-else-if="canLocalLogin" class="stash-login-alt" href="/auth/login?provider=local" @click.prevent="loginMode = 'password'; loginError = ''">{{ t('auth.withPassword') }}</a>
+    </template>
   </div>
 </section>
 <div v-else class="stash-console" @keydown.esc="route.detail ? closeDetail() : clearSelection()">
   <aside class="stash-sidebar" :aria-label="t('nav.main')">
     <div class="stash-brand"><span class="stash-brand-mark">S</span><span>Stash</span></div>
     <label class="stash-root-select"><span>{{ t('nav.workspaces') }}</span><select v-model="rootSlug" :title="rootSlug" @change="changeRoot"><option v-for="item in rootOptions" :key="item.slug" :value="item.slug">{{ item.name || (item.slug === '/' ? t('workspace.default') : item.slug) }}</option></select></label>
-    <select class="stash-mobile-nav" :aria-label="t('nav.page')" :value="route.route" @change="navigate($event.target.value)"><option v-for="item in navItems" :key="item.route" :value="item.route">{{ item.label }}</option><option value="list_memories">{{ t('nav.memories') }}</option><option value="list_goals">{{ t('nav.goals') }}</option><option value="list_namespaces">{{ t('nav.manageWorkspaces') }}</option><option value="tokens">{{ t('nav.tokens') }}</option><option value="agent">{{ t('nav.agent') }}</option><option value="maintenance">{{ t('nav.maintenance') }}</option></select>
+    <select class="stash-mobile-nav" :aria-label="t('nav.page')" :value="route.route === 'wiki_page' ? 'wiki' : route.route" @change="navigate($event.target.value)"><optgroup :label="t('nav.sectionWiki')"><option value="wiki">{{ t('nav.wikiHome') }}</option></optgroup><optgroup :label="t('nav.sectionMemory')"><option value="list_memories">{{ t('nav.memories') }}</option><option value="list_goals">{{ t('nav.goals') }}</option><option v-for="item in navItems" :key="item.route" :value="item.route">{{ item.label }}</option></optgroup><optgroup :label="t('nav.sectionServer')"><option v-if="showAdminNav" value="llm">{{ t('nav.llm') }}</option><option v-if="showAdminNav" value="maintenance">{{ t('nav.maintenance') }}</option><option v-if="showAdminNav && canLogin" value="access">{{ t('nav.access') }}</option><option value="list_namespaces">{{ t('nav.manageWorkspaces') }}</option><option value="tokens">{{ t('nav.tokens') }}</option><option value="agent">{{ t('nav.agent') }}</option></optgroup></select>
     <nav class="stash-nav">
-      <span class="stash-nav-label">{{ t('nav.project') }}</span>
-      <a v-for="item in navItems" :key="item.route" :href="navHref(item.route)" :class="{'is-active': route.route === item.route}" :aria-current="route.route === item.route ? 'page' : null" @click.prevent="navigate(item.route)"><span class="stash-nav-icon">{{ item.icon }}</span><span>{{ item.label }}</span></a>
-      <a :href="navHref('list_goals')" :class="{'is-active': route.route === 'list_goals'}" @click.prevent="navigate('list_goals')"><span class="stash-nav-icon">↗</span><span>{{ t('nav.goals') }}</span></a>
+      <span class="stash-nav-label">{{ t('nav.sectionWiki') }}</span>
+      <a :href="navHref('wiki')" :class="{'is-active': ['wiki', 'wiki_page'].includes(route.route)}" :aria-current="['wiki', 'wiki_page'].includes(route.route) ? 'page' : null" @click.prevent="navigate('wiki')"><span class="stash-nav-icon">▤</span><span>{{ t('nav.wikiHome') }}</span></a>
+      <span class="stash-nav-label">{{ t('nav.sectionMemory') }}</span>
       <a :href="navHref('list_memories')" :class="{'is-active': ['list_memories', 'query_facts', 'list_hypotheses'].includes(route.route)}" @click.prevent="navigate('list_memories')"><span class="stash-nav-icon">✓</span><span>{{ t('nav.memories') }}</span></a>
+      <a :href="navHref('list_goals')" :class="{'is-active': route.route === 'list_goals'}" @click.prevent="navigate('list_goals')"><span class="stash-nav-icon">↗</span><span>{{ t('nav.goals') }}</span></a>
+      <a v-for="item in navItems" :key="item.route" :href="navHref(item.route)" :class="{'is-active': route.route === item.route}" :aria-current="route.route === item.route ? 'page' : null" @click.prevent="navigate(item.route)"><span class="stash-nav-icon">{{ item.icon }}</span><span>{{ item.label }}</span></a>
+      <span class="stash-nav-label">{{ t('nav.sectionServer') }}</span>
+      <a v-if="showAdminNav" :href="navHref('llm')" :class="{'is-active': route.route === 'llm'}" @click.prevent="navigate('llm')"><span class="stash-nav-icon">⚙</span><span>{{ t('nav.llm') }}</span></a>
+      <a v-if="showAdminNav" :href="navHref('maintenance')" :class="{'is-active': route.route === 'maintenance'}" @click.prevent="navigate('maintenance')"><span class="stash-nav-icon">↻</span><span>{{ t('nav.maintenance') }}</span></a>
+      <a v-if="showAdminNav && canLogin" :href="navHref('access')" :class="{'is-active': route.route === 'access'}" @click.prevent="navigate('access')"><span class="stash-nav-icon">⚷</span><span>{{ t('nav.access') }}</span></a>
+      <a :href="navHref('list_namespaces')" :class="{'is-active': route.route === 'list_namespaces'}" @click.prevent="navigate('list_namespaces')"><span class="stash-nav-icon">◌</span><span>{{ t('nav.manageWorkspaces') }}</span></a>
+      <a :href="navHref('tokens')" :class="{'is-active': route.route === 'tokens'}" @click.prevent="navigate('tokens')"><span class="stash-nav-icon">⚿</span><span>{{ t('nav.tokens') }}</span></a>
+      <a :href="navHref('agent')" :class="{'is-active': route.route === 'agent'}" @click.prevent="navigate('agent')"><span class="stash-nav-icon">☰</span><span>{{ t('nav.agent') }}</span></a>
     </nav>
-    <div class="stash-sidebar-foot"><a :href="navHref('list_namespaces')" :class="{'is-active': route.route === 'list_namespaces'}" @click.prevent="navigate('list_namespaces')"><span class="stash-nav-icon">◌</span><span>{{ t('nav.manageWorkspaces') }}</span></a><a :href="navHref('tokens')" :class="{'is-active': route.route === 'tokens'}" @click.prevent="navigate('tokens')">{{ t('nav.tokens') }}</a><a :href="navHref('agent')" @click.prevent="navigate('agent')">{{ t('nav.agent') }}</a><a :href="navHref('maintenance')" @click.prevent="navigate('maintenance')">{{ t('nav.maintenance') }}</a></div>
     <div class="stash-sidebar-settings">
       <label><span>{{ t('theme.label') }}</span><select class="stash-theme-select" :value="themePreference" @change="changeTheme($event.target.value)"><option value="system">{{ t('theme.system') }}</option><option value="light">{{ t('theme.light') }}</option><option value="dark">{{ t('theme.dark') }}</option></select></label>
       <label><span>{{ t('language.label') }}</span><select class="stash-language-select" :value="locale" @change="changeLocale($event.target.value)"><option value="ko">한국어</option><option value="en">English</option></select></label>
@@ -40,12 +74,23 @@
 
     <section v-if="authPanelOpen" id="stash-account" class="stash-token-panel" @keydown.esc="authPanelOpen = false">
       <div class="stash-inspector-head"><h3>{{ t('auth.account') }}</h3><button type="button" :aria-label="t('auth.closeAccount')" @click="authPanelOpen = false">×</button></div>
+      <p class="stash-account-user"><strong>{{ auth.user }}</strong><span v-if="auth.admin"> · {{ t('auth.administrator') }}</span></p>
+      <form v-if="auth.has_password" class="stash-password-form" @submit.prevent="changePassword">
+        <strong>{{ t('auth.changePassword') }}</strong>
+        <label class="stash-field"><span>{{ t('auth.currentPassword') }}</span><input v-model="passwordForm.current" type="password" autocomplete="current-password" :disabled="passwordBusy"></label>
+        <label class="stash-field"><span>{{ t('auth.newPassword') }}</span><input v-model="passwordForm.next" type="password" autocomplete="new-password" minlength="8" maxlength="72" :disabled="passwordBusy"></label>
+        <label class="stash-field"><span>{{ t('auth.confirmPassword') }}</span><input v-model="passwordForm.confirm" type="password" autocomplete="new-password" :disabled="passwordBusy"></label>
+        <p v-if="passwordError" class="stash-error" role="alert">{{ t(passwordError) }}</p>
+        <p v-if="passwordNotice" class="stash-context-note" role="status">{{ t(passwordNotice) }}</p>
+        <button type="submit" class="stash-button" :disabled="passwordBusy">{{ passwordBusy ? t('auth.saving') : t('auth.changePassword') }}</button>
+      </form>
       <div class="stash-token-actions"><button type="button" class="stash-button" @click="navigate('tokens'); authPanelOpen = false">{{ t('auth.issueToken') }}</button><a class="stash-button" :href="navHref('tokens')" @click.prevent="navigate('tokens'); authPanelOpen = false">{{ t('auth.manageTokens') }}</a><a class="stash-button is-quiet" href="/auth/logout" @click.prevent="logout">{{ t('auth.logout') }}</a></div>
       <div class="stash-token-issued" v-if="issuedToken"><code>{{ issuedToken }}</code><button type="button" class="stash-button" @click="copyIssuedToken">{{ t('auth.copyToken') }}</button></div>
       <div v-if="tokenError" class="stash-error">{{ t(tokenError) }}</div>
     </section>
 
     <section class="stash-surface">
+      <div v-if="workspaceMissing && !error && !['llm', 'maintenance', 'access', 'tokens', 'agent', 'list_namespaces'].includes(route.route)" class="stash-empty stash-workspace-missing"><strong>{{ t('workspace.missing') }}</strong><span>{{ t('workspace.missingHint') }}</span><button type="button" class="stash-button is-primary" :disabled="workspaceInitializing" @click="initializeWorkspace">{{ workspaceInitializing ? t('workspace.initializing') : t('workspace.initialize') }}</button></div>
       <div v-if="error" class="stash-error" role="alert">{{ t(error) }} <button type="button" class="stash-button" @click="loadRoute()">{{ t('action.retry') }}</button> <button v-if="['goal-map', 'monitor'].includes(route.route)" type="button" class="stash-button" @click="navigate('board')">{{ t('view.workList') }}</button></div>
       <div v-if="refreshError" class="stash-context-note" role="status">{{ t(refreshError) }} <button type="button" class="stash-button" :disabled="refreshing" @click="refreshVisible">{{ t('action.retry') }}</button></div>
       <div v-if="loading" class="stash-loading" role="status">{{ t('view.loading') }}</div>
@@ -77,6 +122,84 @@
             <div v-if="!mapLayout.nodes.length" class="stash-empty"><strong>{{ hasFilters ? t('empty.filtered') : t('empty.overview') }}</strong><button v-if="hasFilters" type="button" class="stash-button" @click="resetFilters">{{ t('action.clearFilters') }}</button></div>
             <div v-else-if="mapAsList" class="stash-list"><button v-for="node in mapLayout.nodes" :key="node.key" type="button" class="stash-list-item" :class="{'is-selected': selected && selected.key === node.key}" @click="selectMapNode(node)"><span><strong>{{ nodeTitle(node) }}</strong><small v-if="node.kind === 'goal'">{{ goalProgressLabel(node.item) }}</small><small v-else-if="node.kind === 'work'">{{ workNote(node.item) }}</small></span><span class="stash-list-meta"><span>{{ kindLabel(node.kind) }}</span><span v-if="node.kind === 'work'" class="stash-status" :data-status="displayStatus(node.item)">{{ statusLabel(displayStatus(node.item)) }}</span><span v-else-if="node.kind === 'memory'">{{ memoryTypeLabel(node.item.memory_type) }}</span></span></button></div>
             <div v-else class="stash-map-viewport"><div class="stash-map-canvas" :style="canvasStyle(mapLayout)"><svg class="stash-map-edge-layer" :viewBox="'0 0 ' + mapLayout.width + ' ' + mapLayout.height" aria-hidden="true"><defs><marker id="stash-map-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#818cf8"></path></marker></defs><path v-for="edge in mapLayout.edges" :key="edge.key" :d="edge.path" :stroke="edge.stroke" stroke-width="2" :stroke-dasharray="edge.dashArray || null" :marker-end="edge.marker ? 'url(#stash-map-arrow)' : null" fill="none"></path></svg><div v-for="ring in mapLayout.rings" :key="ring.key" class="stash-map-ring" :style="ring.style"><span>{{ t('map.ring.' + ring.key) }} · {{ formatNumber(ring.count) }}</span></div><button v-for="node in mapLayout.nodes" :key="node.key" type="button" class="stash-map-node" :class="mapNodeClasses(node)" :style="node.style" :aria-label="nodeAria(node)" @click="selectMapNode(node)"><span class="stash-node-meta"><span class="stash-node-key">{{ nodeKey(node) }}</span><span v-if="node.kind === 'work'" class="stash-status" :data-status="displayStatus(node.item)">{{ statusLabel(displayStatus(node.item)) }}</span><span v-else>{{ kindLabel(node.kind) }}</span></span><span class="stash-node-title">{{ nodeTitle(node) }}</span><span v-if="node.kind === 'goal'" class="stash-node-note">{{ goalProgressLabel(node.item) }}</span><span v-if="node.kind === 'work'" class="stash-node-note">{{ workNote(node.item) }}</span><span v-else-if="node.kind === 'resource'" class="stash-node-note">{{ node.item.source || t('resource.linked') }}</span><span v-else-if="node.kind === 'memory'" class="stash-node-note">{{ memoryTypeLabel(node.item.memory_type) }}</span></button></div></div>
+          </template>
+
+          <template v-else-if="route.route === 'wiki'">
+            <div class="stash-wiki-home">
+              <p class="stash-wiki-intro">{{ t('wiki.description') }}</p>
+              <div class="stash-toolbar stash-wiki-toolbar">
+                <label class="stash-field is-search"><span class="stash-sr-only">{{ t('action.search') }}</span><input v-model="filters.query" :placeholder="t('wiki.search')" @input="syncURL" @keydown.enter="searchList"></label>
+                <label class="stash-field"><span>{{ t('wiki.kind') }}</span><select v-model="wikiFilters.kind" @change="searchWiki"><option value="">{{ t('wiki.allKinds') }}</option><option v-for="kind in wikiKinds" :key="kind" :value="kind">{{ t('wiki.kind.' + kind) }}</option></select></label>
+                <label class="stash-check"><input v-model="wikiFilters.stale" type="checkbox" @change="searchWiki"><span>{{ t('wiki.staleOnly') }}</span></label>
+                <button type="button" class="stash-button" :disabled="wikiBusy" @click="lintWiki">{{ t('wiki.lint') }}</button>
+                <button type="button" class="stash-button is-primary" @click="newWikiPage">{{ t('wiki.newPage') }}</button>
+              </div>
+              <p v-if="wikiNotice" class="stash-wiki-notice" role="status">{{ t(wikiNotice) }}</p>
+              <p v-if="wikiError" class="stash-error" role="alert">{{ t(wikiError) }}</p>
+              <section v-if="wikiLint" class="stash-wiki-lint" :aria-label="t('wiki.lint')">
+                <header><strong>{{ t('wiki.lint') }}</strong><span>{{ t('wiki.lintSummary', { pages: wikiLint.pages, findings: wikiLint.findings.length }) }}</span><button type="button" class="stash-button" @click="wikiLint = null">×</button></header>
+                <p v-if="!wikiLint.findings.length">{{ t('wiki.lintClean') }}</p>
+                <ul v-else><li v-for="(finding, index) in wikiLint.findings" :key="index" :data-severity="finding.severity"><button v-if="finding.page_slug" type="button" class="stash-wiki-linkbutton" @click="openWikiPage(finding.page_slug)">{{ finding.page_slug }}</button><span>{{ t('wiki.lint.' + finding.code) }}</span><code v-if="finding.target">{{ finding.target }}</code></li></ul>
+              </section>
+              <div v-if="!wikiPages.length" class="stash-empty"><strong>{{ filters.query || wikiFilters.kind || wikiFilters.stale ? t('wiki.noMatches') : t('wiki.noPages') }}</strong><span v-if="!filters.query">{{ t('wiki.noPagesHint') }}</span></div>
+              <div v-else class="stash-wiki-list">
+                <button v-for="page in wikiPages" :key="page.id" type="button" class="stash-wiki-card" @click="openWikiPage(page.slug)">
+                  <span class="stash-wiki-card-head"><strong>{{ page.title }}</strong><span class="stash-wiki-kind" :data-kind="page.kind">{{ t('wiki.kind.' + page.kind) }}</span><span v-if="page.stale_at" class="stash-wiki-stale">{{ t('wiki.stale') }}</span></span>
+                  <span v-if="page.summary" class="stash-wiki-card-summary">{{ page.summary }}</span>
+                  <span class="stash-wiki-card-meta"><code>{{ page.slug }}</code><span>{{ t('wiki.updatedBy', { time: formatDateTime(page.updated_at), author: page.author || t('wiki.author.' + page.author_kind) }) }}</span><span v-for="tag in page.tags" :key="tag" class="stash-wiki-tag">{{ tag }}</span></span>
+                </button>
+              </div>
+              <div v-if="wikiPages.length" class="stash-pagination"><span>{{ t('view.shownCount', { count: wikiPages.length }) }}</span><button v-if="route.offset" type="button" class="stash-button" @click="searchList">{{ t('action.firstPage') }}</button><button v-if="page.hasMore" type="button" class="stash-button" @click="nextPage">{{ t('action.nextPage') }}</button></div>
+              <details class="stash-wiki-log" :open="!wikiPages.length"><summary>{{ t('wiki.log') }}</summary>
+                <p v-if="!wikiLog.length">{{ t('wiki.logEmpty') }}</p>
+                <ul v-else><li v-for="entry in wikiLog" :key="entry.id"><span class="stash-wiki-log-time">{{ formatDateTime(entry.created_at) }}</span><span class="stash-wiki-log-action" :data-action="entry.action">{{ t('wiki.action.' + entry.action) }}</span><button v-if="entry.page_slug" type="button" class="stash-wiki-linkbutton" @click="openWikiPage(entry.page_slug)">{{ entry.page_slug }}</button><span>{{ entry.summary }}</span><small v-if="entry.actor">{{ entry.actor }}</small></li></ul>
+              </details>
+            </div>
+          </template>
+
+          <template v-else-if="route.route === 'wiki_page' && wikiEdit">
+            <form class="stash-wiki-editor" @submit.prevent="saveWikiPage">
+              <div class="stash-wiki-editor-fields">
+                <label class="stash-field"><span>{{ t('wiki.title') }}</span><input v-model="wikiEdit.title" required :disabled="wikiBusy"></label>
+                <label class="stash-field"><span>{{ t('wiki.slug') }}</span><input v-model="wikiEdit.slug" required pattern="[a-z0-9][a-z0-9_\\-]*(/[a-z0-9][a-z0-9_\\-]*)*" :disabled="wikiBusy || !wikiEdit.isNew" :placeholder="t('wiki.slugHint')"></label>
+                <label class="stash-field"><span>{{ t('wiki.kind') }}</span><select v-model="wikiEdit.kind" :disabled="wikiBusy"><option v-for="kind in wikiKinds" :key="kind" :value="kind">{{ t('wiki.kind.' + kind) }}</option></select></label>
+                <label class="stash-field"><span>{{ t('wiki.tags') }}</span><input v-model="wikiEdit.tags" :disabled="wikiBusy"></label>
+                <label class="stash-field is-wide"><span>{{ t('wiki.summary') }}</span><input v-model="wikiEdit.summary" :disabled="wikiBusy"></label>
+              </div>
+              <div class="stash-wiki-editor-body">
+                <label class="stash-field"><span>{{ t('wiki.content') }}</span><textarea v-model="wikiEdit.content" required :disabled="wikiBusy" spellcheck="false"></textarea><small>{{ t('wiki.contentHint') }}</small></label>
+                <section class="stash-wiki-preview" :aria-label="t('wiki.preview')"><h4>{{ t('wiki.preview') }}</h4><article class="stash-wiki-article" v-html="renderWikiMarkdown(wikiEdit.content)"></article></section>
+              </div>
+              <label class="stash-field"><span>{{ t('wiki.changeNote') }}</span><input v-model="wikiEdit.changeNote" :disabled="wikiBusy"></label>
+              <p v-if="wikiNotice" class="stash-wiki-notice" role="status">{{ t(wikiNotice) }}</p>
+              <p v-if="wikiError" class="stash-error" role="alert">{{ t(wikiError) }}</p>
+              <div class="stash-llm-actions">
+                <button type="submit" class="stash-button is-primary" :disabled="wikiBusy">{{ t('wiki.save') }}</button>
+                <button type="button" class="stash-button" :disabled="wikiBusy" @click="cancelWikiEdit">{{ t('wiki.cancel') }}</button>
+                <button type="button" class="stash-button" :disabled="wikiBusy" :title="t('wiki.compileHint')" @click="compileWikiDraft">{{ wikiBusy && wikiCompiling ? t('wiki.compiling') : t('wiki.compile') }}</button>
+              </div>
+            </form>
+          </template>
+
+          <template v-else-if="route.route === 'wiki_page' && wikiPage">
+            <article class="stash-wiki-page">
+              <header class="stash-wiki-page-head">
+                <div><p class="stash-kicker"><code>{{ wikiPage.page.slug }}</code> · <span class="stash-wiki-kind" :data-kind="wikiPage.page.kind">{{ t('wiki.kind.' + wikiPage.page.kind) }}</span><span v-if="wikiPage.page.stale_at" class="stash-wiki-stale">{{ t('wiki.stale') }}</span></p><h2>{{ wikiPage.page.title }}</h2><p v-if="wikiPage.page.summary" class="stash-wiki-summary">{{ wikiPage.page.summary }}</p><p class="stash-wiki-meta">{{ t('wiki.revision', { revision: wikiPage.revision }) }} · {{ t('wiki.updatedBy', { time: formatDateTime(wikiPage.page.updated_at), author: wikiPage.page.author || t('wiki.author.' + wikiPage.page.author_kind) }) }} · {{ t('wiki.author.' + wikiPage.page.author_kind) }} · {{ wikiPage.page.indexed ? t('wiki.indexed') : t('wiki.unindexed') }}<span v-for="tag in wikiPage.page.tags" :key="tag" class="stash-wiki-tag">{{ tag }}</span></p></div>
+                <div class="stash-llm-actions"><button type="button" class="stash-button" @click="navigate('wiki')">{{ t('action.backToList') }}</button><button type="button" class="stash-button" @click="toggleWikiHistory">{{ t('wiki.history') }}</button><button type="button" class="stash-button is-primary" :disabled="wikiBusy || wikiPage.revision !== wikiPage.page.revision" @click="editWikiPage">{{ t('wiki.edit') }}</button><button type="button" class="stash-button is-danger" :disabled="wikiBusy" @click="deleteWikiPage">{{ t('wiki.delete') }}</button></div>
+              </header>
+              <p v-if="wikiPage.revision !== wikiPage.page.revision" class="stash-context-note">{{ t('wiki.viewingRevision', { revision: wikiPage.revision, current: wikiPage.page.revision }) }} <button type="button" class="stash-button" @click="openWikiPage(wikiPage.page.slug)">{{ t('wiki.current') }}</button></p>
+              <p v-if="wikiNotice" class="stash-wiki-notice" role="status">{{ t(wikiNotice) }}</p>
+              <p v-if="wikiError" class="stash-error" role="alert">{{ t(wikiError) }}</p>
+              <div class="stash-wiki-page-grid">
+                <div class="stash-wiki-article" @click="wikiArticleClick" v-html="wikiRendered"></div>
+                <aside class="stash-wiki-aside">
+                  <section v-if="wikiHistoryOpen" :aria-label="t('wiki.history')"><h4>{{ t('wiki.history') }}</h4><p v-if="!wikiHistory.length">{{ t('wiki.historyEmpty') }}</p><ul v-else class="stash-wiki-history"><li v-for="revision in wikiHistory" :key="revision.id"><button type="button" class="stash-wiki-linkbutton" :class="{ 'is-active': revision.revision === wikiPage.revision }" @click="openWikiPage(wikiPage.page.slug, { revision: revision.revision })">{{ t('wiki.revision', { revision: revision.revision }) }}</button><span>{{ formatDateTime(revision.created_at) }} · {{ revision.author || t('wiki.author.' + revision.author_kind) }}</span><small v-if="revision.change_note">{{ revision.change_note }}</small></li></ul></section>
+                  <section :aria-label="t('wiki.sources')"><h4>{{ t('wiki.sources') }}</h4><p v-if="!wikiPage.sources.length">{{ t('wiki.noSources') }}</p><ul v-else class="stash-wiki-sources"><li v-for="source in wikiPage.sources" :key="source.source_type + ':' + source.source_ref" :id="'source-' + source.source_type + ':' + source.source_ref" :class="{ 'is-focused': wikiFocusedSource === source.source_type + ':' + source.source_ref }"><div><code>{{ source.source_type }}:{{ source.source_ref }}</code><span class="stash-wiki-source-status" :data-status="source.status">{{ t('wiki.source.' + (source.status || 'ok')) }}</span></div><small v-if="source.excerpt">{{ source.excerpt }}</small><small v-if="source.note">{{ source.note }}</small></li></ul></section>
+                  <section v-if="wikiPage.links.length" :aria-label="t('wiki.links')"><h4>{{ t('wiki.links') }}</h4><ul class="stash-wiki-linklist"><li v-for="link in wikiPage.links" :key="link.target_slug"><button type="button" class="stash-wiki-linkbutton" @click="openWikiPage(link.target_slug)">{{ link.target_title || link.target_slug }}</button><small v-if="!link.target_page_id">{{ t('wiki.missingTarget') }}</small></li></ul></section>
+                  <section v-if="wikiPage.backlinks.length" :aria-label="t('wiki.backlinks')"><h4>{{ t('wiki.backlinks') }}</h4><ul class="stash-wiki-linklist"><li v-for="link in wikiPage.backlinks" :key="link.page_id"><button type="button" class="stash-wiki-linkbutton" @click="openWikiPage(link.target_slug)">{{ link.target_title || link.target_slug }}</button></li></ul></section>
+                </aside>
+              </div>
+            </article>
           </template>
 
           <template v-else-if="route.route === 'graph'">
@@ -121,7 +244,111 @@
             </section>
           </template>
           <template v-else-if="route.route === 'agent'"><div class="stash-guide"><button type="button" class="stash-button" @click="copyAgentGuide">{{ t(copyStatus) }}</button><details><summary>{{ t('agent.allRules') }}</summary><textarea :aria-label="t('agent.rulesLabel')" readonly :value="agentGuide"></textarea></details></div></template>
-          <template v-else-if="route.route === 'maintenance' && maintenance"><div class="stash-guide"><dl class="stash-maintenance-counts"><div><dt>{{ t('maintenance.pending') }}</dt><dd>{{ formatNumber(maintenance.pending || 0) }}</dd></div><div><dt>{{ t('maintenance.due') }}</dt><dd>{{ formatNumber(maintenance.due || 0) }}</dd></div><div><dt>{{ t('maintenance.failed') }}</dt><dd>{{ formatNumber(maintenance.failed || 0) }}</dd></div><div><dt>{{ t('maintenance.paused') }}</dt><dd>{{ formatNumber(maintenance.paused || 0) }}</dd></div></dl><div class="stash-top-actions"><button type="button" class="stash-button" :disabled="maintenanceAction" @click="runMaintenance('retry')">{{ t('maintenance.retry') }}</button><button type="button" class="stash-button" :disabled="maintenanceAction" @click="runMaintenance('reindex')">{{ t('maintenance.reindex') }}</button></div><p v-if="maintenanceNotice" role="status">{{ t(maintenanceNotice) }}</p><details v-if="maintenance.latest_error"><summary>{{ t('maintenance.latestError') }}</summary><p>{{ maintenance.latest_error }}</p></details></div></template>
+          <template v-else-if="route.route === 'access' && sso">
+            <div class="stash-guide stash-llm stash-access">
+              <p class="stash-llm-intro">{{ t('access.description') }}</p>
+              <p v-if="!sso.secrets_enabled" class="stash-llm-warning" role="status">{{ t('access.noSecretsKey') }}</p>
+              <p v-if="ssoNotice" class="stash-llm-notice" role="status">{{ t(ssoNotice) }}</p>
+              <p v-if="ssoError" class="stash-error" role="alert">{{ t(ssoError) }}</p>
+              <section class="stash-llm-section" :aria-label="t('access.sso')">
+                <header class="stash-llm-head"><h3>{{ t('access.sso') }}</h3><div class="stash-llm-actions"><button v-if="sso.environment_issuer && !sso.providers.some(item => item.source === 'environment' && item.id)" type="button" class="stash-button" :disabled="ssoBusy" @click="importSSOEnvironment">{{ t('access.importEnv') }}</button><button type="button" class="stash-button" :disabled="ssoBusy || !sso.secrets_enabled" @click="openSSOForm(null)">{{ t('access.addProvider') }}</button></div></header>
+                <p class="stash-access-hint">{{ t('access.callbackHint', { url: ssoCallbackURL }) }}</p>
+                <div v-if="!sso.providers.length && !ssoForm" class="stash-empty"><strong>{{ t('access.noProviders') }}</strong><span>{{ t('access.noProvidersHint') }}</span></div>
+                <ul v-else-if="sso.providers.length" class="stash-llm-providers">
+                  <li v-for="provider in sso.providers" :key="provider.id || provider.slug" :class="{ 'is-disabled': !provider.enabled }">
+                    <div><strong>{{ provider.display_name || provider.slug }}</strong><small>{{ provider.issuer }} · {{ provider.client_id }}<template v-if="provider.source === 'environment'"> · {{ provider.id ? t('access.fromEnvironment') : t('access.environmentOnly') }}</template></small><small :class="{ 'stash-llm-error': provider.status === 'error' }">{{ t('access.status.' + provider.status) }}<template v-if="provider.error"> · {{ provider.error }}</template><template v-if="ssoTest[String(provider.id)]"> · {{ ssoTest[String(provider.id)].ok ? t('access.testOk') : t('access.testFailed', { message: ssoTest[String(provider.id)].error || '' }) }}</template></small></div>
+                    <div v-if="provider.id" class="stash-llm-actions"><button type="button" class="stash-button" :disabled="ssoBusy" @click="testSSOProvider(provider)">{{ t('access.test') }}</button><button type="button" class="stash-button" :disabled="ssoBusy" @click="openSSOForm(provider)">{{ t('llm.edit') }}</button><button type="button" class="stash-button is-danger" :disabled="ssoBusy" @click="deleteSSOProvider(provider)">{{ t('llm.delete') }}</button></div>
+                  </li>
+                </ul>
+                <form v-if="ssoForm" class="stash-llm-form" @submit.prevent="saveSSOProvider">
+                  <h4>{{ ssoForm.id ? t('access.editProvider') : t('access.addProvider') }}</h4>
+                  <label class="stash-field"><span>{{ t('access.slug') }}</span><input v-model="ssoForm.slug" required pattern="[a-z0-9][a-z0-9_\\-]{0,63}" autocomplete="off" :disabled="ssoBusy" placeholder="authentik"></label>
+                  <label class="stash-field"><span>{{ t('access.displayName') }}</span><input v-model="ssoForm.display_name" autocomplete="off" :disabled="ssoBusy" :placeholder="t('access.displayNamePlaceholder')"></label>
+                  <label class="stash-field"><span>{{ t('access.issuer') }}</span><input v-model="ssoForm.issuer" required type="url" autocomplete="off" :disabled="ssoBusy" placeholder="https://auth.example.com/application/o/stash/"></label>
+                  <label class="stash-field"><span>{{ t('access.clientId') }}</span><input v-model="ssoForm.client_id" required autocomplete="off" :disabled="ssoBusy"></label>
+                  <label class="stash-field"><span>{{ t('access.clientSecret') }}</span><input v-model="ssoForm.client_secret" type="password" autocomplete="off" :required="!ssoForm.id" :disabled="ssoBusy" :placeholder="ssoForm.id ? t('access.keepSecret') : ''"></label>
+                  <label class="stash-field"><span>{{ t('access.redirectUrl') }}</span><input v-model="ssoForm.redirect_url" required type="url" autocomplete="off" :disabled="ssoBusy"></label>
+                  <label class="stash-check"><input v-model="ssoForm.enabled" type="checkbox" :disabled="ssoBusy"><span>{{ t('llm.enabled') }}</span></label>
+                  <div class="stash-llm-actions"><button type="submit" class="stash-button is-primary" :disabled="ssoBusy">{{ t('llm.save') }}</button><button type="button" class="stash-button" :disabled="ssoBusy" @click="ssoForm = null">{{ t('action.cancel') }}</button></div>
+                </form>
+              </section>
+              <section class="stash-llm-section stash-users" :aria-label="t('users.heading')">
+                <header class="stash-llm-head"><h3>{{ t('users.heading') }}</h3><button type="button" class="stash-button" :disabled="usersBusy" @click="openUserForm()">{{ t('users.add') }}</button></header>
+                <p class="stash-access-hint">{{ t('users.description') }}</p>
+                <p v-if="usersNotice" class="stash-llm-notice" role="status">{{ t(usersNotice) }}</p>
+                <p v-if="usersError" class="stash-error" role="alert">{{ t(usersError) }}</p>
+                <form v-if="userForm" class="stash-llm-form" @submit.prevent="saveUser">
+                  <h4>{{ userForm.username && userForm.mode === 'password' ? t('users.setPassword', { name: userForm.username }) : t('users.add') }}</h4>
+                  <label v-if="userForm.mode === 'create'" class="stash-field"><span>{{ t('auth.username') }}</span><input v-model="userForm.username" required pattern="[a-z0-9][a-z0-9._\\-]{0,63}" autocomplete="off" autocapitalize="off" :disabled="usersBusy"></label>
+                  <label v-if="userForm.mode === 'create'" class="stash-field"><span>{{ t('users.displayName') }}</span><input v-model="userForm.display_name" autocomplete="off" :disabled="usersBusy"></label>
+                  <label class="stash-field"><span>{{ userForm.mode === 'create' ? t('users.passwordOptional') : t('auth.newPassword') }}</span><input v-model="userForm.password" type="password" autocomplete="new-password" minlength="8" maxlength="72" :required="userForm.mode === 'password'" :disabled="usersBusy" :placeholder="userForm.mode === 'create' ? t('users.passwordHint') : ''"></label>
+                  <label v-if="userForm.mode === 'create'" class="stash-check"><input v-model="userForm.is_admin" type="checkbox" :disabled="usersBusy"><span>{{ t('users.admin') }}</span></label>
+                  <div class="stash-llm-actions"><button type="submit" class="stash-button is-primary" :disabled="usersBusy">{{ t('llm.save') }}</button><button type="button" class="stash-button" :disabled="usersBusy" @click="userForm = null">{{ t('action.cancel') }}</button></div>
+                </form>
+                <div v-if="!users.length" class="stash-loading" role="status">{{ t('users.loading') }}</div>
+                <ul v-else class="stash-llm-providers stash-user-list">
+                  <li v-for="user in users" :key="user.username" :class="{ 'is-disabled': user.disabled }">
+                    <div>
+                      <strong>{{ user.username }}<span v-if="user.display_name" class="stash-user-display"> · {{ user.display_name }}</span><span v-if="user.is_admin" class="stash-user-badge">{{ t('users.admin') }}</span><span v-if="user.disabled" class="stash-user-badge is-off">{{ t('users.disabled') }}</span><span v-if="user.username === usersActor" class="stash-user-badge is-you">{{ t('users.you') }}</span></strong>
+                      <small>{{ userIdentityText(user) }}<template v-if="user.last_login_at"> · {{ t('users.lastLogin', { time: formatDateTime(user.last_login_at) }) }}</template></small>
+                      <div v-if="userTokens[user.username]" class="stash-user-tokens">
+                        <div v-if="!userTokens[user.username].length" class="stash-user-token-empty">{{ t('users.noTokens') }}</div>
+                        <div v-for="token in userTokens[user.username]" :key="token.id" class="stash-user-token"><span><strong>{{ token.name || t('tokens.unnamed') }}</strong> <small>#{{ token.id }} · {{ formatDateTime(token.created_at) }} · {{ t(tokenStatus(token)) }}<template v-if="token.last_used_at"> · {{ t('tokens.lastUsed', { time: formatDateTime(token.last_used_at) }) }}</template><template v-if="token.expires_at && !token.revoked_at"> · {{ t('tokens.expiresAt', { time: formatDateTime(token.expires_at) }) }}</template></small></span><button v-if="!token.revoked_at" type="button" class="stash-button is-danger" :disabled="usersBusy" @click="revokeUserToken(user, token)">{{ t('tokens.revoke') }}</button></div>
+                      </div>
+                    </div>
+                    <div class="stash-llm-actions">
+                      <button type="button" class="stash-button" :disabled="usersBusy" @click="toggleUserTokens(user)">{{ userTokens[user.username] ? t('users.hideTokens') : t('users.showTokens') }}</button>
+                      <button type="button" class="stash-button" :disabled="usersBusy" @click="openUserForm(user)">{{ t('users.password') }}</button>
+                      <button type="button" class="stash-button" :disabled="usersBusy || user.username === usersActor" @click="updateUser(user, { is_admin: !user.is_admin })">{{ user.is_admin ? t('users.revokeAdmin') : t('users.makeAdmin') }}</button>
+                      <button type="button" class="stash-button" :disabled="usersBusy || user.username === usersActor" @click="updateUser(user, { disabled: !user.disabled })">{{ user.disabled ? t('users.enable') : t('users.disable') }}</button>
+                      <button type="button" class="stash-button is-danger" :disabled="usersBusy || user.username === usersActor" @click="deleteUser(user)">{{ llmDeleteLabel }}</button>
+                    </div>
+                  </li>
+                </ul>
+              </section>
+            </div>
+          </template>
+          <template v-else-if="route.route === 'llm' && llm">
+            <div class="stash-guide stash-llm">
+              <p class="stash-llm-intro">{{ t('llm.description') }}</p>
+              <p v-if="!llm.secrets_enabled" class="stash-llm-warning" role="status">{{ t('llm.noSecretsKey') }}</p>
+              <p v-if="llmNotice" class="stash-llm-notice" role="status">{{ t(llmNotice) }}</p>
+              <p v-if="llmError" class="stash-error" role="alert">{{ t(llmError) }}</p>
+              <section class="stash-llm-section" :aria-label="t('llm.routes')">
+                <header class="stash-llm-head"><h3>{{ t('llm.routes') }}</h3><button v-if="llm.environment_base_url" type="button" class="stash-button" :disabled="llmBusy" @click="importEnvironment">{{ t('llm.importEnv') }}</button></header>
+                <div class="stash-llm-table-wrap"><table class="stash-llm-table"><thead><tr><th>{{ t('llm.feature') }}</th><th>{{ t('llm.provider') }}</th><th>{{ t('llm.model') }}</th><th>{{ t('llm.settings') }}</th><th></th></tr></thead>
+                <tbody><tr v-for="info in llm.features" :key="info.feature">
+                  <td class="stash-llm-feature"><strong>{{ t('llm.feature.' + info.feature) }}</strong><small>{{ t('llm.featureHint.' + info.feature) }}</small><span class="stash-llm-source" :data-source="llmRouteSource(info.feature)">{{ t('llm.source.' + llmRouteSource(info.feature)) }}<template v-if="llmRoute(info.feature) && llmRoute(info.feature).provider_name"> · {{ llmRoute(info.feature).provider_name }} / {{ llmRoute(info.feature).model }}</template></span><small v-if="llmRoute(info.feature) && llmRoute(info.feature).error" class="stash-llm-error">{{ llmRoute(info.feature).error }}</small></td>
+                  <td><select v-model="llmAssignmentForms[info.feature].provider_id" :aria-label="t('llm.provider')" :disabled="llmBusy"><option value="">{{ llm.environment_base_url ? t('llm.useEnvironment') : t('llm.unassigned') }}</option><option v-for="provider in llm.providers" :key="provider.id" :value="String(provider.id)" :disabled="!provider.enabled">{{ provider.name }}</option></select></td>
+                  <td><input v-model="llmAssignmentForms[info.feature].model" :aria-label="t('llm.model')" :list="'stash-llm-models-' + info.feature" :disabled="llmBusy || !llmAssignmentForms[info.feature].provider_id" :placeholder="t('llm.modelPlaceholder')"><datalist :id="'stash-llm-models-' + info.feature"><option v-for="model in llmModelOptions(info.feature)" :key="model" :value="model"></option></datalist></td>
+                  <td class="stash-llm-numbers"><label v-if="info.kind === 'embedding'"><span>{{ t('llm.dimensions') }}</span><input v-model.number="llmAssignmentForms[info.feature].dimensions" type="number" min="1" max="2000" :disabled="llmBusy || !llmAssignmentForms[info.feature].provider_id"></label><label><span>{{ t('llm.contextTokens') }}</span><input v-model.number="llmAssignmentForms[info.feature].context_tokens" type="number" min="0" :disabled="llmBusy || !llmAssignmentForms[info.feature].provider_id"></label><label v-if="info.kind === 'reasoning'"><span>{{ t('llm.reservedTokens') }}</span><input v-model.number="llmAssignmentForms[info.feature].reserved_tokens" type="number" min="0" :disabled="llmBusy || !llmAssignmentForms[info.feature].provider_id"></label></td>
+                  <td><button type="button" class="stash-button is-primary" :disabled="llmBusy" @click="saveAssignment(info.feature)">{{ t('llm.save') }}</button></td>
+                </tr></tbody></table></div>
+              </section>
+              <section class="stash-llm-section" :aria-label="t('llm.providers')">
+                <header class="stash-llm-head"><h3>{{ t('llm.providers') }}</h3><button type="button" class="stash-button" :disabled="llmBusy" @click="openProviderForm(null)">{{ t('llm.addProvider') }}</button></header>
+                <div v-if="!llm.providers.length && !llmProviderForm" class="stash-empty"><strong>{{ t('llm.noProviders') }}</strong><span>{{ t('llm.noProvidersHint') }}</span></div>
+                <ul v-else-if="llm.providers.length" class="stash-llm-providers">
+                  <li v-for="provider in llm.providers" :key="provider.id" :class="{ 'is-disabled': !provider.enabled }">
+                    <div><strong>{{ provider.name }}</strong><small>{{ provider.base_url }} · {{ provider.has_api_key ? t('llm.hasKey') : t('llm.noKey') }} · {{ t('llm.timeout', { seconds: provider.request_timeout_seconds }) }}<template v-if="!provider.enabled"> · {{ t('llm.disabled') }}</template></small><small v-if="llmProbe[String(provider.id)]" :class="{ 'stash-llm-error': !llmProbe[String(provider.id)].ok }">{{ llmProbeText(llmProbe[String(provider.id)]) }}</small></div>
+                    <div class="stash-llm-actions"><button type="button" class="stash-button" :disabled="llmBusy" @click="probeProvider(provider)">{{ t('llm.probe') }}</button><button type="button" class="stash-button" :disabled="llmBusy" @click="openProviderForm(provider)">{{ t('llm.edit') }}</button><button type="button" class="stash-button is-danger" :disabled="llmBusy" @click="deleteProvider(provider)">{{ t('llm.delete') }}</button></div>
+                  </li>
+                </ul>
+                <form v-if="llmProviderForm" class="stash-llm-form" @submit.prevent="saveProvider">
+                  <h4>{{ llmProviderForm.id ? t('llm.editProvider') : t('llm.addProvider') }}</h4>
+                  <label class="stash-field"><span>{{ t('llm.name') }}</span><input v-model="llmProviderForm.name" required pattern="[a-z0-9][a-z0-9_\\-]{0,63}" autocomplete="off" :disabled="llmBusy" placeholder="openai"></label>
+                  <label class="stash-field"><span>{{ t('llm.baseUrl') }}</span><input v-model="llmProviderForm.base_url" required type="url" autocomplete="off" :disabled="llmBusy" placeholder="https://api.openai.com/v1"></label>
+                  <label class="stash-field"><span>{{ t('llm.apiKey') }}</span><input v-model="llmProviderForm.api_key" type="password" autocomplete="off" :disabled="llmBusy || !llm.secrets_enabled" :placeholder="llmProviderForm.keep_key ? t('llm.keepKey') : t('llm.apiKeyOptional')"></label>
+                  <label v-if="llmProviderForm.id && llmProviderForm.keep_key" class="stash-check"><input v-model="llmProviderForm.clear_key" type="checkbox" :disabled="llmBusy"><span>{{ t('llm.clearKey') }}</span></label>
+                  <label class="stash-field"><span>{{ t('llm.timeoutSeconds') }}</span><input v-model.number="llmProviderForm.request_timeout_seconds" type="number" min="1" :disabled="llmBusy"></label>
+                  <label class="stash-check"><input v-model="llmProviderForm.enabled" type="checkbox" :disabled="llmBusy"><span>{{ t('llm.enabled') }}</span></label>
+                  <small v-if="llmProbe.form" :class="{ 'stash-llm-error': !llmProbe.form.ok }">{{ llmProbeText(llmProbe.form) }}</small>
+                  <div class="stash-llm-actions"><button type="button" class="stash-button" :disabled="llmBusy" @click="probeProvider(llmProviderForm)">{{ t('llm.probe') }}</button><button type="submit" class="stash-button is-primary" :disabled="llmBusy">{{ t('llm.save') }}</button><button type="button" class="stash-button" :disabled="llmBusy" @click="llmProviderForm = null">{{ t('action.cancel') }}</button></div>
+                </form>
+              </section>
+            </div>
+          </template>
+          <template v-else-if="route.route === 'maintenance' && maintenance"><div class="stash-guide"><p v-if="maintenance.provider_available === false" class="stash-llm-warning" role="status">{{ t('maintenance.noProvider') }}</p><dl class="stash-maintenance-counts"><div><dt>{{ t('maintenance.pending') }}</dt><dd>{{ formatNumber(maintenance.pending || 0) }}</dd></div><div><dt>{{ t('maintenance.due') }}</dt><dd>{{ formatNumber(maintenance.due || 0) }}</dd></div><div><dt>{{ t('maintenance.failed') }}</dt><dd>{{ formatNumber(maintenance.failed || 0) }}</dd></div><div><dt>{{ t('maintenance.paused') }}</dt><dd>{{ formatNumber(maintenance.paused || 0) }}</dd></div></dl><div class="stash-top-actions"><button type="button" class="stash-button" :disabled="maintenanceAction" @click="runMaintenance('retry')">{{ t('maintenance.retry') }}</button><button type="button" class="stash-button" :disabled="maintenanceAction" @click="runMaintenance('reindex')">{{ t('maintenance.reindex') }}</button></div><p v-if="maintenanceNotice" role="status">{{ t(maintenanceNotice) }}</p><details v-if="maintenance.latest_error"><summary>{{ t('maintenance.latestError') }}</summary><p>{{ maintenance.latest_error }}</p></details></div></template>
           <template v-else><div class="stash-empty"><strong>{{ staticTitle }}</strong><span>{{ staticText }}</span></div></template>
           <div v-if="((isListRoute && route.route !== 'list_namespaces') || route.route === 'board') && listItems.length" class="stash-pagination"><span>{{ t('view.shownCount', { count: listItems.length }) }}</span><button v-if="route.offset" type="button" class="stash-button" @click="searchList">{{ t('action.firstPage') }}</button><button v-if="page.hasMore" type="button" class="stash-button" @click="nextPage">{{ t('action.more') }}</button></div>
         </section>

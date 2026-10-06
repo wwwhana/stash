@@ -50,7 +50,7 @@ func (b *Brain) consolidateGoalProgress(ctx context.Context, nsID int64, cp *mod
 	var facts []models.Fact
 	for factRows.Next() {
 		var f models.Fact
-		if err := factRows.Scan(&f.ID, &f.NamespaceID, &f.Content, &f.Embedding, &f.EmbeddingModel, &f.Confidence, &f.Entity, &f.Property, &f.Value, &f.ValidFrom, &f.ValidUntil, &f.CreatedAt, &f.UpdatedAt); err != nil {
+		if err := factRows.Scan(&f.ID, &f.NamespaceID, &f.Content, nullVector{&f.Embedding}, &f.EmbeddingModel, &f.Confidence, &f.Entity, &f.Property, &f.Value, &f.ValidFrom, &f.ValidUntil, &f.CreatedAt, &f.UpdatedAt); err != nil {
 			errs = append(errs, fmt.Sprintf("scan fact for goals: %v", err))
 			continue
 		}

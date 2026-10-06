@@ -28,26 +28,24 @@ docker compose up
 
 **완전한 로컬 환경 (클라우드 API 없음):** [Ollama setup guide](docs/LOCAL_OLLAMA.md) — Ollama와 Docker Compose를 사용하여 프라이빗 임베딩 및 추론 모델을 로컬에서 호스팅하는 방법입니다.
 
-## LLM 제공자 설정 (OpenAI 기본 및 로컬 예제)
+## 모델 제공자 설정
 
-Stash는 벡터화(Vectorization)와 추론(Reasoning)을 위해 외부 LLM에 의존합니다. OpenAI 같은 표준 클라우드 제공자나 Ollama 같은 로컬 서버를 모두 사용할 수 있습니다.
+Stash는 임베딩과 추론에 OpenAI 호환 엔드포인트를 사용합니다. 환경 변수로 제공자
+하나를 지정할 수도 있고, 데이터베이스에 여러 제공자를 등록한 뒤 기능별로 어떤
+제공자와 모델을 쓸지 정할 수도 있습니다.
 
-### 기본 설정 (OpenAI)
-
-`.env` 파일을 다음과 같이 설정하세요:
+### 환경 변수 (빠른 시작)
 
 ```bash
+STASH_OPENAI_BASE_URL=https://api.openai.com/v1
 STASH_OPENAI_API_KEY=sk-your-openai-api-key
 STASH_EMBEDDING_MODEL=text-embedding-3-small
 STASH_REASONER_MODEL=gpt-4o-mini
 STASH_VECTOR_DIM=1536
 ```
 
-### 로컬/커스텀 LLM (Ollama, LM Studio)
-
-로컬 서버나 커스텀 OpenAI 호환 서버를 사용하려면 Base URL을 변경하세요.
-해당 서버가 인증을 요구하지 않으면 API 키를 비워도 됩니다.
-**튜닝 팁:** `multilingual-e5-small`과 같은 비대칭 모델을 사용할 경우, 모델의 출력 차원에 맞게 `STASH_VECTOR_DIM`을 반드시 일치시켜야 합니다 (예: `384`).
+Ollama, LM Studio 같은 로컬 서버는 base URL만 바꾸고 키는 비워 둡니다.
+`STASH_VECTOR_DIM`은 임베딩 모델의 출력 차원과 맞춰야 합니다(예: `multilingual-e5-small`은 `384`).
 
 ```bash
 STASH_OPENAI_BASE_URL=http://host.docker.internal:11434/v1
@@ -57,7 +55,109 @@ STASH_REASONER_MODEL=llama3
 STASH_VECTOR_DIM=384
 ```
 
-전체 설정 체크리스트는 [Getting Started](docs/GETTING_STARTED.md)를 참고하세요.
+모델 설정은 모두 선택 사항입니다. 임베딩 제공자가 없어도 기억은 저장되고
+trigram 키워드 검색으로 찾을 수 있으며, 벡터는 나중에 제공자를 지정하면 계산됩니다.
+추론 제공자가 없으면 기억 통합과 작업 계획 검토는 제공자가 없다고 알립니다.
+
+### 제공자 레지스트리 (기능별 라우팅)
+
+콘솔의 **모델 설정** 화면(`/ui/llm`), `/admin/llm/*` API, `stash llm` 명령으로
+PostgreSQL에 저장된 제공자를 관리합니다. 기능(`embedding`, `consolidation`,
+`plan_validation`, `wiki`)마다 제공자와 모델을 따로 지정할 수 있고, 지정하지 않은
+기능은 `STASH_OPENAI_*` 환경 변수를 계속 사용합니다. 변경은 재시작 없이 바로
+적용되며, 임베딩 모델이나 차원이 바뀌면 시작 시 환경 변수가 바뀐 경우와 똑같이
+벡터 컬럼을 조정하고 백그라운드 재색인을 예약합니다.
+
+저장되는 API 키는 `STASH_SECRETS_KEY`(`openssl rand -hex 32`)로 AES-256-GCM
+봉인됩니다. 이 키가 없으면 키가 필요 없는 제공자만 등록할 수 있습니다.
+`STASH_SECRETS_KEY_PREVIOUS`에 이전 키를 두면 키 교체 중에도 기존 값을 읽습니다.
+
+```bash
+stash llm provider add openai --base-url https://api.openai.com/v1 --api-key-env OPENAI_API_KEY
+stash llm provider probe openai                # 엔드포인트가 제공하는 모델 목록
+stash llm assign embedding --provider openai --model text-embedding-3-small --dimensions 1536
+stash llm assign plan_validation --provider openai --model gpt-4o
+stash llm import-env                           # STASH_OPENAI_* 설정을 레지스트리로 복사
+stash llm status
+```
+
+관리 엔드포인트는 `X-Stash-Admin-Token`(`STASH_ADMIN_TOKEN`) 또는
+`STASH_ADMIN_SUBJECTS`에 등록된 로그인 주체가 필요합니다. 루프백에서만 듣는
+`STASH_AUTH_MODE=none`에서는 서버의 다른 부분과 같이 열려 있습니다.
+계산된 벡터를 PostgreSQL에 캐시하지 않으려면 `STASH_EMBEDDING_CACHE=false`로 둡니다.
+
+자세한 설정 점검 목록은 [시작 가이드](docs/GETTING_STARTED.md)를 참고하세요.
+
+## 콘솔 로그인
+
+사람은 아이디와 비밀번호로 콘솔에 로그인합니다. 계정이 하나도 없는 서버는
+콘솔을 열면 바로 **첫 관리자 계정 만들기** 폼이 나오고, 거기서 만든 계정이
+관리자가 되어 즉시 로그인됩니다. 환경 변수로 시작 시 만들어 둘 수도 있는데,
+첫 실행 폼은 콘솔에 먼저 도달한 사람에게 열려 있으므로 사람이 지켜보지 않는
+배포라면 이쪽이 낫습니다.
+
+```dotenv
+STASH_ADMIN_USER=admin
+STASH_ADMIN_PASSWORD=<8자 이상>
+```
+
+이미 있는 사용자는 비밀번호를 그대로 두고(콘솔에서 바꾼 값이 재시작마다
+되돌아가지 않도록) 관리자 권한과 활성 상태만 다시 켜 주므로, 이 두 변수는
+잠긴 서버에 다시 들어가는 길이기도 합니다. 추가 계정은 콘솔의 **사용자·SSO**
+페이지(비밀번호 유무를 골라 사용자 추가, 비밀번호 설정, 관리자 지정·해제,
+비활성화, 삭제, 그리고 그 사람의 API 토큰을 생성일 순으로 보고 폐기)나
+CLI로 만듭니다.
+
+```bash
+stash user add alice --display-name "Alice" --password-stdin   # 또는 --password-env / --password
+stash user set alice --admin
+stash user passwd alice --password-stdin
+stash user set alice --disable      # 다음 요청부터 적용
+stash user list                     # 사용자와 인증 수단 목록
+```
+
+사용자와 인증 수단은 다른 테이블입니다. `users`는 사람(아이디, 표시 이름,
+관리자 여부)이고, `user_identities`에 비밀번호 해시와 SSO subject가 들어갑니다.
+처음 보는 SSO subject로 로그인하면 그 subject를 아이디로 하는 사용자가
+자동으로 만들어져 기존 네임스페이스와 토큰이 그대로 유지되고, 관리자는 나중에
+그 계정에 비밀번호를 붙이거나 비활성화할 수 있습니다. 아이디는 어디서나 세션
+주체로 쓰여 네임스페이스, API 토큰, 위키 작성자가 모두 아이디 기준입니다.
+
+로그인 카드는 비밀번호 폼을 바로 보여 주고, 등록된 SSO 제공자마다 버튼을
+두며, API 토큰 폼도 같은 카드 안에서 전환합니다. 다른 페이지로 먼저 보내는
+단계는 없습니다. 로그인한 사용자는 **계정** 패널에서 자기 비밀번호를 바꿉니다.
+
+### SSO 제공자
+
+SSO 제공자는 DB(`sso_providers`)에 저장되는 OIDC 발급자이며, 클라이언트
+시크릿은 `STASH_SECRETS_KEY`로 봉인됩니다. 첫 제공자는 환경 변수로 등록합니다.
+`STASH_AUTH_ISSUER`, `STASH_AUTH_CLIENT_ID`, `STASH_AUTH_CLIENT_SECRET`,
+`STASH_AUTH_REDIRECT_URL`이 설정돼 있으면 서버가 시작할 때 한 번 테이블로
+가져오고, 그 뒤의 수정은 테이블에서 이루어집니다. 이후에는 관리자가 콘솔의
+**사용자·SSO** 페이지나 CLI로 제공자를 관리합니다.
+
+```bash
+stash sso list
+stash sso add authentik --name "회사 SSO" --issuer https://auth.example.com/application/o/stash/ \
+  --client-id stash --client-secret-env SSO_SECRET --redirect-url https://stash.example.com/auth/callback
+stash sso test 1
+stash sso set 1 --disable
+```
+
+제공자는 로드할 때 OIDC 검색(discovery)을 거치며, 실패한 제공자는 페이지에
+오류로 표시되고 로그인 화면에서만 빠질 뿐 다른 제공자에 영향을 주지
+않습니다. 어떤 제공자로 처음 로그인한 사람은 발급자의 subject를 아이디로
+하는 사용자가 되므로, 관리자가 나중에 그 계정에 비밀번호를 붙이거나 관리자로
+올리거나 비활성화할 수 있습니다. `STASH_SECRETS_KEY`가 없으면 환경 변수
+제공자는 메모리에서만 동작하고 아무것도 저장하지 못합니다.
+
+관리 API와 **서버 설정** 화면은 관리자만 씁니다. `is_admin`이 켜진 사용자
+(`STASH_ADMIN_USER` 또는 `stash user set --admin`), `STASH_ADMIN_SUBJECTS`에
+적힌 주체, 또는 `X-Stash-Admin-Token`(`STASH_ADMIN_TOKEN`)을 보낸 요청이
+해당합니다. `STASH_AUTH_MODE=none`은 루프백에서만 듣고 다른 기능처럼 열려
+있으며, 사설망이나 VPN처럼 네트워크 자체를 신뢰한다면
+`STASH_AUTH_TRUSTED_NETWORK=true`로 경고와 함께 외부 주소에도 바인드할 수
+있습니다.
 
 ## MCP 클라이언트 설정
 
@@ -118,47 +218,39 @@ codex mcp add stash --url https://stash.example.com/mcp --bearer-token-env-var S
 }
 ```
 
-원격 MCP 서버는 Streamable HTTP로 연결합니다. `oauth` 프로필에서는 MCP
-클라이언트가 OAuth 인증 코드 방식으로 로그인한 뒤 MCP 리소스에 묶인 Stash
-접근 권한을 사용자가 확인하고 허용하면 Stash 접근 토큰을 받습니다.
+원격 MCP 서버는 Streamable HTTP에 Stash API 토큰으로 연결합니다. 프로필이
+무엇이든 MCP 클라이언트의 인증 수단은 하나, DB에 저장된 API 토큰입니다.
+만료되거나 폐기하기 전에는 바뀌지 않으므로 에이전트의 주체와 기록이 중간에
+끊기지 않습니다. 토큰은 화면의 **인증 토큰** 페이지나 서버에서 발급합니다.
 
 ```bash
-codex mcp add stash --url https://stash.example.com/mcp
-```
-
-자동화 클라이언트는 OIDC 없이 Stash API 토큰을 사용할 수 있습니다:
-
-```bash
-export STASH_MCP_TOKEN="$(stash mcp token --subject codex)"
+export STASH_MCP_TOKEN="$(stash mcp token --subject codex --name laptop)"
 codex mcp add stash --url https://stash.example.com/mcp --bearer-token-env-var STASH_MCP_TOKEN
 ```
 
-자동화용 API 토큰을 발급하려면 `STASH_AUTH_MODE=token`과
-`STASH_AUTH_API_SECRET`을 설정하세요. `oauth` 프로필의 MCP와 SSE는
-리소스가 확인된 Stash OAuth 접근 토큰과 Stash API 토큰을 모두 받습니다.
-
 인증 프로필은 네 가지입니다.
 
-- `none`: HTTP 인증 없음. 이 모드에서는 로컬 주소 밖으로 서버를 열 수 없습니다.
-- `oauth` (기존 `oidc`도 호환): 브라우저 OIDC 로그인과 MCP OAuth 인증 코드
-  방식을 함께 사용합니다. MCP와 SSE는 리소스가 확인된 Stash OAuth 접근
-  토큰과 Stash API Bearer 토큰을 받습니다.
-- `token`: OIDC 없이 Stash API Bearer 토큰만 사용하는 HTTP 방식입니다.
-- `stdio`: MCP OAuth 탐색을 사용하지 않습니다. 로컬 프로세스를 신뢰하거나
-  `STASH_AUTH_STDIO_TOKEN`으로 사용자 범위를 확인할 수 있습니다.
+- `none`: HTTP 인증 없음. 이 모드에서는 로컬 주소 밖으로 서버를 열 수 없습니다
+  (`STASH_AUTH_TRUSTED_NETWORK=true`로 신뢰하는 망에 한해 예외).
+- `oauth` (기존 `oidc`도 호환): 콘솔에 OIDC 제공자를 통한 SSO 로그인을
+  더합니다. MCP 클라이언트는 그대로 Stash API 토큰을 씁니다.
+- `token`: 아이디/비밀번호와 API 토큰 로그인만 쓰며 OIDC 제공자에 접속하지
+  않습니다.
+- `stdio`: 로컬 프로세스를 신뢰하거나, `STASH_AUTH_STDIO_TOKEN`에 넣은 Stash
+  API 토큰으로 사용자 범위를 확인합니다.
 
-HTTP MCP 요청은 `Authorization: Bearer <stash_oauth_token>` 또는
-`Authorization: Bearer <stash_api_token>` 헤더를 보내야 합니다. 화면에
-로그인할 때 쓰는 세션 쿠키는 표준 MCP 클라이언트 인증 수단이 아닙니다.
+HTTP MCP 요청은 `Authorization: Bearer <stash_api_token>` 헤더를 보내야
+합니다. MCP에서는 그 외의 자격 증명(OAuth 접근 토큰, 상위 제공자의 ID 토큰)을
+받지 않습니다. 화면에 로그인할 때 쓰는 세션 쿠키는 내장 콘솔 전용입니다.
 
 화면의 **인증 토큰**에서 로그인 뒤 Stash API 토큰을 발급·폐기할 수 있습니다.
 무제한, 1·7·30·90·365일 또는 직접 입력한 일수로 발급할 수 있습니다.
 유효 기간을 비워 두면 무제한으로 발급하고, 수동으로 폐기하면 만료일을 폐기한 시각으로 즉시 갱신합니다.
 목록에 만료일과 만료 상태가 표시되며, 만료되거나 폐기한 토큰은 사용할 수 없습니다.
-기존 토큰의 무제한 유효기간은 유지되고 원문은 발급 직후 한 번만 표시됩니다.
-OIDC를 쓰지 않는 서버는 `STASH_AUTH_API_SECRET`이 있는 환경에서
-`stash mcp token --subject <에이전트>`를 실행하세요. 기본 유효기간은 30일이며
-`STASH_AUTH_TOKEN_TTL` 또는 명령의 `--ttl`로 늘려 발급할 수 있습니다.
+원문은 발급 직후 한 번만 표시됩니다. 서버에서 실행하는
+`stash mcp token --subject <에이전트>`도 같은 방식으로 DB에 저장하므로 그
+주체의 토큰 목록에 나타나고 거기서 폐기할 수 있습니다. 기본 유효기간은 30일
+(`STASH_AUTH_TOKEN_TTL`)이며 `--ttl 0`은 폐기할 때까지 유효한 토큰을 만듭니다.
 
 OAuth 접근 토큰의 기본 유효기간은 1시간이며, 한 번 쓴 뒤 교체되는 갱신 토큰은
 30일입니다. `STASH_AUTH_ACCESS_TOKEN_TTL`과
@@ -166,7 +258,7 @@ OAuth 접근 토큰의 기본 유효기간은 1시간이며, 한 번 쓴 뒤 교
 
 ## 운영 지표와 상태 확인
 
-`stash serve`는 MCP, 관리 화면, OAuth 경로, 운영 지표, 상태 확인을 하나의 HTTP 포트(기본 `127.0.0.1:8080`)에서 제공합니다. Docker도 호스트의 로컬 주소에만 8080번 포트를 연결합니다. HTTP 인증을 켜면 `http://localhost:8080/metrics`도 MCP와 같은 Bearer 인증이 필요합니다. `/healthz`와 `/readyz`는 로드 밸런서 상태 확인을 위해 공개로 둡니다. HTTP 요청, 인증 결과, MCP 도구 호출, 외부 제공자 호출, 네임스페이스 범위 적용, 기억 통합 대기량과 최근 오류 수, 작업 결과 기억 연결, 임베딩 재시도 대기 건수를 기록합니다. 요청·인증·도구·제공자·범위 지표의 라벨에는 사용자 ID와 실제 네임스페이스 이름을 넣지 않습니다.
+`stash serve`는 MCP, 관리 화면, 로그인 경로, 운영 지표, 상태 확인을 하나의 HTTP 포트(기본 `127.0.0.1:8080`)에서 제공합니다. Docker도 호스트의 로컬 주소에만 8080번 포트를 연결합니다. HTTP 인증을 켜면 `http://localhost:8080/metrics`도 MCP와 같은 Bearer 인증이 필요합니다. `/healthz`와 `/readyz`는 로드 밸런서 상태 확인을 위해 공개로 둡니다. HTTP 요청, 인증 결과, MCP 도구 호출, 외부 제공자 호출, 네임스페이스 범위 적용, 기억 통합 대기량과 최근 오류 수, 작업 결과 기억 연결, 임베딩 재시도 대기 건수를 기록합니다. 요청·인증·도구·제공자·범위 지표의 라벨에는 사용자 ID와 실제 네임스페이스 이름을 넣지 않습니다.
 
 임베딩 API가 짧은 요청 재시도 후에도 실패하면 원문은 인덱싱 대기 상태로 저장됩니다. PostgreSQL 연결은 정상이지만 벡터 값만 저장하지 못한 경우에도 원문을 보존합니다. 한 항목이 다섯 번 실패하면 자동 재시도를 멈추고 관리자가 다시 시작할 때까지 일시 중지해, 작은 일일 한도를 계속 소모하지 않게 합니다. 재시도 간격은 설정한 최댓값 안에서 늘어납니다. 임베딩 제공자가 잠시 응답하지 않아도 `recall`은 저장된 원문과 사실의 `entity`·`property`·`value` 필드를 PostgreSQL 트라이그램 검색으로 찾아 작업을 계속할 수 있습니다. `STASH_EMBEDDING_RETRY_INTERVAL`, `STASH_EMBEDDING_RETRY_MAX_INTERVAL`, `STASH_EMBEDDING_RETRY_BATCH_SIZE`로 주기와 한 번에 처리할 수를 설정합니다.
 
@@ -221,13 +313,37 @@ Streamable HTTP를 지원하면 `http://localhost:8080/mcp`를 사용하세요. 
 
 ### 자동 저장과 작업 이어가기
 
-Codex·Claude Code용 플러그인은 세션을 새로 시작할 때 기억 사용 원칙을 한 번만 알려 줍니다. 사용자가 보낸 프롬프트는 기존 OAuth 연결로 저장 대기열에 넣고, 임베딩은 서버에서 따로 처리합니다. 프롬프트 원문이 저장되므로 사용 범위와 끄는 방법은 **[에이전트 작업 이어가기 안내](docs/AGENT_HANDOFF.md)**에서 확인하세요.
+Codex·Claude Code용 플러그인은 세션을 새로 시작할 때 기억 사용 원칙을 한 번만 알려 줍니다. 사용자가 보낸 프롬프트는 기존 MCP 연결(API 토큰)로 저장 대기열에 넣고, 임베딩은 서버에서 따로 처리합니다. 프롬프트 원문이 저장되므로 사용 범위와 끄는 방법은 **[에이전트 작업 이어가기 안내](docs/AGENT_HANDOFF.md)**에서 확인하세요.
 
 ## 동작 원리 (What It Does)
 
 Stash는 AI 에이전트와 현실 세계 사이의 인지적 계층(Cognitive layer)입니다. 에피소드(Episodes)는 팩트(Facts)가 되고, 팩트는 관계(Relationships)가 되며, 관계는 패턴(Patterns)이 되고, 마침내 패턴은 지혜(Wisdom)가 됩니다.
 
 9단계의 기억 통합(Consolidation) 파이프라인이 원시 관측 데이터를 팩트, 관계, 인과 고리(Causal links), 패턴, 모순(Contradictions), 목표 추적(Goal tracking), 실패 패턴(Failure patterns), 가설 검증(Hypothesis verification)과 같은 구조화된 지식으로 변환합니다. 각 단계는 마지막 실행 이후의 새로운 데이터만을 처리합니다.
+
+## 위키: 사람이 읽는 층
+
+기억은 원재료입니다. episode는 일어난 일, fact는 통합이 내린 결론입니다. 위키는
+프로젝트가 지금 믿고 있는 내용을 마크다운 페이지로 적어 둔 것이고, 각 페이지는
+근거가 된 기억과 작업을 인용합니다. 사람은 콘솔(`/ui/wiki`, 기본 화면)에서 읽고,
+에이전트는 MCP로 읽고 쓰며, `stash wiki export`로 네임스페이스 하나를 `.md` 폴더로
+내보낼 수 있습니다.
+
+- 페이지는 네임스페이스별로 `ops/deploys`, `decisions/postgres-16` 같은 `slug`,
+  종류(article, index, entity, decision, log), 태그, 전체 수정 이력을 가집니다.
+- `[[slug]]`로 페이지를 연결하고 `[@fact:12]`, `[@episode:3]`, `[@work:W-000123]`로
+  근거를 인용합니다. 인용은 읽을 때마다 다시 확인되므로 근거가 바뀌거나 대체·삭제되면
+  페이지에 표시되고, `wiki_lint`가 그런 페이지를 stale로 표시합니다.
+- 검색은 모델 없이 trigram으로 동작하고, 임베딩 제공자가 있으면 벡터가 더해집니다.
+  `recall`은 기본적으로 episode·fact와 함께 페이지도 돌려줍니다.
+- 누가 쓸지는 선택입니다. 에이전트는 `wiki_write`(번들 `stash-wiki` 스킬이 시점을
+  안내), 사람은 콘솔의 미리보기 편집기, 서버는 `wiki` 기능에 모델이 지정되어 있을 때
+  `wiki_compile`로 인용이 달린 초안을 씁니다.
+
+MCP 도구: `wiki_search`, `wiki_read`, `wiki_list`, `wiki_write`, `wiki_delete`,
+`wiki_history`, `wiki_log`, `wiki_lint`, `wiki_compile`. CLI: `stash wiki
+list|read|write|delete|history|lint|log|export|compile`. 자세한 내용은
+[docs/WIKI.md](docs/WIKI.md)를 참고하세요.
 
 ## 공통 작업 지도와 선택형 연결 기능
 

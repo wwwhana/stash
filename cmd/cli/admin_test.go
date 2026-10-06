@@ -27,18 +27,6 @@ func TestAdminTokenMatchesExactHeader(t *testing.T) {
 	}
 }
 
-func TestAdminSubjectMatchesCommaSeparatedList(t *testing.T) {
-	if !adminSubjectMatches("user-2", "user-1, user-2") {
-		t.Fatal("configured subject should match")
-	}
-	if adminSubjectMatches("user-", "user-1, user-2") {
-		t.Fatal("subject matching must be exact")
-	}
-	if adminSubjectMatches("user-1", "") {
-		t.Fatal("empty configuration must not grant admin access")
-	}
-}
-
 func TestAdminOnlyHTTPRequiresConfiguredCredential(t *testing.T) {
 	called := false
 	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true })
@@ -76,5 +64,36 @@ func TestAdminOnlyHTTPRejectsCrossOriginWrite(t *testing.T) {
 
 	if response.Code != http.StatusForbidden || called {
 		t.Fatalf("cross-origin admin write status=%d called=%v, want 403 and no handler call", response.Code, called)
+	}
+}
+
+func TestAdminOnlyHTTPOpensWithoutCredentialWhenAuthIsDisabled(t *testing.T) {
+	called := false
+	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true })
+
+	open := adminOnlyHTTP(&bootstrap.Context{Config: &config.Config{AuthMode: "none"}, Brain: &brain.Brain{}}, next)
+	response := httptest.NewRecorder()
+	open.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/admin/llm/status", nil))
+	if response.Code != http.StatusOK || !called {
+		t.Fatalf("auth mode none without admin credential status=%d called=%v, want 200", response.Code, called)
+	}
+
+	// Any configured credential is still required, even without HTTP auth.
+	called = false
+	gated := adminOnlyHTTP(&bootstrap.Context{Config: &config.Config{AuthMode: "none", AdminToken: "secret"}, Brain: &brain.Brain{}}, next)
+	response = httptest.NewRecorder()
+	gated.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/admin/llm/status", nil))
+	if response.Code != http.StatusUnauthorized || called {
+		t.Fatalf("configured admin token ignored: status=%d called=%v", response.Code, called)
+	}
+
+	// With authentication on, an administrator account in the users table is
+	// the usual credential, so an anonymous request is asked to log in.
+	called = false
+	closed := adminOnlyHTTP(&bootstrap.Context{Config: &config.Config{AuthMode: "token"}, Brain: &brain.Brain{}}, next)
+	response = httptest.NewRecorder()
+	closed.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/admin/llm/status", nil))
+	if response.Code != http.StatusUnauthorized || called {
+		t.Fatalf("token mode without a session status=%d called=%v, want 401", response.Code, called)
 	}
 }

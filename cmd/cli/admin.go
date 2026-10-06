@@ -24,6 +24,9 @@ func registerAdminRoutes(mux *http.ServeMux, bc *bootstrap.Context) {
 	mux.Handle("/admin/maintenance/embeddings/reindex", adminOnlyHTTP(bc, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		adminEmbeddingReindexHandler(bc, w, r)
 	})))
+	registerLLMAdminRoutes(mux, bc)
+	registerSSOAdminRoutes(mux, bc)
+	registerUserAdminRoutes(mux, bc)
 }
 
 func adminOnlyHTTP(bc *bootstrap.Context, next http.Handler) http.Handler {
@@ -32,20 +35,21 @@ func adminOnlyHTTP(bc *bootstrap.Context, next http.Handler) http.Handler {
 			writeAdminError(w, http.StatusServiceUnavailable, "service is not initialized")
 			return
 		}
-		if strings.TrimSpace(bc.Config.AdminToken) == "" && strings.TrimSpace(bc.Config.AdminSubjects) == "" {
-			writeAdminError(w, http.StatusServiceUnavailable, "admin maintenance is not configured")
-			return
-		}
 		if err := adminRequestProtection.Check(r); err != nil {
 			writeAdminError(w, http.StatusForbidden, "cross-origin request denied")
 			return
 		}
-
+		// STASH_AUTH_MODE=none already trusts everyone who can reach the
+		// listener with full memory access; the admin pages are the same
+		// trust level, so they open without a separate credential.
+		if unauthenticatedDeployment(bc) && strings.TrimSpace(bc.Config.AdminToken) == "" && strings.TrimSpace(bc.Config.AdminSubjects) == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if adminTokenMatches(r, bc.Config.AdminToken) {
 			next.ServeHTTP(w, r)
 			return
 		}
-
 		if bc.Auth == nil {
 			writeAdminError(w, http.StatusUnauthorized, "admin credential is required")
 			return
@@ -55,12 +59,27 @@ func adminOnlyHTTP(bc *bootstrap.Context, next http.Handler) http.Handler {
 			writeAdminError(w, http.StatusUnauthorized, "authentication is required")
 			return
 		}
-		if !adminSubjectMatches(user, bc.Config.AdminSubjects) {
+		// A local administrator (STASH_ADMIN_USER or 'stash user set --admin')
+		// is the usual operator; STASH_ADMIN_SUBJECTS covers SSO identities.
+		if !bc.Auth.IsAdmin(r.Context(), user) {
 			writeAdminError(w, http.StatusForbidden, "administrator permission is required")
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// unauthenticatedDeployment reports STASH_AUTH_MODE=none, where the server
+// refuses to listen beyond loopback and performs no HTTP authentication.
+func unauthenticatedDeployment(bc *bootstrap.Context) bool {
+	mode := ""
+	if bc.Config != nil {
+		mode = strings.ToLower(strings.TrimSpace(bc.Config.AuthMode))
+	}
+	if mode != "" && mode != "none" {
+		return false
+	}
+	return bc.Auth == nil || bc.Auth.Mode() == "none"
 }
 
 func adminTokenMatches(r *http.Request, expected string) bool {
@@ -70,19 +89,6 @@ func adminTokenMatches(r *http.Request, expected string) bool {
 		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(expected), []byte(provided)) == 1
-}
-
-func adminSubjectMatches(user, configured string) bool {
-	user = strings.TrimSpace(user)
-	if user == "" {
-		return false
-	}
-	for _, candidate := range strings.Split(configured, ",") {
-		if user == strings.TrimSpace(candidate) {
-			return true
-		}
-	}
-	return false
 }
 
 func adminEmbeddingStatusHandler(bc *bootstrap.Context, w http.ResponseWriter, r *http.Request) {

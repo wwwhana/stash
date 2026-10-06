@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -1405,4 +1406,101 @@ func filterIDs(ids []int64, valid map[int64]bool) (filtered []int64, hasInvalid 
 		}
 	}
 	return
+}
+
+// --- DraftWikiPage ---
+
+const wikiSystemPrompt = `You write and maintain pages of a project wiki for both people and AI agents.
+
+Rules:
+- Write in Markdown. Start with a short lead paragraph, then clear sections with ## headings.
+- Use ONLY the provided sources. Do not add outside knowledge, guesses, or filler.
+- After every claim that comes from a source, cite it inline as [@ref] using the exact ref given, for example [@fact:12]. A sentence with no supporting source must not be written.
+- Link existing pages with [[slug]] when they are relevant; never invent slugs.
+- Write in the same language as the sources. Keep identifiers, paths, versions, and names exactly as written.
+- When an existing page text is provided, keep what the sources still support, update what changed, and remove what no source supports.
+- Output ONLY valid JSON: {"title": string, "summary": string (one or two sentences), "content": string (Markdown), "tags": [string]}. No preamble, no markdown fences.`
+
+type jsonWikiDraft struct {
+	Title   string   `json:"title"`
+	Summary string   `json:"summary"`
+	Content string   `json:"content"`
+	Tags    []string `json:"tags"`
+}
+
+var wikiCitationRe = regexp.MustCompile(`\[@([a-z]+:[^\]\s]+)\]`)
+
+// DraftWikiPage asks the model for a cited page and rejects drafts that cite
+// sources it was not given, which is the wiki equivalent of grounding.
+func (o *OpenAI) DraftWikiPage(ctx context.Context, request WikiDraftRequest) (*WikiDraft, error) {
+	if len(request.Sources) == 0 {
+		return nil, errors.New("reasoner: wiki draft needs at least one source")
+	}
+	var prompt strings.Builder
+	fmt.Fprintf(&prompt, "Page slug: %s\n", request.Slug)
+	if request.Title != "" {
+		fmt.Fprintf(&prompt, "Requested title: %s\n", request.Title)
+	}
+	fmt.Fprintf(&prompt, "Topic: %s\n\n", request.Topic)
+	if len(request.Pages) > 0 {
+		prompt.WriteString("Existing pages you may link with [[slug]]:\n")
+		for _, page := range request.Pages {
+			fmt.Fprintf(&prompt, "- [[%s]] %s\n", page.Slug, page.Title)
+		}
+		prompt.WriteString("\n")
+	}
+	prompt.WriteString("Sources (cite with [@ref]):\n")
+	allowed := map[string]bool{}
+	for _, source := range request.Sources {
+		allowed[source.Ref] = true
+		fmt.Fprintf(&prompt, "\n[@%s]\n%s\n", source.Ref, strings.TrimSpace(source.Content))
+	}
+	if strings.TrimSpace(request.Existing) != "" {
+		fmt.Fprintf(&prompt, "\nExisting page text to update:\n%s\n", request.Existing)
+	}
+	prompt.WriteString("\nWrite the page now as the JSON object described in the rules.")
+
+	msgs := []openai.ChatCompletionMessageParamUnion{
+		openai.SystemMessage(wikiSystemPrompt),
+		openai.UserMessage(prompt.String()),
+	}
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		resp, err := o.client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{Model: o.model, Messages: msgs})
+		if err != nil {
+			return nil, fmt.Errorf("reasoning request for model %q failed: %w", o.model, err)
+		}
+		if len(resp.Choices) == 0 {
+			return nil, errors.New("reasoner: no response from LLM")
+		}
+		var draft jsonWikiDraft
+		if err := json.Unmarshal([]byte(extractJSON(strings.TrimSpace(resp.Choices[0].Message.Content))), &draft); err != nil {
+			lastErr = fmt.Errorf("parse json: %w", err)
+			msgs = append(msgs, openai.SystemMessage(retryWarning))
+			continue
+		}
+		if strings.TrimSpace(draft.Content) == "" {
+			lastErr = errors.New("reasoner: wiki draft has no content")
+			msgs = append(msgs, openai.SystemMessage(retryWarning))
+			continue
+		}
+		var unknown []string
+		for _, match := range wikiCitationRe.FindAllStringSubmatch(draft.Content, -1) {
+			if !allowed[match[1]] {
+				unknown = append(unknown, match[1])
+			}
+		}
+		if len(unknown) > 0 {
+			lastErr = fmt.Errorf("reasoner: wiki draft cites unknown sources: %s", strings.Join(unknown, ", "))
+			msgs = append(msgs, openai.SystemMessage(retryWarning+" Cite only the provided refs; unknown refs: "+strings.Join(unknown, ", ")))
+			continue
+		}
+		if len(wikiCitationRe.FindAllString(draft.Content, -1)) == 0 {
+			lastErr = errors.New("reasoner: wiki draft has no citations")
+			msgs = append(msgs, openai.SystemMessage(retryWarning+" Every claim must cite a provided source with [@ref]."))
+			continue
+		}
+		return &WikiDraft{Title: strings.TrimSpace(draft.Title), Summary: strings.TrimSpace(draft.Summary), Content: strings.TrimSpace(draft.Content), Tags: draft.Tags}, nil
+	}
+	return nil, lastErr
 }

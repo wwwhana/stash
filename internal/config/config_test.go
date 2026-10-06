@@ -166,7 +166,6 @@ func TestOAuthPrefixedAuthenticationAliases(t *testing.T) {
 		"STASH_AUTH_OAUTH_CLIENT_SECRET": "secret",
 		"STASH_AUTH_OAUTH_REDIRECT_URL":  "https://stash.example.com/auth/callback",
 		"STASH_AUTH_OAUTH_API_SECRET":    "signing-secret",
-		"STASH_AUTH_OAUTH_RESOURCE_URL":  "https://stash.example.com/mcp",
 	} {
 		t.Setenv(key, value)
 	}
@@ -174,7 +173,47 @@ func TestOAuthPrefixedAuthenticationAliases(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load OAuth alias config: %v", err)
 	}
-	if cfg.AuthIssuer != "https://auth.example.com/" || cfg.AuthClientID != "stash" || cfg.AuthClientSecret != "secret" || cfg.AuthRedirectURL != "https://stash.example.com/auth/callback" || cfg.AuthAPISecret != "signing-secret" || cfg.AuthMCPResourceURL != "https://stash.example.com/mcp" {
+	if cfg.AuthIssuer != "https://auth.example.com/" || cfg.AuthClientID != "stash" || cfg.AuthClientSecret != "secret" || cfg.AuthRedirectURL != "https://stash.example.com/auth/callback" || cfg.AuthAPISecret != "signing-secret" {
 		t.Fatalf("OAuth aliases were not applied: %#v", cfg)
+	}
+}
+
+func TestProviderSettingsAreOptional(t *testing.T) {
+	for key, value := range map[string]string{
+		"STASH_POSTGRES_DSN":    "postgres://localhost/stash",
+		"STASH_MAX_RESULT_SIZE": "10000",
+		"STASH_CONTEXT_TTL":     "1h",
+		"STASH_HTTP_ADDR":       "127.0.0.1:8080",
+		"STASH_LOG_LEVEL":       "info",
+		"STASH_LOG_FORMAT":      "text",
+	} {
+		t.Setenv(key, value)
+	}
+	missing := filepath.Join(t.TempDir(), "absent.env")
+
+	cfg, err := NewFromFile(missing)
+	if err != nil {
+		t.Fatalf("a server without any model provider must load: %v", err)
+	}
+	if cfg.OpenAIBaseURL != "" || cfg.EmbeddingModel != "" || cfg.VectorDim != 0 || !cfg.EmbeddingCache {
+		t.Fatalf("unexpected provider defaults: %+v", cfg)
+	}
+
+	t.Setenv("STASH_EMBEDDING_MODEL", "embed")
+	if _, err := NewFromFile(missing); err == nil || !strings.Contains(err.Error(), "STASH_OPENAI_BASE_URL") {
+		t.Fatalf("model without base URL error = %v", err)
+	}
+	t.Setenv("STASH_OPENAI_BASE_URL", "https://example.invalid/v1")
+	if _, err := NewFromFile(missing); err == nil || !strings.Contains(err.Error(), "STASH_VECTOR_DIM") {
+		t.Fatalf("embedding model without dimension error = %v", err)
+	}
+	t.Setenv("STASH_VECTOR_DIM", "16")
+	t.Setenv("STASH_SECRETS_KEY", "not-hex")
+	if _, err := NewFromFile(missing); err == nil || !strings.Contains(err.Error(), "STASH_SECRETS_KEY") {
+		t.Fatalf("invalid secrets key error = %v", err)
+	}
+	t.Setenv("STASH_SECRETS_KEY", "0000000000000000000000000000000000000000000000000000000000000001")
+	if _, err := NewFromFile(missing); err != nil {
+		t.Fatalf("valid provider settings: %v", err)
 	}
 }

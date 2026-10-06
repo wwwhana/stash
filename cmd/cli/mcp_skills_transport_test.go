@@ -42,7 +42,7 @@ func TestStashSkillsStreamableHTTPEndToEnd(t *testing.T) {
 	listResponse := postStashMCP(t, handler, sessionID, `{"jsonrpc":"2.0","id":2,"method":"skills/list","params":{}}`)
 	assertStashMCPResponse(t, listResponse, http.StatusOK, "no-store")
 	list := decodeStashHTTPResult[skillsListResult](t, listResponse)
-	if list.ResultType != "complete" || len(list.Skills) != 1 || list.Skills[0].URI != stashWorkSkillURI {
+	if list.ResultType != "complete" || len(list.Skills) != 2 || list.Skills[1].URI != stashWorkSkillURI || list.Skills[0].URI != "skill://stash-wiki/SKILL.md" {
 		t.Fatalf("skills/list result = %#v", list)
 	}
 

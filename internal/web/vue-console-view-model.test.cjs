@@ -18,7 +18,11 @@ function setup(path = '/ui/goal-map', invoke = async () => ({})) {
     const options = createViewModel({ api, routeAPI, goalMap, workGraph, search, window });
     const state = options.data();
     for (const [key, method] of Object.entries(options.methods)) state[key] = method.bind(state);
-    for (const [key, get] of Object.entries(options.computed)) Object.defineProperty(state, key, { get: () => get.call(state) });
+    for (const [key, computed] of Object.entries(options.computed)) {
+        const get = typeof computed === 'function' ? computed : computed.get;
+        const set = typeof computed === 'function' ? undefined : value => computed.set.call(state, value);
+        Object.defineProperty(state, key, { get: () => get.call(state), set });
+    }
     return { state, window, api };
 }
 
@@ -171,7 +175,7 @@ test('navigation keeps the workspace, resets incompatible filters, and restores 
 });
 
 test('work, goals and typed memories have bidirectional detail links without duplicate edges', async () => {
-    const { state } = setup('/', async () => map);
+    const { state } = setup('/ui/goal-map', async () => map);
     await state.loadRoute();
     state.selectObject('work', state.allWork[0]);
     assert.deepEqual(state.selectedConnections.map(item => item.kind).sort(), ['goal', 'memory']);
@@ -533,4 +537,188 @@ test('Git registration validates input, writes to the selected space and reloads
     state.locale = 'en';
     assert.equal(state.statusLabel('unknown'), 'Not checked');
     assert.equal(state.statusLabel('dirty'), 'Has changes');
+});
+
+test('password login submits the form, reads the failure reason, and reloads the console on success', async () => {
+    const { state, window } = setup('/ui/wiki');
+    const calls = [];
+    let authenticated = false;
+    window.fetch = async (url, options = {}) => {
+        calls.push({ url, options });
+        if (url === '/auth/status') return { ok: true, json: async () => ({ auth_mode: 'token', authenticated, user: authenticated ? 'alice' : '', local_login: true, sso_login: false, admin: false, has_password: true }) };
+        if (url === '/auth/login') {
+            const headers = { get: name => name === 'X-Stash-Login-Error' ? (options.body.get('password') === 'slow' ? 'throttled' : 'invalid') : '' };
+            if (options.body.get('password') === 'correct horse') { authenticated = true; return { type: 'opaqueredirect', status: 0, ok: false, headers }; }
+            return { type: 'basic', status: 401, ok: false, headers };
+        }
+        return { ok: true, json: async () => ({}) };
+    };
+    await state.bootstrap();
+    assert.equal(state.needsLogin, true);
+    assert.equal(state.canLocalLogin, true);
+    assert.equal(state.canSSOLogin, false);
+    state.loginForm = { username: 'alice', password: 'wrong' };
+    await state.submitLogin();
+    assert.equal(state.loginError, 'auth.failed');
+    state.loginForm.password = 'slow';
+    await state.submitLogin();
+    assert.equal(state.loginError, 'auth.throttled');
+    state.loginForm.password = 'correct horse';
+    await state.submitLogin();
+    assert.equal(state.loginError, '');
+    assert.equal(state.auth.authenticated, true);
+    assert.equal(state.auth.user, 'alice');
+    assert.equal(state.needsLogin, false);
+    const login = calls.filter(call => call.url === '/auth/login');
+    assert.equal(login.length, 3);
+    assert.equal(login[0].options.redirect, 'manual');
+    assert.equal(login[0].options.body.get('username'), 'alice');
+    assert.equal(state.loginForm.password, '');
+});
+
+test('the login card shows a form straight away: password when accounts exist, otherwise the API token form', async () => {
+    const { state, window } = setup('/');
+    const posted = [];
+    window.fetch = async (url, options = {}) => {
+        if (url === '/auth/status') return { ok: true, json: async () => ({ auth_mode: 'token', authenticated: false, local_login: false, sso_login: false }) };
+        if (url === '/auth/login') { posted.push(Object.fromEntries(options.body)); return { type: 'opaqueredirect', status: 0, ok: false, headers: { get: () => '' } }; }
+        return { ok: true, json: async () => ({}) };
+    };
+    await state.bootstrap();
+    assert.equal(state.needsLogin, true);
+    assert.equal(state.loginMode, 'token', 'no account has a password, so the token form is first');
+    state.loginForm.token = ' stash_api_abc ';
+    await state.submitLogin();
+    assert.deepEqual(posted, [{ token: 'stash_api_abc' }]);
+    // With accounts the password form comes first and the token form is one click away, on the same card.
+    state.auth = { auth_mode: 'token', authenticated: false, local_login: true, sso_login: false };
+    state.loginModeChoice = '';
+    assert.equal(state.loginMode, 'password');
+    state.loginMode = 'token';
+    assert.equal(state.loginMode, 'token');
+    state.loginMode = 'password';
+    assert.equal(state.loginMode, 'password');
+});
+
+test('server settings navigation is hidden from a signed-in user who is not an administrator', () => {
+    const { state } = setup('/ui/wiki');
+    assert.equal(state.showAdminNav, true, 'open without authentication');
+    state.auth = { auth_mode: 'token', authenticated: true, user: 'bob', admin: false };
+    assert.equal(state.showAdminNav, false);
+    state.auth = { auth_mode: 'token', authenticated: true, user: 'alice', admin: true };
+    assert.equal(state.showAdminNav, true);
+    state.auth = { auth_mode: 'none', authenticated: false };
+    assert.equal(state.showAdminNav, true);
+});
+
+test('password change validates locally and maps server answers to messages', async () => {
+    const { state, window } = setup('/ui/wiki');
+    let status = 204;
+    const bodies = [];
+    window.fetch = async (url, options = {}) => { if (url === '/auth/password') { bodies.push(JSON.parse(options.body)); return { status, ok: status < 300 }; } return { ok: true, json: async () => ({}) }; };
+    state.passwordForm = { current: '', next: 'new password 1', confirm: 'new password 1' };
+    await state.changePassword();
+    assert.equal(state.passwordError, 'auth.passwordRequired');
+    state.passwordForm = { current: 'old password', next: 'new password 1', confirm: 'different' };
+    await state.changePassword();
+    assert.equal(state.passwordError, 'auth.passwordMismatch');
+    assert.equal(bodies.length, 0);
+    state.passwordForm = { current: 'old password', next: 'new password 1', confirm: 'new password 1' };
+    await state.changePassword();
+    assert.equal(state.passwordError, '');
+    assert.equal(state.passwordNotice, 'auth.passwordChanged');
+    assert.deepEqual(bodies[0], { current_password: 'old password', new_password: 'new password 1' });
+    assert.equal(state.passwordForm.current, '');
+    for (const [code, message] of [[401, 'auth.currentPasswordWrong'], [400, 'auth.weakPassword'], [429, 'auth.throttled'], [500, 'error.password']]) {
+        status = code;
+        state.passwordForm = { current: 'old password', next: 'new password 1', confirm: 'new password 1' };
+        await state.changePassword();
+        assert.equal(state.passwordError, message);
+    }
+});
+
+test('a signed-in person without a workspace still gets the console and can create one', async () => {
+    const calls = [];
+    let created = false;
+    const { state, window } = setup('/ui/wiki', async (tool, args) => {
+        calls.push(tool);
+        if (tool === 'init') { created = true; return { ok: true }; }
+        if (!created) { const error = new Error('namespace "/sso/u_x": brain: namespace not found — call create_namespace first'); throw error; }
+        if (tool === 'list_namespaces') return { items: [{ slug: '/', name: 'Workspace' }], has_more: false };
+        return { items: [], pages: [], has_more: false };
+    });
+    window.fetch = async () => ({ ok: true, json: async () => ({ auth_mode: 'token', authenticated: true, user: 'dana', admin: false }) });
+    await state.bootstrap();
+    assert.equal(state.authChecked, true);
+    assert.equal(state.workspaceMissing, true);
+    assert.equal(state.error, '', 'the missing workspace is not a page error');
+    assert.deepEqual(state.namespaces, []);
+    await state.initializeWorkspace();
+    assert.ok(calls.includes('init'));
+    assert.equal(state.workspaceMissing, false);
+    assert.equal(state.namespaces.length, 1);
+});
+
+test('the access page manages users and their tokens through the admin API', async () => {
+    const { state, window } = setup('/ui/access');
+    window.confirm = () => true;
+    const requests = [];
+    let users = [{ username: 'admin', display_name: '', is_admin: true, disabled: false, identities: [{ kind: 'password' }] }, { username: 'dana', display_name: 'Dana', is_admin: false, disabled: false, identities: [{ kind: 'oidc', issuer: 'https://idp.example.com' }] }];
+    globalThis.fetch = async (url, options = {}) => {
+        requests.push({ url, method: options.method || 'GET', body: options.body ? JSON.parse(options.body) : null });
+        const json = value => ({ ok: true, status: 200, json: async () => value });
+        if (url === '/admin/users' && !options.method) return json({ users, actor: 'admin' });
+        if (url === '/admin/users' && options.method === 'POST') { users = [...users, { username: 'eve', is_admin: false, disabled: false, identities: [{ kind: 'password' }] }]; return json({ username: 'eve' }); }
+        if (url === '/admin/users/dana' && options.method === 'PUT') { users = users.map(u => u.username === 'dana' ? { ...u, ...JSON.parse(options.body) } : u); return json(users[1]); }
+        if (url === '/admin/users/dana/tokens') return json({ username: 'dana', tokens: [{ id: 7, name: 'laptop', created_at: '2026-10-01T00:00:00Z' }, { id: 3, name: 'old', created_at: '2026-09-01T00:00:00Z', revoked_at: '2026-09-02T00:00:00Z' }] });
+        if (url === '/admin/users/dana/tokens/7/revoke') return json({ id: 7, revoked: true, revoked_at: '2026-10-05T00:00:00Z', expires_at: '2026-10-05T00:00:00Z' });
+        if (url === '/admin/sso/status') return json({ providers: [], secrets_enabled: true });
+        return { ok: false, status: 404, json: async () => ({ error: 'nope ' + url }) };
+    };
+    try {
+        await state.reloadUsers();
+        assert.equal(state.users.length, 2);
+        assert.equal(state.usersActor, 'admin');
+        assert.match(state.userIdentityText(state.users[1]), /idp\.example\.com/);
+        state.openUserForm();
+        state.userForm.username = 'Eve'; state.userForm.password = 'eve-password-1'; state.userForm.is_admin = false;
+        await state.saveUser();
+        assert.deepEqual(requests.find(r => r.url === '/admin/users' && r.method === 'POST').body, { username: 'eve', display_name: '', is_admin: false, password: 'eve-password-1' });
+        assert.equal(state.users.length, 3);
+        assert.equal(state.usersNotice, 'users.created');
+        await state.updateUser(state.users[1], { disabled: true });
+        assert.equal(state.users[1].disabled, true);
+        await state.toggleUserTokens(state.users[1]);
+        assert.equal(state.userTokens.dana.length, 2);
+        assert.equal(state.userTokens.dana[0].id, 7, 'newest token first as the server orders it');
+        await state.revokeUserToken(state.users[1], state.userTokens.dana[0]);
+        assert.equal(state.userTokens.dana[0].revoked_at, '2026-10-05T00:00:00Z');
+        assert.equal(state.tokenStatus(state.userTokens.dana[0]), 'tokens.revoked');
+        await state.toggleUserTokens(state.users[1]);
+        assert.equal(state.userTokens.dana, undefined);
+    } finally { delete globalThis.fetch; }
+});
+
+test('with no account at all the login card creates the first administrator and signs in', async () => {
+    const { state, window } = setup('/');
+    const posted = [];
+    let created = false;
+    window.fetch = async (url, options = {}) => {
+        if (url === '/auth/status') return { ok: true, json: async () => (created ? { auth_mode: 'token', authenticated: true, user: 'root', admin: true, has_password: true, local_login: true } : { auth_mode: 'token', authenticated: false, local_login: false, sso_login: false, setup_required: true }) };
+        if (url === '/auth/setup') { posted.push(JSON.parse(options.body)); created = true; return { status: 201, ok: true, json: async () => ({ username: 'root', admin: true }) }; }
+        return { ok: true, json: async () => ({ items: [], has_more: false }) };
+    };
+    await state.bootstrap();
+    assert.equal(state.setupRequired, true);
+    state.setupForm = { username: 'Root', display_name: 'Root', password: 'first-password-1', confirm: 'different' };
+    await state.submitSetup();
+    assert.equal(state.setupError, 'auth.passwordMismatch');
+    assert.equal(posted.length, 0);
+    state.setupForm.confirm = 'first-password-1';
+    await state.submitSetup();
+    assert.deepEqual(posted, [{ username: 'root', display_name: 'Root', password: 'first-password-1', password_confirm: 'first-password-1' }]);
+    assert.equal(state.auth.authenticated, true);
+    assert.equal(state.auth.user, 'root');
+    assert.equal(state.setupRequired, false);
+    assert.equal(state.needsLogin, false);
 });

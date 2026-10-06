@@ -93,6 +93,33 @@ func (q *Queries) KeywordFacts(namespaceIDs []int64, query string, limit int) (s
 	return q.tpl.Execute("keyword_facts", args)
 }
 
+// RecallPages returns SQL + args for wiki page vector search.
+func (q *Queries) RecallPages(namespaceIDs []int64, vector pgvector.Vector, limit int, minScore float32) (string, []any, error) {
+	args := map[string]any{
+		"vector": vector,
+		"limit":  limit,
+	}
+	if minScore > 0 {
+		args["min_score"] = minScore
+	}
+	if len(namespaceIDs) > 0 {
+		args["namespace_ids"] = namespaceIDs
+	}
+	return q.tpl.Execute("recall_pages", args)
+}
+
+// KeywordPages returns SQL + args for trigram search over wiki pages.
+func (q *Queries) KeywordPages(namespaceIDs []int64, query string, limit int) (string, []any, error) {
+	args := map[string]any{
+		"query": query,
+		"limit": limit,
+	}
+	if len(namespaceIDs) > 0 {
+		args["namespace_ids"] = namespaceIDs
+	}
+	return q.tpl.Execute("keyword_pages", args)
+}
+
 // FetchEpisodes returns SQL + args for batch episode read after a checkpoint.
 func (q *Queries) FetchEpisodes(namespaceID int64, afterID int64, limit int) (string, []any, error) {
 	return q.tpl.Execute("fetch_episodes", map[string]any{

@@ -213,11 +213,8 @@ func registerWorkGraphTools(mcpServer *server.MCPServer, bc *bootstrap.Context) 
 		if err != nil {
 			return nil, err
 		}
-		item, err := bc.Brain.GetWorkItem(ctx, id)
+		item, err := authorizedWorkItem(ctx, bc, id)
 		if err != nil {
-			return nil, err
-		}
-		if err := authorizeNamespaceID(ctx, bc, item.NamespaceID); err != nil {
 			return nil, err
 		}
 		if namespace := request.GetString("namespace", ""); namespace != "" {
@@ -339,11 +336,8 @@ func registerWorkGraphTools(mcpServer *server.MCPServer, bc *bootstrap.Context) 
 		if err != nil {
 			return nil, err
 		}
-		current, err := bc.Brain.GetWorkItem(ctx, id)
+		current, err := authorizedWorkItem(ctx, bc, id)
 		if err != nil {
-			return nil, err
-		}
-		if err := authorizeNamespaceID(ctx, bc, current.NamespaceID); err != nil {
 			return nil, err
 		}
 		args := request.GetArguments()
@@ -405,11 +399,7 @@ func registerWorkGraphTools(mcpServer *server.MCPServer, bc *bootstrap.Context) 
 		if err != nil {
 			return nil, err
 		}
-		item, err := bc.Brain.GetWorkItem(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		if err := authorizeNamespaceID(ctx, bc, item.NamespaceID); err != nil {
+		if _, err := authorizedWorkItem(ctx, bc, id); err != nil {
 			return nil, err
 		}
 		if err := bc.Brain.DeleteWorkItem(ctx, id); err != nil {
@@ -427,11 +417,7 @@ func registerWorkGraphTools(mcpServer *server.MCPServer, bc *bootstrap.Context) 
 		if err != nil {
 			return nil, err
 		}
-		item, err := bc.Brain.GetWorkItem(ctx, itemID)
-		if err != nil {
-			return nil, err
-		}
-		if err := authorizeNamespaceID(ctx, bc, item.NamespaceID); err != nil {
+		if _, err := authorizedWorkItem(ctx, bc, itemID); err != nil {
 			return nil, err
 		}
 		author := request.GetString("author", "")
@@ -454,11 +440,7 @@ func registerWorkGraphTools(mcpServer *server.MCPServer, bc *bootstrap.Context) 
 		if err != nil {
 			return nil, err
 		}
-		item, err := bc.Brain.GetWorkItem(ctx, itemID)
-		if err != nil {
-			return nil, err
-		}
-		if err := authorizeNamespaceID(ctx, bc, item.NamespaceID); err != nil {
+		if _, err := authorizedWorkItem(ctx, bc, itemID); err != nil {
 			return nil, err
 		}
 		comments, err := bc.Brain.ListWorkItemComments(ctx, itemID, brain.Pagination{
@@ -651,11 +633,7 @@ func registerWorkGraphTools(mcpServer *server.MCPServer, bc *bootstrap.Context) 
 		if err != nil {
 			return nil, err
 		}
-		item, err := bc.Brain.GetWorkItem(ctx, itemID)
-		if err != nil {
-			return nil, err
-		}
-		if err := authorizeNamespaceID(ctx, bc, item.NamespaceID); err != nil {
+		if _, err := authorizedWorkItem(ctx, bc, itemID); err != nil {
 			return nil, err
 		}
 		if err := bc.Brain.AttachWorktreeToItem(ctx, itemID, worktreeID, request.GetString("relation", "active")); err != nil {
@@ -736,11 +714,7 @@ func registerWorkGraphTools(mcpServer *server.MCPServer, bc *bootstrap.Context) 
 		if err != nil {
 			return nil, err
 		}
-		item, err := bc.Brain.GetWorkItem(ctx, workItemID)
-		if err != nil {
-			return nil, err
-		}
-		if err := authorizeNamespaceID(ctx, bc, item.NamespaceID); err != nil {
+		if _, err := authorizedWorkItem(ctx, bc, workItemID); err != nil {
 			return nil, err
 		}
 		link, err := bc.Brain.LinkWorkItemMemory(ctx, workItemID, request.GetString("memory_type", ""), memoryID, request.GetString("relation", "context"))
@@ -758,11 +732,7 @@ func registerWorkGraphTools(mcpServer *server.MCPServer, bc *bootstrap.Context) 
 		if err != nil {
 			return nil, err
 		}
-		item, err := bc.Brain.GetWorkItem(ctx, workItemID)
-		if err != nil {
-			return nil, err
-		}
-		if err := authorizeNamespaceID(ctx, bc, item.NamespaceID); err != nil {
+		if _, err := authorizedWorkItem(ctx, bc, workItemID); err != nil {
 			return nil, err
 		}
 		links, err := bc.Brain.ListWorkItemMemoryLinks(ctx, workItemID)

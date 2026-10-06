@@ -85,3 +85,14 @@ Namespace paths, remote URLs, provider IDs, capabilities, and agent IDs are rout
 Resolve deterministic warnings from `get_work_plan` first. Run `validate_work_plan` after meaningful plan changes and before plan handoff. It uses the reasoning model and provides review advice; it does not replace building, testing, or observing the product.
 
 If a response contains `has_more: true`, fetch the next chunk with `offset: next_offset` and process chunks separately. Never combine every page into one model prompt.
+
+## Wiki
+
+Stash keeps a wiki per namespace: Markdown pages that cite the memory and work they were built from. Use it as the readable layer over memory.
+
+- Before answering a project question, call `wiki_search` (or `recall` with `include_pages: true`) and read the matching page with `wiki_read`. Prefer a page over raw episodes; follow its `sources` when the exact evidence matters.
+- After `finish_work`, a decision, or a correction, update the relevant page with `wiki_write`. Link pages with `[[slug]]` and cite evidence with `[@fact:12]`, `[@episode:3]`, or `[@work:W-000123]`. Pass the page's `revision` as `expected_revision` when updating.
+- Keep an `index` page that links the main pages, and run `wiki_lint` after a batch of writes.
+- `wiki_compile` asks the server model assigned to the `wiki` feature for a cited draft; without one, write the page yourself.
+
+The complete conventions are in the bundled `stash-wiki` skill and [WIKI.md](WIKI.md).

@@ -6,6 +6,8 @@
     'use strict';
 
     const routePaths = Object.freeze({
+        wiki: '/ui/wiki',
+        wiki_page: '/ui/wiki/page',
         'goal-map': '/ui/goal-map',
         plan: '/ui/plan',
         monitor: '/ui/monitor',
@@ -18,10 +20,14 @@
         list_hypotheses: '/ui/hypotheses',
         list_goals: '/ui/goals',
         agent: '/ui/agent-guide',
+        llm: '/ui/llm',
         maintenance: '/ui/maintenance',
+        access: '/ui/access',
         tokens: '/ui/tokens'
     });
     const routeTitles = Object.freeze({
+        wiki: 'nav.wiki',
+        wiki_page: 'nav.wiki',
         'goal-map': 'nav.overview',
         plan: 'nav.plan',
         monitor: 'nav.monitor',
@@ -34,7 +40,9 @@
         list_hypotheses: 'nav.hypotheses',
         list_goals: 'nav.goals',
         agent: 'nav.agent',
+        llm: 'nav.llm',
         maintenance: 'nav.maintenance',
+        access: 'nav.access',
         tokens: 'nav.tokens'
     });
     const pathRoutes = new Map(Object.entries(routePaths).map(([route, path]) => [path, route]));
@@ -60,7 +68,7 @@
     function readRoute(value) {
         const url = value instanceof URL ? value : new URL(String(value || '/'), 'http://stash.local');
         const path = normalizedPath(url.pathname);
-        const route = pathRoutes.get(path) || (compatibilityPaths.has(path) ? 'monitor' : 'goal-map');
+        const route = pathRoutes.get(path) || (compatibilityPaths.has(path) ? 'monitor' : 'wiki');
         const hidden = new Set(text(url.searchParams.get('hide')).split(',').map(item => item.trim()).filter(item => kinds.includes(item)));
         const hiddenRelations = new Set(text(url.searchParams.get('hide_relation')).split(',').map(item => item.trim()).filter(item => relations.includes(item)));
         return {
@@ -79,7 +87,13 @@
             issueType: text(url.searchParams.get('type')),
             label: text(url.searchParams.get('label')),
             offset: positiveInteger(url.searchParams.get('offset')),
-            issueID: positiveInteger(url.searchParams.get('issue'))
+            issueID: positiveInteger(url.searchParams.get('issue')),
+            slug: text(url.searchParams.get('slug')).toLowerCase(),
+            revision: positiveInteger(url.searchParams.get('rev')),
+            edit: text(url.searchParams.get('edit')) === '1',
+            kind: text(url.searchParams.get('kind')),
+            tag: text(url.searchParams.get('tag')),
+            stale: text(url.searchParams.get('stale')) === '1'
         };
     }
 
@@ -99,10 +113,22 @@
     }
 
     function buildRoute(route, state) {
-        const selected = Object.prototype.hasOwnProperty.call(routePaths, route) ? route : 'goal-map';
+        const selected = Object.prototype.hasOwnProperty.call(routePaths, route) ? route : 'wiki';
         const value = state && typeof state === 'object' ? state : {};
         const params = new URLSearchParams();
-        if (selected === 'goal-map') {
+        if (selected === 'wiki') {
+            setNamespace(params, value.namespace);
+            setText(params, 'q', value.query);
+            setText(params, 'kind', value.kind);
+            setText(params, 'tag', value.tag);
+            if (value.stale) params.set('stale', '1');
+            setOffset(params, value.offset);
+        } else if (selected === 'wiki_page') {
+            setNamespace(params, value.namespace);
+            setText(params, 'slug', value.slug);
+            if (positiveInteger(value.revision)) params.set('rev', String(positiveInteger(value.revision)));
+            if (value.edit) params.set('edit', '1');
+        } else if (selected === 'goal-map') {
             setNamespace(params, value.namespace);
             setText(params, 'q', value.query);
             setText(params, 'status', value.status);
@@ -165,7 +191,7 @@
             setText(params, 'focus', value.focus);
             if (value.detail) params.set('detail', '1');
         }
-        if (['agent', 'maintenance', 'tokens'].includes(selected)) setNamespace(params, value.namespace || value.project);
+        if (['agent', 'llm', 'maintenance', 'access', 'tokens'].includes(selected)) setNamespace(params, value.namespace || value.project);
         if (['goal-map', 'monitor', 'graph', 'board'].includes(selected)) {
             const issueID = positiveInteger(value.issueID);
             if (issueID) params.set('issue', String(issueID));
@@ -175,7 +201,7 @@
     }
 
     function routeTitle(route, locale = 'ko') {
-        return i18n.translate(locale, routeTitles[route] || routeTitles['goal-map']);
+        return i18n.translate(locale, routeTitles[route] || routeTitles.wiki);
     }
 
     return { routePaths, readRoute, buildRoute, routeTitle };

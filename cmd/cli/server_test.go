@@ -7,12 +7,14 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/alash3al/stash/internal/auth"
 	"github.com/alash3al/stash/internal/bootstrap"
+	"github.com/alash3al/stash/internal/db"
 	"github.com/alash3al/stash/internal/observability"
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -71,12 +73,12 @@ func TestOperationalRoutesAreRegistered(t *testing.T) {
 
 func TestDisabledAuthenticationOnlyListensOnLoopback(t *testing.T) {
 	for _, addr := range []string{"127.0.0.1:8080", "[::1]:8080", "localhost:8080"} {
-		if err := validateListenAddress(addr, nil); err != nil {
+		if err := validateListenAddress(addr, nil, false); err != nil {
 			t.Fatalf("loopback address %q rejected: %v", addr, err)
 		}
 	}
 	for _, addr := range []string{"0.0.0.0:8080", ":8080", "[::]:8080"} {
-		if err := validateListenAddress(addr, nil); err == nil {
+		if err := validateListenAddress(addr, nil, false); err == nil {
 			t.Fatalf("public address %q accepted without authentication", addr)
 		}
 	}
@@ -84,8 +86,11 @@ func TestDisabledAuthenticationOnlyListensOnLoopback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("init token auth: %v", err)
 	}
-	if err := validateListenAddress("0.0.0.0:8080", provider); err != nil {
+	if err := validateListenAddress("0.0.0.0:8080", provider, false); err != nil {
 		t.Fatalf("authenticated public address rejected: %v", err)
+	}
+	if err := validateListenAddress("0.0.0.0:8080", nil, true); err != nil {
+		t.Fatalf("trusted network without authentication rejected: %v", err)
 	}
 }
 
@@ -241,34 +246,58 @@ func TestStashHTTPHandlerAllowsDisabledAuthentication(t *testing.T) {
 	}
 }
 
-func TestStashHTTPHandlerUsesNativeMCPToken(t *testing.T) {
+func TestStashHTTPHandlerUsesStoredMCPToken(t *testing.T) {
 	provider, err := auth.Init(context.Background(), auth.Config{Mode: "token", APISecret: testAuthSecret})
 	if err != nil {
 		t.Fatalf("init token auth: %v", err)
 	}
-	token, err := auth.GenerateAPIToken("agent-1", testAuthSecret, time.Hour)
-	if err != nil {
-		t.Fatalf("generate token: %v", err)
-	}
 	handler := newStashHTTPHandler(&bootstrap.Context{Auth: provider})
-	request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}`))
-	request.Header.Set("Authorization", "Bearer "+token)
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Accept", "application/json, text/event-stream")
-	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"result"`) {
-		t.Fatalf("native MCP request status = %d, body = %s", response.Code, response.Body.String())
+	initialize := func(bearer string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}`))
+		request.Header.Set("Authorization", "Bearer "+bearer)
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Accept", "application/json, text/event-stream")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response
+	}
+	// Without token storage no bearer can be verified, and an upstream OIDC
+	// access token is never accepted: the challenge names a Stash API token
+	// and advertises no OAuth metadata.
+	for _, bearer := range []string{"upstream-oidc-token", "stash_api_not-stored", "stash_oauth_legacy"} {
+		response := initialize(bearer)
+		challenge := response.Header().Get("WWW-Authenticate")
+		if response.Code != http.StatusUnauthorized || !strings.HasPrefix(challenge, `Bearer realm="stash"`) || strings.Contains(challenge, "resource_metadata") {
+			t.Fatalf("bearer %q status = %d, challenge = %q", bearer, response.Code, challenge)
+		}
+	}
+	// The well-known OAuth discovery documents are gone with the broker.
+	for _, path := range []string{"/.well-known/oauth-protected-resource", "/.well-known/oauth-authorization-server", "/authorize", "/oauth/token", "/oauth/register"} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code == http.StatusOK && strings.Contains(response.Header().Get("Content-Type"), "application/json") {
+			t.Fatalf("%s still serves OAuth metadata", path)
+		}
 	}
 
-	request = httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}`))
-	request.Header.Set("Authorization", "Bearer upstream-oidc-token")
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Accept", "application/json, text/event-stream")
-	response = httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusUnauthorized || response.Header().Get("WWW-Authenticate") != `Bearer realm="stash"` {
-		t.Fatalf("OIDC MCP request status = %d, challenge = %q", response.Code, response.Header().Get("WWW-Authenticate"))
+	dsn := strings.TrimSpace(os.Getenv("STASH_TEST_DATABASE_URL"))
+	if dsn == "" {
+		t.Skip("set STASH_TEST_DATABASE_URL to check a stored token end to end")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	pool, err := db.OpenPool(ctx, dsn)
+	if err != nil {
+		t.Fatalf("open test database: %v", err)
+	}
+	defer pool.Close()
+	provider.SetTokenPool(pool)
+	token, _, err := provider.IssueAPIToken(ctx, "agent-1", "server test", time.Hour)
+	if err != nil {
+		t.Fatalf("issue token: %v", err)
+	}
+	if response := initialize(token); response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"result"`) {
+		t.Fatalf("stored token request status = %d, body = %s", response.Code, response.Body.String())
 	}
 }
 

@@ -116,6 +116,12 @@
                     gitFormOpen: false, gitSaving: false, gitError: '', gitForm: { repository: '', worktree_path: '', branch: '' },
                     detailLoading: false, detailError: '', detailGeneration: 0,
                     maintenance: null, maintenanceAction: false, maintenanceNotice: '',
+                    llm: null, llmBusy: false, llmNotice: '', llmError: '', llmProviderForm: null, llmProbe: {}, llmAssignmentForms: {},
+                    sso: null, ssoBusy: false, ssoNotice: '', ssoError: '', ssoForm: null, ssoTest: {},
+                    workspaceMissing: false, workspaceInitializing: false,
+                    users: [], usersActor: '', usersBusy: false, usersError: '', usersNotice: '', userForm: null, userTokens: {},
+                    wikiPages: [], wikiLog: [], wikiLint: null, wikiPage: null, wikiRendered: '', wikiHistory: [], wikiHistoryOpen: false, wikiEdit: null, wikiBusy: false, wikiCompiling: false, wikiNotice: '', wikiError: '', wikiFocusedSource: '',
+                    wikiFilters: { kind: route.kind, tag: route.tag, stale: route.stale }, wikiKinds: ['article', 'index', 'entity', 'decision', 'log'],
                     copyStatus: 'action.copyGuide',
                     mapLoaded: false,
                     fitMap: true,
@@ -132,6 +138,17 @@
                     error: '',
                     auth: { auth_mode: 'none', authenticated: false, user: '' },
                     authPanelOpen: false,
+                    loginForm: { username: '', password: '', token: '' },
+                    setupForm: { username: '', display_name: '', password: '', confirm: '' },
+                    setupBusy: false,
+                    setupError: '',
+                    loginModeChoice: '',
+                    loginBusy: false,
+                    loginError: '',
+                    passwordForm: { current: '', next: '', confirm: '' },
+                    passwordBusy: false,
+                    passwordError: '',
+                    passwordNotice: '',
                     issuedToken: '',
                     issuedTokenID: 0,
                     issuedTokenExpiresAt: null,
@@ -166,8 +183,24 @@
                     return work;
                 },
                 needsLogin() { return this.canLogin && !this.auth.authenticated; },
+                canLocalLogin() { return this.auth.local_login === true; },
+                setupRequired() { return this.auth.setup_required === true; },
+                // The login card always shows a form, never a button that leads to
+                // another page: the password form when any account has one, else
+                // the API-token form. The person can switch between the two.
+                loginMode: {
+                    get() { return this.loginModeChoice || (this.canLocalLogin ? 'password' : 'token'); },
+                    set(value) { this.loginModeChoice = value === 'token' ? 'token' : 'password'; }
+                },
+                canSSOLogin() { return this.auth.sso_login === true && this.ssoProviders.length > 0; },
+                ssoProviders() { return Array.isArray(this.auth.sso_providers) ? this.auth.sso_providers.filter(item => item && item.slug) : []; },
+                ssoCallbackURL() { return window.location.origin + '/auth/callback'; },
+                llmDeleteLabel() { return this.t('llm.delete'); },
+                // The server settings pages answer 403 for a signed-in user who is
+                // not an administrator; without authentication they are open.
+                showAdminNav() { return !this.auth.authenticated || this.auth.admin !== false; },
                 hasFilters() { return Object.values(this.filters).some(Boolean) || Object.values(this.kindFilters).some(value => !value); },
-                pageTitle() { return routeAPI.routeTitle(this.route.route, this.locale); },
+                pageTitle() { if (this.route.route === 'wiki_page') { if (this.wikiEdit) return this.wikiEdit.isNew ? this.t('wiki.newPage') : this.wikiEdit.title; if (this.wikiPage) return this.wikiPage.page.title; } return routeAPI.routeTitle(this.route.route, this.locale); },
                 rootOptions() {
                     const values = [{ slug: '/', label: this.t('workspace.default') }];
                     for (const item of this.namespaces) {
@@ -280,7 +313,7 @@
                     return fields.filter(field => text(field.value));
                 },
                 agentGuide() { return this.t('agent.guide'); },
-                staticTitle() { return this.route.route === 'agent' ? this.t('nav.agent') : this.route.route === 'maintenance' ? this.t('nav.maintenance') : this.t('empty.pageTitle'); },
+                staticTitle() { return this.route.route === 'agent' ? this.t('nav.agent') : this.route.route === 'maintenance' ? this.t('nav.maintenance') : this.route.route === 'llm' ? this.t('nav.llm') : this.t('empty.pageTitle'); },
                 staticText() { return this.t('empty.pageText'); }
             },
             mounted() {
@@ -307,7 +340,7 @@
             methods: {
                 refreshVisible() {
                     if (!this.authChecked || this.authLoading || this.needsLogin || this.loading || this.refreshing || this.selectionLoading || this.detailLoading || this.maintenanceAction || document.visibilityState === 'hidden') return;
-                    if (!['goal-map', 'monitor', 'plan', 'board', 'graph', 'maintenance', 'tokens'].includes(this.route.route)) return;
+                    if (!['goal-map', 'monitor', 'plan', 'board', 'graph', 'maintenance', 'access', 'tokens'].includes(this.route.route)) return;
                     const focused = document.activeElement;
                     if (focused && focused.matches('input:not([type=checkbox]), textarea:not([readonly])')) return;
                     return this.loadRoute(false, true);
@@ -400,6 +433,303 @@
                     } catch (error) { if (current()) this.detailError = i18n.errorMessage(error, 'error.original'); }
                     finally { if (current()) this.detailLoading = false; }
                 },
+                // Model settings page. Forms are rebuilt from the server document after
+                // every change, so the page always shows the stored state.
+                applyLLM(status) {
+                    const forms = {};
+                    for (const info of status.features || []) {
+                        const assignment = (status.assignments || []).find(item => item.feature === info.feature);
+                        const route = (status.routes || []).find(item => item.feature === info.feature) || {};
+                        forms[info.feature] = assignment
+                            ? { provider_id: String(assignment.provider_id), model: assignment.model, dimensions: assignment.dimensions || '', context_tokens: assignment.context_tokens || 0, reserved_tokens: assignment.reserved_tokens || 0 }
+                            : { provider_id: '', model: route.model || '', dimensions: route.dimensions || '', context_tokens: route.context_tokens || 0, reserved_tokens: route.reserved_tokens || 0 };
+                    }
+                    this.llm = status; this.llmAssignmentForms = forms;
+                },
+                llmRoute(feature) { return ((this.llm && this.llm.routes) || []).find(item => item.feature === feature) || null; },
+                llmRouteSource(feature) { const route = this.llmRoute(feature); return route && route.source ? route.source : 'none'; },
+                llmModelOptions(feature) { const form = this.llmAssignmentForms[feature]; const probe = form && this.llmProbe[form.provider_id]; return probe && probe.models ? probe.models : []; },
+                llmProbeText(probe) { return probe.ok ? this.t('llm.probeOk', { count: (probe.models || []).length, ms: number(probe.latency_ms) }) : this.t('llm.probeFailed', { message: probe.error || '' }); },
+                async llmRequest(path, options, notice) {
+                    this.llmBusy = true; this.llmError = ''; this.llmNotice = '';
+                    try {
+                        const result = await api.adminRequest(path, options);
+                        if (notice) this.llmNotice = notice;
+                        return result;
+                    } catch (error) {
+                        this.llmError = [401, 403].includes(error.status) ? 'error.admin' : { key: 'llm.failed', params: { message: error.message } };
+                        return null;
+                    } finally { this.llmBusy = false; }
+                },
+                async reloadLLM() { const notice = this.llmNotice; const status = await this.llmRequest('/admin/llm/status', {}); if (status) { this.applyLLM(status); this.llmNotice = notice; } },
+                // Access page: SSO providers. Same shape as the model settings page.
+                async ssoRequest(path, options, notice) {
+                    this.ssoBusy = true; this.ssoError = ''; this.ssoNotice = '';
+                    try {
+                        const result = await api.adminRequest(path, options);
+                        if (notice) this.ssoNotice = notice;
+                        return result;
+                    } catch (error) {
+                        this.ssoError = [401, 403].includes(error.status) ? 'error.admin' : { key: 'access.failed', params: { message: error.message } };
+                        return null;
+                    } finally { this.ssoBusy = false; }
+                },
+                async reloadSSO() { const notice = this.ssoNotice; const status = await this.ssoRequest('/admin/sso/status', {}); if (status) { status.providers = Array.isArray(status.providers) ? status.providers : []; this.sso = status; this.ssoNotice = notice; } },
+                openSSOForm(provider) {
+                    this.ssoForm = provider
+                        ? { id: provider.id, slug: provider.slug, display_name: provider.display_name || '', issuer: provider.issuer, client_id: provider.client_id, client_secret: '', redirect_url: provider.redirect_url, enabled: provider.enabled }
+                        : { id: 0, slug: '', display_name: '', issuer: '', client_id: '', client_secret: '', redirect_url: this.ssoCallbackURL, enabled: true };
+                },
+                async saveSSOProvider() {
+                    const form = this.ssoForm; if (!form) return;
+                    const body = { slug: text(form.slug), display_name: text(form.display_name), issuer: text(form.issuer), client_id: text(form.client_id), redirect_url: text(form.redirect_url), enabled: !!form.enabled };
+                    if (text(form.client_secret)) body.client_secret = text(form.client_secret);
+                    const result = await this.ssoRequest(form.id ? '/admin/sso/providers/' + form.id : '/admin/sso/providers', this.llmJSON(form.id ? 'PUT' : 'POST', body), 'access.providerSaved');
+                    if (result) { this.ssoForm = null; await this.reloadSSO(); }
+                },
+                async deleteSSOProvider(provider) {
+                    if (!window.confirm(this.t('access.deleteConfirm', { name: provider.display_name || provider.slug }))) return;
+                    if (await this.ssoRequest('/admin/sso/providers/' + provider.id, { method: 'DELETE' }, 'access.providerDeleted')) await this.reloadSSO();
+                },
+                async testSSOProvider(provider) {
+                    const result = await this.ssoRequest('/admin/sso/providers/' + provider.id + '/test', { method: 'POST' }, '');
+                    if (result) this.ssoTest = { ...this.ssoTest, [String(provider.id)]: result };
+                },
+                // Users and their tokens, on the same page as SSO.
+                async usersRequest(path, options, notice) {
+                    this.usersBusy = true; this.usersError = ''; this.usersNotice = '';
+                    try {
+                        const result = await api.adminRequest(path, options);
+                        if (notice) this.usersNotice = notice;
+                        return result;
+                    } catch (error) {
+                        this.usersError = [401, 403].includes(error.status) ? 'error.admin' : { key: 'users.failed', params: { message: error.message } };
+                        return null;
+                    } finally { this.usersBusy = false; }
+                },
+                async reloadUsers() {
+                    const notice = this.usersNotice;
+                    const result = await this.usersRequest('/admin/users', {});
+                    if (result) { this.users = Array.isArray(result.users) ? result.users : []; this.usersActor = text(result.actor); this.usersNotice = notice; }
+                },
+                userIdentityText(user) {
+                    const parts = (user.identities || []).map(identity => identity.kind === 'password' ? this.t('users.identityPassword') : this.t('users.identitySSO', { issuer: identity.issuer || 'oidc' }));
+                    return parts.length ? parts.join(' · ') : this.t('users.noIdentity');
+                },
+                openUserForm(user) {
+                    this.userForm = user
+                        ? { mode: 'password', username: user.username, password: '' }
+                        : { mode: 'create', username: '', display_name: '', password: '', is_admin: false };
+                },
+                async saveUser() {
+                    const form = this.userForm; if (!form) return;
+                    let result;
+                    if (form.mode === 'password') {
+                        result = await this.usersRequest('/admin/users/' + encodeURIComponent(form.username) + '/password', this.llmJSON('POST', { password: form.password }), 'users.passwordSaved');
+                    } else {
+                        const body = { username: text(form.username).toLowerCase(), display_name: text(form.display_name), is_admin: !!form.is_admin };
+                        if (form.password) body.password = form.password;
+                        result = await this.usersRequest('/admin/users', this.llmJSON('POST', body), 'users.created');
+                    }
+                    if (result) { this.userForm = null; await this.reloadUsers(); }
+                },
+                async updateUser(user, change) {
+                    if (await this.usersRequest('/admin/users/' + encodeURIComponent(user.username), this.llmJSON('PUT', change), 'users.updated')) await this.reloadUsers();
+                },
+                async deleteUser(user) {
+                    if (!window.confirm(this.t('users.deleteConfirm', { name: user.username }))) return;
+                    if (await this.usersRequest('/admin/users/' + encodeURIComponent(user.username), { method: 'DELETE' }, 'users.deleted')) { const tokens = { ...this.userTokens }; delete tokens[user.username]; this.userTokens = tokens; await this.reloadUsers(); }
+                },
+                async toggleUserTokens(user) {
+                    if (this.userTokens[user.username]) { const tokens = { ...this.userTokens }; delete tokens[user.username]; this.userTokens = tokens; return; }
+                    const result = await this.usersRequest('/admin/users/' + encodeURIComponent(user.username) + '/tokens', {});
+                    if (result) this.userTokens = { ...this.userTokens, [user.username]: Array.isArray(result.tokens) ? result.tokens : [] };
+                },
+                async revokeUserToken(user, token) {
+                    if (!window.confirm(this.t('tokens.confirmRevoke'))) return;
+                    const result = await this.usersRequest('/admin/users/' + encodeURIComponent(user.username) + '/tokens/' + encodeURIComponent(token.id) + '/revoke', { method: 'POST' }, 'users.tokenRevoked');
+                    if (result) this.userTokens = { ...this.userTokens, [user.username]: (this.userTokens[user.username] || []).map(item => item.id === token.id ? { ...item, revoked_at: result.revoked_at, expires_at: result.expires_at } : item) };
+                },
+                async importSSOEnvironment() {
+                    const result = await this.ssoRequest('/admin/sso/import-environment', { method: 'POST' }, '');
+                    if (result) { this.ssoNotice = result.imported ? 'access.imported' : 'access.alreadyImported'; await this.reloadSSO(); }
+                },
+                openProviderForm(provider) {
+                    this.llmProbe = { ...this.llmProbe, form: undefined };
+                    this.llmProviderForm = provider
+                        ? { id: provider.id, name: provider.name, base_url: provider.base_url, api_key: '', keep_key: provider.has_api_key, clear_key: false, request_timeout_seconds: provider.request_timeout_seconds, enabled: provider.enabled }
+                        : { id: 0, name: '', base_url: '', api_key: '', keep_key: false, clear_key: false, request_timeout_seconds: 120, enabled: true };
+                },
+                llmJSON(method, body) { return { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }; },
+                async saveProvider() {
+                    const form = this.llmProviderForm; if (!form) return;
+                    const body = { name: text(form.name), base_url: text(form.base_url), request_timeout_seconds: number(form.request_timeout_seconds) || 120, enabled: !!form.enabled };
+                    if (text(form.api_key)) body.api_key = text(form.api_key); else if (form.id && form.clear_key) body.api_key = '';
+                    const result = await this.llmRequest(form.id ? '/admin/llm/providers/' + form.id : '/admin/llm/providers', this.llmJSON(form.id ? 'PUT' : 'POST', body), 'llm.providerSaved');
+                    if (result) { this.llmProviderForm = null; await this.reloadLLM(); }
+                },
+                async deleteProvider(provider) {
+                    if (!window.confirm(this.t('llm.deleteConfirm', { name: provider.name }))) return;
+                    if (await this.llmRequest('/admin/llm/providers/' + provider.id, { method: 'DELETE' }, 'llm.providerDeleted')) await this.reloadLLM();
+                },
+                async probeProvider(provider) {
+                    const body = {};
+                    if (provider.id) body.provider_id = provider.id;
+                    if (text(provider.base_url) && (!provider.id || text(provider.api_key) || provider.clear_key)) body.base_url = text(provider.base_url);
+                    if (text(provider.api_key)) body.api_key = text(provider.api_key); else if (provider.clear_key) body.api_key = '';
+                    const result = await this.llmRequest('/admin/llm/probe', this.llmJSON('POST', body), '');
+                    // The edit form carries keep_key; a stored row does not.
+                    if (result) this.llmProbe = { ...this.llmProbe, [provider.keep_key === undefined ? String(provider.id) : 'form']: result };
+                },
+                async saveAssignment(feature) {
+                    const form = this.llmAssignmentForms[feature]; if (!form) return;
+                    if (!form.provider_id) { await this.clearAssignment(feature); return; }
+                    const body = { provider_id: number(form.provider_id), model: text(form.model), dimensions: number(form.dimensions) || 0, context_tokens: number(form.context_tokens) || 0, reserved_tokens: number(form.reserved_tokens) || 0 };
+                    if (await this.llmRequest('/admin/llm/assignments/' + feature, this.llmJSON('PUT', body), 'llm.assignmentSaved')) await this.reloadLLM();
+                },
+                async clearAssignment(feature) {
+                    if (await this.llmRequest('/admin/llm/assignments/' + feature, { method: 'DELETE' }, 'llm.assignmentCleared')) await this.reloadLLM();
+                },
+                async importEnvironment() {
+                    if (!window.confirm(this.t('llm.importConfirm'))) return;
+                    if (await this.llmRequest('/admin/llm/import-environment', { method: 'POST' }, 'llm.imported')) await this.reloadLLM();
+                },
+                // Wiki pages: the readable layer. Content is read in windows and
+                // stitched locally so the reader always sees the whole page.
+                wikiTool(tool, args) { return api.invokeTool(tool, { namespace: this.rootSlug || '/', ...args }); },
+                async fetchWikiPage(slug, revision) {
+                    let content = ''; let offset = 0; let snapshot = ''; let document = null;
+                    for (let guard = 0; guard < 64; guard++) {
+                        const window = unwrap(await this.wikiTool('wiki_read', { slug, revision: revision || 0, offset, limit: 20000, snapshot }));
+                        document = window; content += window.content || ''; snapshot = window.snapshot || ''; offset = number(window.next_offset);
+                        if (!window.has_more) break;
+                    }
+                    if (!document) throw new Error('wiki_read returned nothing');
+                    return { page: document.page, revision: number(document.revision), content, links: arrayOf(document.links), backlinks: arrayOf(document.backlinks), sources: arrayOf(document.sources) };
+                },
+                async loadWikiHome(route, filters, generation) {
+                    const args = { q: filters.query, limit: 101, offset: route.offset };
+                    if (this.wikiFilters.kind) args.kind = this.wikiFilters.kind;
+                    if (this.wikiFilters.tag) args.tag = this.wikiFilters.tag;
+                    if (this.wikiFilters.stale) args.stale = true;
+                    const value = unwrap(await this.wikiTool('wiki_list', args));
+                    const page = api.pageSlice(value, 100, route.offset);
+                    let log = [];
+                    try { log = arrayOf(unwrap(await this.wikiTool('wiki_log', { limit: 20 }))); } catch (_) { /* the log is optional */ }
+                    if (generation !== this.loadGeneration) return null;
+                    this.wikiPages = route.offset && this.wikiPages.length ? [...this.wikiPages, ...page.items] : page.items;
+                    this.wikiLog = log; this.wikiPage = null; this.wikiEdit = null;
+                    return page;
+                },
+                async loadWikiPage(route, generation) {
+                    if (!route.slug) {
+                        if (generation === this.loadGeneration) { this.wikiPage = null; this.startWikiEdit(null); }
+                        return;
+                    }
+                    let document;
+                    try { document = await this.fetchWikiPage(route.slug, route.revision); }
+                    catch (error) {
+                        // A link to a page nobody wrote yet opens the editor for it
+                        // instead of a dead end; the broken link is the invitation.
+                        if (!/not found/i.test(error.message || '')) throw error;
+                        if (generation !== this.loadGeneration) return;
+                        this.wikiPage = null; this.startWikiEdit(null);
+                        this.wikiEdit.slug = route.slug;
+                        this.wikiEdit.title = route.slug.split('/').pop().replace(/[-_]+/g, ' ').replace(/^./, c => c.toUpperCase());
+                        return;
+                    }
+                    if (generation !== this.loadGeneration) return;
+                    this.wikiPage = document; this.wikiRendered = this.renderWikiMarkdown(document.content); this.wikiHistory = []; this.wikiHistoryOpen = false; this.wikiFocusedSource = '';
+                    this.wikiEdit = route.edit && document.revision === document.page.revision ? this.editorFrom(document) : null;
+                },
+                renderWikiMarkdown(content) {
+                    const runtime = root.StashVueRuntime || {};
+                    if (!runtime.marked || !runtime.DOMPurify) return '';
+                    const namespace = this.rootSlug || '/';
+                    const prepared = String(content || '')
+                        .replace(/\[@(episode|fact|hypothesis|failure|goal|work|page|url):([^\]\s]+)\]/g, (_, kind, ref) => `<a class="stash-wiki-cite" href="#source-${kind}:${ref}" data-source="${kind}:${ref}">${kind}:${ref}</a>`)
+                        .replace(/\[\[([^\[\]|]+)(?:\|([^\[\]]*))?\]\]/g, (_, slug, label) => {
+                            const target = slug.trim().toLowerCase().replace(/^\/+|\/+$/g, '');
+                            return `[${(label || slug).trim()}](${routeAPI.buildRoute('wiki_page', { namespace, slug: target })})`;
+                        });
+                    const html = runtime.marked.parse(prepared, { gfm: true, async: false });
+                    return runtime.DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
+                },
+                wikiArticleClick(event) {
+                    const anchor = event.target && event.target.closest ? event.target.closest('a') : null;
+                    if (!anchor) return;
+                    const source = anchor.getAttribute('data-source');
+                    if (source) { event.preventDefault(); this.wikiFocusedSource = source; const target = document.getElementById('source-' + source); if (target && target.scrollIntoView) target.scrollIntoView({ block: 'nearest' }); return; }
+                    const href = anchor.getAttribute('href') || '';
+                    if (href.startsWith('/ui/wiki/page')) { event.preventDefault(); const route = routeAPI.readRoute(href); this.openWikiPage(route.slug); return; }
+                    if (/^https?:/i.test(href)) { anchor.setAttribute('target', '_blank'); anchor.setAttribute('rel', 'noopener'); }
+                },
+                async openWikiPage(slug, options = {}) {
+                    this.route = routeAPI.readRoute(routeAPI.buildRoute('wiki_page', { namespace: this.rootSlug, slug, revision: options.revision || 0, edit: !!options.edit }));
+                    this.wikiNotice = ''; this.wikiError = '';
+                    this.syncURL(true);
+                    await this.loadRoute();
+                },
+                editorFrom(document) {
+                    const page = document ? document.page : null;
+                    return {
+                        isNew: !page, slug: page ? page.slug : '', title: page ? page.title : '', kind: page ? page.kind : 'article', summary: page ? page.summary : '',
+                        tags: page ? page.tags.join(', ') : '', content: document ? document.content : '', changeNote: '', expectedRevision: page ? page.revision : 0
+                    };
+                },
+                startWikiEdit(document) { this.wikiEdit = this.editorFrom(document); this.wikiNotice = ''; this.wikiError = ''; },
+                newWikiPage() { this.route = routeAPI.readRoute(routeAPI.buildRoute('wiki_page', { namespace: this.rootSlug, slug: '', edit: true })); this.wikiPage = null; this.startWikiEdit(null); this.syncURL(true); },
+                editWikiPage() { if (!this.wikiPage) return; this.startWikiEdit(this.wikiPage); this.route = { ...this.route, edit: true }; this.syncURL(); },
+                cancelWikiEdit() { const slug = this.wikiEdit && this.wikiEdit.slug; this.wikiEdit = null; if (this.wikiPage) { this.route = { ...this.route, edit: false }; this.syncURL(); } else if (slug) this.openWikiPage(slug); else this.navigate('wiki'); },
+                async saveWikiPage() {
+                    const form = this.wikiEdit; if (!form) return;
+                    if (!text(form.title) || !text(form.content)) { this.wikiError = 'wiki.titleRequired'; return; }
+                    this.wikiBusy = true; this.wikiError = ''; this.wikiNotice = '';
+                    try {
+                        const args = { slug: text(form.slug), title: text(form.title), content: form.content, summary: text(form.summary), kind: form.kind, tags: form.tags, change_note: text(form.changeNote), expected_revision: form.isNew ? 0 : number(form.expectedRevision), author: this.auth.user || 'console', author_kind: 'human' };
+                        const result = unwrap(await this.wikiTool('wiki_write', args));
+                        if (result && result.error) throw new Error(result.error);
+                        this.wikiEdit = null; this.wikiNotice = 'wiki.saved';
+                        await this.openWikiPage(args.slug);
+                        this.wikiNotice = 'wiki.saved';
+                    } catch (error) {
+                        this.wikiError = /revision/i.test(error.message || '') ? 'wiki.conflict' : { key: 'wiki.failed', params: { message: error.message || String(error) } };
+                    } finally { this.wikiBusy = false; }
+                },
+                async deleteWikiPage() {
+                    if (!this.wikiPage || !window.confirm(this.t('wiki.deleteConfirm', { title: this.wikiPage.page.title }))) return;
+                    this.wikiBusy = true; this.wikiError = '';
+                    try { unwrap(await this.wikiTool('wiki_delete', { slug: this.wikiPage.page.slug, author: this.auth.user || 'console', author_kind: 'human' })); this.wikiNotice = 'wiki.deleted'; await this.navigate('wiki'); this.wikiNotice = 'wiki.deleted'; }
+                    catch (error) { this.wikiError = { key: 'wiki.failed', params: { message: error.message || String(error) } }; }
+                    finally { this.wikiBusy = false; }
+                },
+                async toggleWikiHistory() {
+                    this.wikiHistoryOpen = !this.wikiHistoryOpen;
+                    if (!this.wikiHistoryOpen || this.wikiHistory.length || !this.wikiPage) return;
+                    try { this.wikiHistory = arrayOf(unwrap(await this.wikiTool('wiki_history', { slug: this.wikiPage.page.slug, limit: 50 }))); }
+                    catch (error) { this.wikiError = { key: 'wiki.failed', params: { message: error.message || String(error) } }; }
+                },
+                async lintWiki() {
+                    this.wikiBusy = true; this.wikiError = '';
+                    try { this.wikiLint = unwrap(await this.wikiTool('wiki_lint', { author: this.auth.user || 'console' })); this.wikiLint.findings = arrayOf(this.wikiLint.findings); }
+                    catch (error) { this.wikiError = { key: 'wiki.failed', params: { message: error.message || String(error) } }; }
+                    finally { this.wikiBusy = false; }
+                },
+                async compileWikiDraft() {
+                    const form = this.wikiEdit; if (!form || !text(form.slug)) { this.wikiError = 'wiki.titleRequired'; return; }
+                    this.wikiBusy = true; this.wikiCompiling = true; this.wikiError = ''; this.wikiNotice = '';
+                    try {
+                        const result = unwrap(await this.wikiTool('wiki_compile', { slug: text(form.slug), title: text(form.title), topic: text(form.title) || text(form.slug), save: false }));
+                        if (result && result.error) throw new Error(result.error);
+                        const draft = result.draft || {};
+                        form.title = draft.title || form.title; form.summary = draft.summary || form.summary; form.content = draft.content || form.content;
+                        if (Array.isArray(draft.tags) && draft.tags.length) form.tags = draft.tags.join(', ');
+                        form.changeNote = form.changeNote || ('draft by ' + (result.model || 'model'));
+                        this.wikiNotice = 'wiki.compiled';
+                    } catch (error) { this.wikiError = { key: 'wiki.failed', params: { message: error.message || String(error) } }; }
+                    finally { this.wikiBusy = false; this.wikiCompiling = false; }
+                },
+                searchWiki() { this.route.offset = 0; this.syncURL(); this.loadRoute(); },
                 async runMaintenance(action) {
                     if (this.maintenanceAction || !this.maintenance || !['retry', 'reindex'].includes(action)) return;
                     if (action === 'reindex' && !window.confirm(this.t('maintenance.confirm'))) return;
@@ -467,7 +797,7 @@
                 navHref(route) { return routeAPI.buildRoute(route, { project: isProject(this.rootSlug) ? this.rootSlug : '', namespace: this.rootSlug }); },
                 issueHref(item) { return routeAPI.buildRoute('board', { project: isProject(this.rootSlug) ? this.rootSlug : '', namespace: this.rootSlug, issueID: number(item && item.id), focus: `work:${number(item && item.id)}`, detail: false }); },
                 routeState() {
-                    return { project: isProject(this.rootSlug) ? this.rootSlug : '', namespace: this.rootSlug, query: this.filters.query, status: this.filters.status, agent: this.filters.agent, memoryType: this.filters.memoryType, issueType: this.filters.issueType, label: this.filters.label, kinds: this.kindFilters, relations: this.relations, focus: this.selected ? this.selected.key : this.route.focus, issueID: this.selected && this.selected.kind === 'work' ? number(this.selected.item.id) : this.route.issueID, detail: this.route.detail, offset: this.route.offset };
+                    return { project: isProject(this.rootSlug) ? this.rootSlug : '', namespace: this.rootSlug, slug: this.route.slug, revision: this.route.revision, edit: this.route.edit, kind: this.wikiFilters.kind, tag: this.wikiFilters.tag, stale: this.wikiFilters.stale, query: this.filters.query, status: this.filters.status, agent: this.filters.agent, memoryType: this.filters.memoryType, issueType: this.filters.issueType, label: this.filters.label, kinds: this.kindFilters, relations: this.relations, focus: this.selected ? this.selected.key : this.route.focus, issueID: this.selected && this.selected.kind === 'work' ? number(this.selected.item.id) : this.route.issueID, detail: this.route.detail, offset: this.route.offset };
                 },
                 syncURL(push = false) {
                     const href = routeAPI.buildRoute(this.route.route, this.routeState());
@@ -477,6 +807,7 @@
                     document.title = this.pageTitle + ' · Stash';
                 },
                 syncFiltersFromRoute() {
+                    this.wikiFilters = { kind: this.route.kind, tag: this.route.tag, stale: this.route.stale };
                     this.filters.query = this.route.query; this.filters.status = this.route.status; this.filters.agent = this.route.agent; this.filters.memoryType = this.route.memoryType; this.filters.issueType = this.route.issueType; this.filters.label = this.route.label; this.kindFilters = { ...this.route.kinds }; this.relations = { ...this.route.relations };
                 },
                 async navigate(route) {
@@ -561,6 +892,19 @@
                     if (found) this.selected.item = { ...found.item, ...this.selected.item };
                     this.selectionLoading = false;
                 },
+                // Creates the signed-in person's workspace (the same scaffold the
+                // `init` MCP tool builds) and reloads the page.
+                async initializeWorkspace() {
+                    if (this.workspaceInitializing) return;
+                    this.workspaceInitializing = true; this.error = '';
+                    try {
+                        unwrap(await api.invokeTool('init', {}));
+                        await this.fetchNamespaces();
+                        this.workspaceMissing = false;
+                        await this.loadRoute();
+                    } catch (error) { this.error = i18n.errorMessage(error, 'error.workspaceInit'); }
+                    finally { this.workspaceInitializing = false; }
+                },
                 async fetchNamespaces() {
                     const items = []; let offset = 0;
                     for (;;) {
@@ -589,13 +933,17 @@
                                 this.syncFiltersFromRoute(); this.syncURL();
                             }
                         } catch (_) { /* Session storage may be unavailable. */ }
-                        await this.fetchNamespaces();
+                        // A person who has never used this server has no workspace yet;
+                        // the console still opens so they can create one or reach the
+                        // server settings.
+                        try { await this.fetchNamespaces(); this.workspaceMissing = false; }
+                        catch (error) { if (i18n.errorMessage(error, 'error.page') !== 'error.workspaceNotFound') throw error; this.namespaces = []; this.workspaceMissing = true; }
                         await this.loadRoute();
                     } catch (error) { this.error = i18n.errorMessage(error, 'error.page'); }
                     finally { this.authLoading = false; }
                 },
-                async searchList() { this.route.offset = 0; this.clearSelection(); await this.loadRoute(); },
-                async nextPage() { this.route.offset = this.page.nextOffset; this.clearSelection(); await this.loadRoute(true); },
+                async searchList() { this.route.offset = 0; if (this.route.route === 'wiki') { this.syncURL(); return this.loadRoute(); } this.clearSelection(); await this.loadRoute(); },
+                async nextPage() { this.route.offset = this.page.nextOffset; if (this.route.route === 'wiki') return this.loadRoute(true); this.clearSelection(); await this.loadRoute(true); },
                 async loadRoute(append = false, background = false) {
                     if (this.needsLogin) return;
                     const generation = ++this.loadGeneration;
@@ -609,9 +957,23 @@
                             try { map = await this.fetchGoalMap(namespace, generation); mapLoaded = true; }
                             catch (error) { if (background || mapRoute || error.status === 401) throw error; contextError = 'error.context'; }
                         }
-                        if (route.route === 'maintenance') {
+                        if (route.route === 'wiki') {
+                            const wikiPage = await this.loadWikiHome(route, filters, generation);
+                            if (wikiPage) page = wikiPage;
+                        } else if (route.route === 'wiki_page') {
+                            await this.loadWikiPage(route, generation);
+                        } else if (route.route === 'maintenance') {
                             const maintenance = await api.adminRequest('/admin/maintenance/embeddings');
                             if (generation === this.loadGeneration) this.maintenance = maintenance;
+                        } else if (route.route === 'llm') {
+                            const status = await api.adminRequest('/admin/llm/status');
+                            if (generation === this.loadGeneration) { this.llmProviderForm = null; this.llmError = ''; this.llmNotice = ''; this.applyLLM(status); }
+                        } else if (route.route === 'access') {
+                            const [status, userList] = await Promise.all([api.adminRequest('/admin/sso/status'), api.adminRequest('/admin/users')]);
+                            if (generation === this.loadGeneration) {
+                                this.ssoForm = null; this.ssoError = ''; this.ssoNotice = ''; this.ssoTest = {}; status.providers = Array.isArray(status.providers) ? status.providers : []; this.sso = status;
+                                this.userForm = null; this.usersError = ''; this.usersNotice = ''; this.userTokens = {}; this.users = Array.isArray(userList.users) ? userList.users : []; this.usersActor = text(userList.actor);
+                            }
                         } else if (route.route === 'tokens') {
                             await this.loadAuthTokens();
                         } else if (route.route === 'graph') {
@@ -651,8 +1013,9 @@
                         this.lastRefreshedAt = Date.now();
                         document.title = this.pageTitle + ' · Stash';
                     } catch (error) {
-                        if (generation === this.loadGeneration && background) this.refreshError = 'refresh.failed';
-                        else if (generation === this.loadGeneration) this.error = route.route === 'maintenance' && [401, 403, 503].includes(error.status) ? (error.status === 503 ? 'error.adminUnavailable' : 'error.admin') : i18n.errorMessage(error, 'error.page');
+                        if (generation === this.loadGeneration && this.workspaceMissing && !background && i18n.errorMessage(error, 'error.page') === 'error.workspaceNotFound') { this.error = ''; Object.assign(this, { map: emptyMap(), listItems: [], page: { hasMore: false, nextOffset: 0 } }); }
+                        else if (generation === this.loadGeneration && background) this.refreshError = 'refresh.failed';
+                        else if (generation === this.loadGeneration) this.error = ['maintenance', 'llm', 'access'].includes(route.route) && [401, 403, 503].includes(error.status) ? (error.status === 503 ? 'error.adminUnavailable' : 'error.admin') : i18n.errorMessage(error, 'error.page');
                     } finally { if (generation === this.loadGeneration) { this.loading = false; this.refreshing = false; } }
                 },
                 listItemKey(item) { return mapItemKey(this.listKind, item); },
@@ -675,9 +1038,61 @@
                     this.authTokens = [];
                     this.tokenError = 'error.session';
                 },
-                beginLogin() {
+                beginLogin(provider, slug) {
                     try { window.sessionStorage.setItem('stash.loginReturn', window.location.pathname + window.location.search); } catch (_) {}
-                    window.location.assign('/auth/login');
+                    const query = provider === 'sso' && text(slug) ? '?sso=' + encodeURIComponent(text(slug)) : ['oidc', 'token'].includes(provider) ? '?provider=' + provider : '';
+                    window.location.assign('/auth/login' + query);
+                },
+                async submitLogin() {
+                    if (this.loginBusy) return;
+                    const tokenMode = this.loginMode === 'token';
+                    const username = text(this.loginForm.username); const password = this.loginForm.password || ''; const token = text(this.loginForm.token);
+                    if (tokenMode ? !token : (!username || !password)) { this.loginError = tokenMode ? 'auth.tokenFailed' : 'auth.failed'; return; }
+                    this.loginBusy = true; this.loginError = '';
+                    try {
+                        const body = tokenMode ? new URLSearchParams({ token }) : new URLSearchParams({ username, password });
+                        const response = await window.fetch('/auth/login', { method: 'POST', credentials: 'same-origin', redirect: 'manual', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body });
+                        // Success is a redirect to "/"; a manual redirect shows up as an opaque response.
+                        if (response.type === 'opaqueredirect' || response.ok || response.status === 303) {
+                            this.loginForm = { username: '', password: '', token: '' };
+                            await this.bootstrap();
+                            return;
+                        }
+                        const reason = response.headers && response.headers.get ? response.headers.get('X-Stash-Login-Error') : '';
+                        this.loginError = reason === 'throttled' ? 'auth.throttled' : response.status === 401 ? (tokenMode ? 'auth.tokenFailed' : 'auth.failed') : 'error.login';
+                    } catch (_) { this.loginError = 'error.login'; }
+                    finally { this.loginBusy = false; }
+                },
+                // First run: no account exists, so the login card creates the
+                // administrator and signs them in.
+                async submitSetup() {
+                    if (this.setupBusy) return;
+                    const form = this.setupForm;
+                    if (!text(form.username) || !form.password) { this.setupError = 'setup.required'; return; }
+                    if (form.password !== form.confirm) { this.setupError = 'auth.passwordMismatch'; return; }
+                    this.setupBusy = true; this.setupError = '';
+                    try {
+                        const response = await window.fetch('/auth/setup', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ username: text(form.username).toLowerCase(), display_name: text(form.display_name), password: form.password, password_confirm: form.confirm }) });
+                        if (response.status === 201) { this.setupForm = { username: '', display_name: '', password: '', confirm: '' }; await this.bootstrap(); return; }
+                        let message = '';
+                        try { message = (await response.json()).error || ''; } catch (_) { /* no body */ }
+                        this.setupError = response.status === 409 ? 'setup.alreadyDone' : response.status === 400 ? { key: 'setup.rejected', params: { message } } : 'setup.failed';
+                        if (response.status === 409) await this.bootstrap();
+                    } catch (_) { this.setupError = 'setup.failed'; }
+                    finally { this.setupBusy = false; }
+                },
+                async changePassword() {
+                    if (this.passwordBusy) return;
+                    const form = this.passwordForm;
+                    if (!form.current || !form.next) { this.passwordError = 'auth.passwordRequired'; return; }
+                    if (form.next !== form.confirm) { this.passwordError = 'auth.passwordMismatch'; return; }
+                    this.passwordBusy = true; this.passwordError = ''; this.passwordNotice = '';
+                    try {
+                        const response = await window.fetch('/auth/password', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ current_password: form.current, new_password: form.next }) });
+                        if (response.status === 204) { this.passwordForm = { current: '', next: '', confirm: '' }; this.passwordNotice = 'auth.passwordChanged'; return; }
+                        this.passwordError = response.status === 401 ? 'auth.currentPasswordWrong' : response.status === 400 ? 'auth.weakPassword' : response.status === 429 ? 'auth.throttled' : 'error.password';
+                    } catch (_) { this.passwordError = 'error.password'; }
+                    finally { this.passwordBusy = false; }
                 },
                 async logout() {
                     api.token = '';

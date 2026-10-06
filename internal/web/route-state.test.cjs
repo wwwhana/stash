@@ -1,14 +1,13 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const { routePaths, readRoute, buildRoute, routeTitle } = require('./ui/route-state.js');
 
 test('every workspace page has a stable address', () => {
     assert.deepEqual(routePaths, {
-        'goal-map': '/ui/goal-map', plan: '/ui/plan', monitor: '/ui/monitor', board: '/ui/issues', graph: '/ui/work-graph',
+        wiki: '/ui/wiki', wiki_page: '/ui/wiki/page', 'goal-map': '/ui/goal-map', plan: '/ui/plan', monitor: '/ui/monitor', board: '/ui/issues', graph: '/ui/work-graph',
         worktrees: '/ui/git', list_namespaces: '/ui/namespaces', list_memories: '/ui/memories', query_facts: '/ui/facts',
         list_hypotheses: '/ui/hypotheses', list_goals: '/ui/goals', agent: '/ui/agent-guide',
-        maintenance: '/ui/maintenance', tokens: '/ui/tokens'
+        llm: '/ui/llm', maintenance: '/ui/maintenance', access: '/ui/access', tokens: '/ui/tokens'
     });
     assert.equal(routeTitle('plan'), '작업 계획');
     assert.equal(routeTitle('monitor'), '작업 현황');
@@ -26,7 +25,7 @@ test('work graph address restores namespace and filters', () => {
         query: 'Confluence', status: 'doing', agent: 'codex', memoryType: '',
         kinds: { goal: true, work: true, memory: true, resource: true },
         relations: { part_of: true, blocks: false, relates_to: false }, focus: '42', detail: false,
-        issueType: '', label: '', offset: 0, issueID: 0
+        issueType: '', label: '', offset: 0, issueID: 0, slug: '', revision: 0, edit: false, kind: '', tag: '', stale: false
     });
 });
 
@@ -74,37 +73,15 @@ test('fact, hypothesis, and goal list addresses restore their search', () => {
     assert.equal(route.offset, 50);
 });
 
-test('root and unknown paths safely select the goal map', () => {
+test('root and unknown paths safely select the wiki', () => {
     assert.deepEqual(
         { route: readRoute('/').route, matched: readRoute('/').matched },
-        { route: 'goal-map', matched: true }
+        { route: 'wiki', matched: true }
     );
     assert.deepEqual(
         { route: readRoute('/missing').route, matched: readRoute('/missing').matched },
-        { route: 'goal-map', matched: false }
+        { route: 'wiki', matched: false }
     );
-});
-
-test('the console restores routes and exposes real navigation links', () => {
-    const html = fs.readFileSync(require.resolve('./ui/index.html'), 'utf8');
-    const viewModel = fs.readFileSync(require.resolve('./ui/route-view-model.js'), 'utf8');
-    const app = fs.readFileSync(require.resolve('./ui/console-app.js'), 'utf8');
-
-    assert.match(html, /<script defer src="\/route-state\.js"><\/script>/);
-    assert.match(html, /<script defer src="\/route-view-model\.js"><\/script>/);
-    assert.match(html, /<script defer src="\/console-app\.js"><\/script>/);
-    assert.match(html, /<a :href="routeHref\('plan'\)" @click\.prevent="loadWorkPlan\(\)"/);
-    assert.match(html, /<a :href="routeHref\('monitor'\)" @click\.prevent="loadProjectMonitor\(\)"/);
-    assert.match(html, /<a :href="routeHref\('graph'\)" @click\.prevent="loadWorkGraph\(\)"/);
-    assert.match(viewModel, /window\.history\[replace \? 'replaceState' : 'pushState'\]/);
-    assert.match(viewModel, /async restoreRoute\(\)/);
-    assert.match(viewModel, /relations: this\.graphFilter\.relations/);
-    assert.match(viewModel, /project: this\.graphProjectSlug/);
-    assert.match(viewModel, /agent: this\.graphFilter\.agent/);
-    assert.match(viewModel, /focus: this\.graphFocusedKey/);
-    assert.match(viewModel, /await this\.focusGraphNodeByID\(route\.focus\)/);
-    assert.match(app, /window\.addEventListener\('popstate'/);
-    assert.match(app, /await this\.restoreRoute\(\)/);
 });
 
 test('all screens retain the selected workspace across reload and copied links', () => {

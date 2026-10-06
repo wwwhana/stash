@@ -10,11 +10,12 @@ import (
 
 func TestRootNamespaceConsolidationIsRejectedPostgres(t *testing.T) {
 	b, ctx, _ := newWorkExecutionTestBrain(t)
-	var rootID int64
-	if err := b.pool.QueryRow(ctx, `SELECT id FROM namespaces WHERE slug = '/' AND deleted_at IS NULL`).Scan(&rootID); err != nil {
-		t.Fatalf("read root namespace: %v", err)
+	// A fresh database has no root row until something creates it.
+	rootID, err := b.CreateNamespace(ctx, "/", "/", "")
+	if err != nil {
+		t.Fatalf("ensure root namespace: %v", err)
 	}
-	_, err := b.ConsolidateByID(ctx, rootID)
+	_, err = b.ConsolidateByID(ctx, rootID)
 	if err == nil || !strings.Contains(err.Error(), "root namespace cannot be consolidated") {
 		t.Fatalf("ConsolidateByID root error = %v", err)
 	}

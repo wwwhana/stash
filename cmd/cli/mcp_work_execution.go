@@ -1174,7 +1174,7 @@ func registerWorkExecutionTools(mcpServer *server.MCPServer, bc *bootstrap.Conte
 		if err != nil {
 			return nil, redactWorkLeaseError(err, leaseToken)
 		}
-		return jsonToolResult(bc, attempt)
+		return jsonToolResult(bc, finishedWorkResponse(ctx, bc, attempt))
 	}))
 
 	mcpServer.AddTool(mcp.NewTool("handoff_work", attemptMutationOptions(
@@ -1237,4 +1237,24 @@ func registerWorkExecutionTools(mcpServer *server.MCPServer, bc *bootstrap.Conte
 		}
 		return jsonToolResult(bc, remembered)
 	}))
+}
+
+// finishedWork is a finish_work response with the next step attached: the
+// Goal Map shows that the work finished, but the wiki page is where the next
+// reader learns what was delivered and why.
+type finishedWork struct {
+	*models.WorkAttempt
+	Wiki map[string]string `json:"wiki"`
+}
+
+func finishedWorkResponse(ctx context.Context, bc *bootstrap.Context, attempt *models.WorkAttempt) any {
+	item, err := bc.Brain.GetWorkItem(ctx, attempt.WorkItemID)
+	if err != nil || item.IssueKey == "" {
+		return attempt
+	}
+	citation := "[@work:" + item.IssueKey + "]"
+	return finishedWork{WorkAttempt: attempt, Wiki: map[string]string{
+		"citation": citation,
+		"hint":     "Record the result where the next reader will look: wiki_write the project's page (create projects/<name> if none exists) with what was delivered, citing " + citation + " and the facts or episodes relied on; pass the page's revision as expected_revision.",
+	}}
 }

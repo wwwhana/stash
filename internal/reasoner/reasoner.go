@@ -3,9 +3,14 @@ package reasoner
 
 import (
 	"context"
+	"errors"
 
 	"github.com/alash3al/stash/internal/models"
 )
+
+// ErrUnavailable is returned when no reasoning provider is configured for
+// the feature that was called.
+var ErrUnavailable = errors.New("reasoner: no reasoning provider is available")
 
 // StructuredFact represents an extracted fact with entity, property, and value.
 type StructuredFact struct {
@@ -105,6 +110,43 @@ type WorkPlanValidationResult struct {
 // not need to implement plan-specific behavior.
 type WorkPlanValidator interface {
 	ValidateWorkPlan(ctx context.Context, plan models.WorkPlan) (*WorkPlanValidationResult, error)
+	ModelName() string
+}
+
+// WikiSourceInput is one piece of evidence a wiki draft may cite.
+type WikiSourceInput struct {
+	Ref     string // "fact:12", "episode:3", "work:W-000001"
+	Content string
+}
+
+// WikiPageRef lets a draft link existing pages with [[slug]].
+type WikiPageRef struct {
+	Slug  string
+	Title string
+}
+
+// WikiDraftRequest asks for a cited Markdown page.
+type WikiDraftRequest struct {
+	Slug     string
+	Title    string
+	Topic    string
+	Existing string
+	Sources  []WikiSourceInput
+	Pages    []WikiPageRef
+}
+
+// WikiDraft is the reasoner's page proposal.
+type WikiDraft struct {
+	Title   string   `json:"title"`
+	Summary string   `json:"summary"`
+	Content string   `json:"content"`
+	Tags    []string `json:"tags"`
+}
+
+// WikiAuthor is the optional server-side page writer. It is a separate
+// interface so test doubles and older reasoners need not implement it.
+type WikiAuthor interface {
+	DraftWikiPage(ctx context.Context, request WikiDraftRequest) (*WikiDraft, error)
 	ModelName() string
 }
 

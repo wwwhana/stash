@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/alash3al/stash/internal/secrets"
 	"github.com/caarlos0/env/v11"
 	"github.com/joho/godotenv"
 )
@@ -14,14 +15,17 @@ import (
 type Config struct {
 	// Store (PostgreSQL only)
 	StoreDSN      string `env:"STASH_POSTGRES_DSN,required"`
-	VectorDim     int    `env:"STASH_VECTOR_DIM,required"`
+	VectorDim     int    `env:"STASH_VECTOR_DIM" envDefault:"0"`
 	MaxResultSize int    `env:"STASH_MAX_RESULT_SIZE,required"`
 
-	// OpenAI (embeddings + reasoning)
+	// OpenAI-compatible environment provider. All of these are optional: a
+	// deployment can register providers in the database instead, and a
+	// server without any embedding provider still stores memories and
+	// searches them with trigram matching.
 	OpenAIAPIKey              string        `env:"STASH_OPENAI_API_KEY" envDefault:""`
-	OpenAIBaseURL             string        `env:"STASH_OPENAI_BASE_URL,required"`
-	EmbeddingModel            string        `env:"STASH_EMBEDDING_MODEL,required"`
-	ReasonerModel             string        `env:"STASH_REASONER_MODEL,required"`
+	OpenAIBaseURL             string        `env:"STASH_OPENAI_BASE_URL" envDefault:""`
+	EmbeddingModel            string        `env:"STASH_EMBEDDING_MODEL" envDefault:""`
+	ReasonerModel             string        `env:"STASH_REASONER_MODEL" envDefault:""`
 	EmbeddingRetryInterval    time.Duration `env:"STASH_EMBEDDING_RETRY_INTERVAL" envDefault:"1m"`
 	EmbeddingRetryMaxInterval time.Duration `env:"STASH_EMBEDDING_RETRY_MAX_INTERVAL" envDefault:"1h"`
 	EmbeddingRetryBatchSize   int           `env:"STASH_EMBEDDING_RETRY_BATCH_SIZE" envDefault:"100"`
@@ -34,6 +38,16 @@ type Config struct {
 	ReasonerContextTokens  int `env:"STASH_REASONER_CONTEXT_TOKENS" envDefault:"0"`
 	ReasonerReservedTokens int `env:"STASH_REASONER_RESERVED_TOKENS" envDefault:"4096"`
 	EmbeddingContextTokens int `env:"STASH_EMBEDDING_CONTEXT_TOKENS" envDefault:"0"`
+
+	// EmbeddingCache keeps computed vectors in embedding_cache so identical
+	// text is not sent to the provider twice. It is an optimization only.
+	EmbeddingCache bool `env:"STASH_EMBEDDING_CACHE" envDefault:"true"`
+
+	// Secrets seal provider API keys stored in the database. The active key
+	// seals new values; previous keys (comma-separated) only open old ones so
+	// rotation never needs every credential re-entered at once.
+	SecretsKey         string `env:"STASH_SECRETS_KEY" envDefault:""`
+	SecretsKeyPrevious string `env:"STASH_SECRETS_KEY_PREVIOUS" envDefault:""`
 
 	// Memory
 	ContextTTL time.Duration `env:"STASH_CONTEXT_TTL,required"`
@@ -48,39 +62,38 @@ type Config struct {
 	MCPToolTimeout time.Duration `env:"STASH_MCP_TOOL_TIMEOUT" envDefault:"2m"`
 
 	// Authentication
-	AuthMode            string        `env:"STASH_AUTH_MODE" envDefault:"none"`
-	AuthIssuer          string        `env:"STASH_AUTH_ISSUER" envDefault:""`
-	AuthClientID        string        `env:"STASH_AUTH_CLIENT_ID" envDefault:""`
-	AuthMCPClientID     string        `env:"STASH_AUTH_MCP_CLIENT_ID" envDefault:""`
-	AuthClientSecret    string        `env:"STASH_AUTH_CLIENT_SECRET" envDefault:""`
-	AuthRedirectURL     string        `env:"STASH_AUTH_REDIRECT_URL" envDefault:""`
-	AuthAPISecret       string        `env:"STASH_AUTH_API_SECRET" envDefault:""`
-	AuthMCPResourceURL  string        `env:"STASH_AUTH_MCP_RESOURCE_URL" envDefault:""`
-	AuthCookieSecure    bool          `env:"STASH_AUTH_COOKIE_SECURE" envDefault:"true"`
-	AuthTokenTTL        time.Duration `env:"STASH_AUTH_TOKEN_TTL" envDefault:"720h"`
-	AuthAccessTokenTTL  time.Duration `env:"STASH_AUTH_ACCESS_TOKEN_TTL" envDefault:"1h"`
-	AuthRefreshTokenTTL time.Duration `env:"STASH_AUTH_REFRESH_TOKEN_TTL" envDefault:"720h"`
-	AuthSessionTTL      time.Duration `env:"STASH_AUTH_SESSION_TTL" envDefault:"720h"`
-	AuthStdioToken      string        `env:"STASH_AUTH_STDIO_TOKEN" envDefault:""`
+	AuthMode         string        `env:"STASH_AUTH_MODE" envDefault:"none"`
+	AuthIssuer       string        `env:"STASH_AUTH_ISSUER" envDefault:""`
+	AuthClientID     string        `env:"STASH_AUTH_CLIENT_ID" envDefault:""`
+	AuthClientSecret string        `env:"STASH_AUTH_CLIENT_SECRET" envDefault:""`
+	AuthRedirectURL  string        `env:"STASH_AUTH_REDIRECT_URL" envDefault:""`
+	AuthAPISecret    string        `env:"STASH_AUTH_API_SECRET" envDefault:""`
+	AuthCookieSecure bool          `env:"STASH_AUTH_COOKIE_SECURE" envDefault:"true"`
+	AuthTokenTTL     time.Duration `env:"STASH_AUTH_TOKEN_TTL" envDefault:"720h"`
+	AuthSessionTTL   time.Duration `env:"STASH_AUTH_SESSION_TTL" envDefault:"720h"`
+	AuthStdioToken   string        `env:"STASH_AUTH_STDIO_TOKEN" envDefault:""`
 	// Admin maintenance accepts either an authenticated OIDC subject listed
 	// here or the separate static token below. Keep this independent from the
 	// MCP API secret so a maintenance credential cannot sign user sessions.
 	AdminSubjects string `env:"STASH_ADMIN_SUBJECTS" envDefault:""`
 	AdminToken    string `env:"STASH_ADMIN_TOKEN" envDefault:""`
+	// The first local administrator is created from these at startup when
+	// the account does not exist yet; later password changes are kept.
+	AdminUser     string `env:"STASH_ADMIN_USER" envDefault:""`
+	AdminPassword string `env:"STASH_ADMIN_PASSWORD" envDefault:""`
+	// AuthTrustedNetwork lets STASH_AUTH_MODE=none listen beyond loopback. It
+	// is an explicit statement that everyone on the network may use Stash.
+	AuthTrustedNetwork bool `env:"STASH_AUTH_TRUSTED_NETWORK" envDefault:"false"`
 
 	// OAuth-prefixed aliases make the profile explicit while preserving the
 	// original STASH_AUTH_* names used by existing deployments.
 	AuthOAuthIssuer          string        `env:"STASH_AUTH_OAUTH_ISSUER" envDefault:""`
 	AuthOAuthClientID        string        `env:"STASH_AUTH_OAUTH_CLIENT_ID" envDefault:""`
-	AuthOAuthMCPClientID     string        `env:"STASH_AUTH_OAUTH_MCP_CLIENT_ID" envDefault:""`
 	AuthOAuthClientSecret    string        `env:"STASH_AUTH_OAUTH_CLIENT_SECRET" envDefault:""`
 	AuthOAuthRedirectURL     string        `env:"STASH_AUTH_OAUTH_REDIRECT_URL" envDefault:""`
 	AuthOAuthAPISecret       string        `env:"STASH_AUTH_OAUTH_API_SECRET" envDefault:""`
-	AuthOAuthResourceURL     string        `env:"STASH_AUTH_OAUTH_RESOURCE_URL" envDefault:""`
 	AuthOAuthCookieSecureRaw string        `env:"STASH_AUTH_OAUTH_COOKIE_SECURE" envDefault:""`
 	AuthOAuthTokenTTL        time.Duration `env:"STASH_AUTH_OAUTH_TOKEN_TTL" envDefault:"0s"`
-	AuthOAuthAccessTokenTTL  time.Duration `env:"STASH_AUTH_OAUTH_ACCESS_TOKEN_TTL" envDefault:"0s"`
-	AuthOAuthRefreshTokenTTL time.Duration `env:"STASH_AUTH_OAUTH_REFRESH_TOKEN_TTL" envDefault:"0s"`
 	AuthOAuthStdioToken      string        `env:"STASH_AUTH_OAUTH_STDIO_TOKEN" envDefault:""`
 
 	// Consolidation
@@ -124,9 +137,6 @@ func (c *Config) applyAuthAliases() {
 	if c.AuthClientID == "" {
 		c.AuthClientID = c.AuthOAuthClientID
 	}
-	if c.AuthMCPClientID == "" {
-		c.AuthMCPClientID = c.AuthOAuthMCPClientID
-	}
 	if c.AuthClientSecret == "" {
 		c.AuthClientSecret = c.AuthOAuthClientSecret
 	}
@@ -135,9 +145,6 @@ func (c *Config) applyAuthAliases() {
 	}
 	if c.AuthAPISecret == "" {
 		c.AuthAPISecret = c.AuthOAuthAPISecret
-	}
-	if c.AuthMCPResourceURL == "" {
-		c.AuthMCPResourceURL = c.AuthOAuthResourceURL
 	}
 	if c.AuthStdioToken == "" {
 		c.AuthStdioToken = c.AuthOAuthStdioToken
@@ -149,12 +156,6 @@ func (c *Config) applyAuthAliases() {
 	}
 	if c.AuthOAuthTokenTTL > 0 {
 		c.AuthTokenTTL = c.AuthOAuthTokenTTL
-	}
-	if c.AuthOAuthAccessTokenTTL > 0 {
-		c.AuthAccessTokenTTL = c.AuthOAuthAccessTokenTTL
-	}
-	if c.AuthOAuthRefreshTokenTTL > 0 {
-		c.AuthRefreshTokenTTL = c.AuthOAuthRefreshTokenTTL
 	}
 }
 
@@ -171,8 +172,33 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("STASH_AUTH_OAUTH_COOKIE_SECURE must be true or false")
 		}
 	}
-	if c.VectorDim <= 0 {
-		return fmt.Errorf("STASH_VECTOR_DIM must be greater than zero")
+	if (strings.TrimSpace(c.AdminUser) == "") != (strings.TrimSpace(c.AdminPassword) == "") {
+		return fmt.Errorf("STASH_ADMIN_USER and STASH_ADMIN_PASSWORD must be set together")
+	}
+	if c.AdminPassword != "" && (len(c.AdminPassword) < 8 || len(c.AdminPassword) > 72) {
+		return fmt.Errorf("STASH_ADMIN_PASSWORD must be between 8 and 72 characters")
+	}
+	if c.VectorDim < 0 || c.VectorDim > 2000 {
+		return fmt.Errorf("STASH_VECTOR_DIM must be between 0 and 2000")
+	}
+	if strings.TrimSpace(c.OpenAIBaseURL) == "" && (strings.TrimSpace(c.EmbeddingModel) != "" || strings.TrimSpace(c.ReasonerModel) != "") {
+		return fmt.Errorf("STASH_OPENAI_BASE_URL is required when STASH_EMBEDDING_MODEL or STASH_REASONER_MODEL is set")
+	}
+	if strings.TrimSpace(c.EmbeddingModel) != "" && c.VectorDim <= 0 {
+		return fmt.Errorf("STASH_VECTOR_DIM must be greater than zero when STASH_EMBEDDING_MODEL is set")
+	}
+	if strings.TrimSpace(c.SecretsKey) != "" {
+		if _, err := secrets.ParseKey(c.SecretsKey); err != nil {
+			return fmt.Errorf("STASH_SECRETS_KEY must be 64 hexadecimal characters (openssl rand -hex 32)")
+		}
+	}
+	for _, previous := range strings.Split(c.SecretsKeyPrevious, ",") {
+		if strings.TrimSpace(previous) == "" {
+			continue
+		}
+		if _, err := secrets.ParseKey(previous); err != nil {
+			return fmt.Errorf("STASH_SECRETS_KEY_PREVIOUS entries must be 64 hexadecimal characters")
+		}
 	}
 	if c.MaxResultSize <= 0 {
 		return fmt.Errorf("STASH_MAX_RESULT_SIZE must be greater than zero")
@@ -216,17 +242,8 @@ func (c *Config) Validate() error {
 	if c.AuthTokenTTL < 0 {
 		return fmt.Errorf("STASH_AUTH_TOKEN_TTL must not be negative")
 	}
-	if c.AuthAccessTokenTTL < 0 || c.AuthAccessTokenTTL > time.Hour {
-		return fmt.Errorf("STASH_AUTH_ACCESS_TOKEN_TTL must not be negative or greater than 1h")
-	}
 	if c.AuthSessionTTL < 0 {
 		return fmt.Errorf("STASH_AUTH_SESSION_TTL must not be negative")
-	}
-	if c.AuthRefreshTokenTTL < 0 {
-		return fmt.Errorf("STASH_AUTH_REFRESH_TOKEN_TTL must not be negative")
-	}
-	if c.AuthRefreshTokenTTL > 0 && c.AuthAccessTokenTTL > 0 && c.AuthRefreshTokenTTL < c.AuthAccessTokenTTL {
-		return fmt.Errorf("STASH_AUTH_REFRESH_TOKEN_TTL must not be shorter than STASH_AUTH_ACCESS_TOKEN_TTL")
 	}
 	if c.ConsolidationBatchSize <= 0 {
 		return fmt.Errorf("STASH_CONSOLIDATION_BATCH_SIZE must be greater than zero")

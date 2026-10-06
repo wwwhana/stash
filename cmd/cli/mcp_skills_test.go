@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	stashwork "github.com/alash3al/stash/internal/skills/stash-work"
 	"reflect"
 	"strings"
 	"testing"
@@ -283,7 +284,7 @@ func TestBundledStashSkillAddsNoExecutionSurface(t *testing.T) {
 
 func testStashSkillsProtocol(t *testing.T, skillPageSize, directoryPageSize int) (*skillsProtocol, servedSkill) {
 	t.Helper()
-	skill, err := loadEmbeddedStashWorkSkill()
+	skill, err := loadEmbeddedSkill(stashWorkSkillRootURI, stashwork.Files())
 	if err != nil {
 		t.Fatalf("load embedded skill: %v", err)
 	}
@@ -344,4 +345,15 @@ func assertResource(t *testing.T, resources []mcp.Resource, uri, name, mimeType 
 		}
 	}
 	t.Fatalf("resource %q not found in %#v", uri, resources)
+}
+
+func TestBundledSkillsListWorkAndWiki(t *testing.T) {
+	list := extensionResult[skillsListResult](t, bundledStashSkills, `{"jsonrpc":"2.0","id":1,"method":"skills/list","params":{}}`)
+	names := map[string]bool{}
+	for _, skill := range list.Skills {
+		names[fmt.Sprint(skill.Frontmatter["name"])] = true
+	}
+	if !names["stash-work"] || !names["stash-wiki"] {
+		t.Fatalf("bundled skills = %v, want stash-work and stash-wiki", names)
+	}
 }

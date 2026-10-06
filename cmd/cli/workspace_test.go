@@ -21,6 +21,9 @@ func runWorkspaceTestGit(t *testing.T, dir string, args ...string) {
 }
 
 func TestCollectWorkspaceFactsInitializesStableCloneIdentity(t *testing.T) {
+	// Ignore url.<base>.insteadOf rewrites injected through GIT_CONFIG_* by
+	// the host; the test asserts the remote exactly as it was configured.
+	t.Setenv("GIT_CONFIG_COUNT", "0")
 	repo := t.TempDir()
 	runWorkspaceTestGit(t, repo, "init", "-q")
 	runWorkspaceTestGit(t, repo, "config", "user.email", "stash-test@example.invalid")

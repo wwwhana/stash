@@ -11,9 +11,13 @@ type vectorColumn struct {
 	column string
 }
 
+// sourceTables hold content whose vectors are recomputed after a model change.
+var sourceTables = []string{"episodes", "facts", "wiki_pages"}
+
 var vectorColumns = []vectorColumn{
 	{table: "episodes", column: "embedding"},
 	{table: "facts", column: "embedding"},
+	{table: "wiki_pages", column: "embedding"},
 	{table: "embedding_cache", column: "embedding"},
 }
 
@@ -24,6 +28,7 @@ var hnswIndexes = []struct {
 }{
 	{table: "episodes", column: "embedding", name: "episodes_embedding_hnsw_idx"},
 	{table: "facts", column: "embedding", name: "facts_embedding_hnsw_idx"},
+	{table: "wiki_pages", column: "embedding", name: "wiki_pages_embedding_hnsw_idx"},
 }
 
 // prepareEmbeddingStorage keeps the schema, settings lock, and stored vectors
@@ -61,13 +66,14 @@ func prepareEmbeddingStorage(ctx context.Context, sqlDB *sql.DB, expectedModel s
 	// model change or mixed row models still requires both source tables.
 	reindexTables := map[string]bool{}
 	for _, vc := range mismatchedColumns {
-		if vc.table == "episodes" || vc.table == "facts" {
+		if isSourceTable(vc.table) {
 			reindexTables[vc.table] = true
 		}
 	}
 	if report.ModelChanged || mixedRows > 0 {
-		reindexTables["episodes"] = true
-		reindexTables["facts"] = true
+		for _, table := range sourceTables {
+			reindexTables[table] = true
+		}
 	}
 	needsReindex := len(reindexTables) > 0
 
@@ -110,7 +116,7 @@ func prepareEmbeddingStorage(ctx context.Context, sqlDB *sql.DB, expectedModel s
 	}
 
 	if needsReindex {
-		for _, table := range []string{"episodes", "facts"} {
+		for _, table := range sourceTables {
 			if !reindexTables[table] {
 				continue
 			}
@@ -210,7 +216,7 @@ func settingValue(ctx context.Context, sqlDB *sql.DB, key string) (string, bool,
 
 func countRowsWithDifferentModel(ctx context.Context, sqlDB *sql.DB, expectedModel string) (int64, error) {
 	var count int64
-	for _, table := range []string{"episodes", "facts"} {
+	for _, table := range sourceTables {
 		var tableCount int64
 		if err := sqlDB.QueryRowContext(ctx, fmt.Sprintf(
 			"SELECT count(*) FROM %s WHERE embedding IS NOT NULL AND deleted_at IS NULL AND embedding_model IS DISTINCT FROM $1",
@@ -221,4 +227,13 @@ func countRowsWithDifferentModel(ctx context.Context, sqlDB *sql.DB, expectedMod
 		count += tableCount
 	}
 	return count, nil
+}
+
+func isSourceTable(table string) bool {
+	for _, candidate := range sourceTables {
+		if candidate == table {
+			return true
+		}
+	}
+	return false
 }

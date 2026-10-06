@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/alash3al/stash/internal/embedder"
 	"github.com/pgvector/pgvector-go"
 )
 
@@ -14,6 +15,8 @@ type ReindexResult struct {
 	EpisodesDone  int `json:"episodes_done"`
 	FactsTotal    int `json:"facts_total"`
 	FactsDone     int `json:"facts_done"`
+	PagesTotal    int `json:"pages_total"`
+	PagesDone     int `json:"pages_done"`
 	Failed        int `json:"failed"`
 }
 
@@ -29,6 +32,11 @@ type ReindexResult struct {
 // the background retry worker instead of leaving an old-model vector in place.
 func (b *Brain) Reindex(ctx context.Context, dryRun bool, progress func(table string, done, total int)) (ReindexResult, error) {
 	var res ReindexResult
+	if !dryRun && !b.embeddingAvailable() {
+		// Clearing vectors without a provider to recompute them would only
+		// take recall offline until one is assigned.
+		return res, fmt.Errorf("reindex: %w", embedder.ErrUnavailable)
+	}
 	if !dryRun {
 		// The brain receives the cached embedder. Drop disposable entries before
 		// recomputing so a same-model reindex cannot silently reuse an old vector
@@ -38,7 +46,7 @@ func (b *Brain) Reindex(ctx context.Context, dryRun bool, progress func(table st
 		}
 	}
 
-	for _, table := range []string{"episodes", "facts"} {
+	for _, table := range embeddingTables {
 		var total int
 		if err := b.pool.QueryRow(ctx,
 			fmt.Sprintf("SELECT count(*) FROM %s WHERE deleted_at IS NULL", table),
@@ -46,10 +54,13 @@ func (b *Brain) Reindex(ctx context.Context, dryRun bool, progress func(table st
 			return res, fmt.Errorf("count %s: %w", table, err)
 		}
 
-		if table == "episodes" {
+		switch table {
+		case "episodes":
 			res.EpisodesTotal = total
-		} else {
+		case "facts":
 			res.FactsTotal = total
+		default:
+			res.PagesTotal = total
 		}
 
 		if dryRun {
@@ -78,7 +89,7 @@ func (b *Brain) Reindex(ctx context.Context, dryRun bool, progress func(table st
 		}
 
 		rows, err := b.pool.Query(ctx,
-			fmt.Sprintf("SELECT id, content FROM %s WHERE deleted_at IS NULL ORDER BY id", table),
+			fmt.Sprintf("SELECT id, %s FROM %s WHERE deleted_at IS NULL ORDER BY id", embeddingTextExpr(table), table),
 		)
 		if err != nil {
 			return res, fmt.Errorf("select %s: %w", table, err)

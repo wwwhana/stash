@@ -29,10 +29,6 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-func stdioContextFunc(ctx context.Context) context.Context {
-	return context.WithValue(ctx, keyMode, "local")
-}
-
 func stdioContextFuncFor(provider *auth.Provider) server.StdioContextFunc {
 	return func(ctx context.Context) context.Context {
 		if provider == nil || provider.Mode() == "none" {
@@ -209,7 +205,9 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 			return nil, err
 		}
 		message := "Memory remembered successfully"
-		if !remembered.Indexed {
+		if remembered.EmbeddingUnavailable {
+			message = "Memory saved; no embedding provider is configured, so recall uses keyword search until one is assigned in model settings"
+		} else if !remembered.Indexed {
 			message = "Memory saved; indexing is pending and will retry automatically"
 			recordEmbeddingQueued()
 			if bc.Logger != nil {
@@ -263,6 +261,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		mcp.WithNumber("limit", mcp.Description(render("limit_param")), mcp.DefaultNumber(10)),
 		mcp.WithNumber("offset", mcp.Description(render("pagination_offset")), mcp.DefaultNumber(0)),
 		mcp.WithNumber("min_score", mcp.Description(render("recall_min_score")), mcp.DefaultNumber(0)),
+		mcp.WithBoolean("include_pages", mcp.Description(render("recall_include_pages")), mcp.DefaultBool(true)),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		query := request.GetString("query", "")
 		limit := request.GetInt("limit", 10)
@@ -274,8 +273,9 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		}
 
 		results, err := bc.Brain.RecallWithOptions(ctx, namespaces, query, limit, brain.RecallOptions{
-			MinScore: float32(request.GetFloat("min_score", 0)),
-			Offset:   offset,
+			MinScore:     float32(request.GetFloat("min_score", 0)),
+			Offset:       offset,
+			IncludePages: request.GetBool("include_pages", true),
 		})
 		if err != nil {
 			return nil, err
@@ -1077,6 +1077,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 	registerWorkExecutionTools(mcpServer, bc)
 	registerProjectCoordinationTools(mcpServer, bc)
 	registerWorkspaceTools(mcpServer, bc)
+	registerWikiTools(mcpServer, bc)
 	registerStashSkills(mcpServer)
 	return mcpServer
 }
@@ -1144,13 +1145,23 @@ func serveMCPHTTP(ctx context.Context, bc *bootstrap.Context, options mcpHTTPOpt
 	if bc.Auth != nil && bc.Auth.Mode() == "stdio" {
 		return fmt.Errorf("STASH_AUTH_MODE=stdio can only be used with `mcp execute`")
 	}
-	if err := validateListenAddress(options.Addr, bc.Auth); err != nil {
+	trustedNetwork := bc.Config != nil && bc.Config.AuthTrustedNetwork
+	if err := validateListenAddress(options.Addr, bc.Auth, trustedNetwork); err != nil {
 		return err
 	}
 
 	handler := newStashHTTPHandler(bc)
 	if bc.Auth == nil || bc.Auth.Mode() == "none" {
-		handler = unauthenticatedLoopbackOnly(handler)
+		if trustedNetwork {
+			// The operator declared the whole network trusted. Keep the
+			// cross-origin check so a web page cannot drive the server.
+			if bc.Logger != nil {
+				bc.Logger.Warn("STASH_AUTH_TRUSTED_NETWORK=true: serving without authentication beyond loopback; every client that can reach this port has full access")
+			}
+			handler = http.NewCrossOriginProtection().Handler(handler)
+		} else {
+			handler = unauthenticatedLoopbackOnly(handler)
+		}
 	}
 	httpServer := &http.Server{
 		Addr:    options.Addr,
@@ -1166,7 +1177,7 @@ func serveMCPHTTP(ctx context.Context, bc *bootstrap.Context, options mcpHTTPOpt
 	defer cancel()
 
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
 	go func() {
 		defer wg.Done()
 		runEmbeddingRetryTicker(ctx, bc)
@@ -1174,6 +1185,10 @@ func serveMCPHTTP(ctx context.Context, bc *bootstrap.Context, options mcpHTTPOpt
 	go func() {
 		defer wg.Done()
 		runWorkspaceLifecycleTicker(ctx, bc)
+	}()
+	go func() {
+		defer wg.Done()
+		runLLMReloadTicker(ctx, bc)
 	}()
 
 	if options.Consolidation != nil {
@@ -1210,8 +1225,11 @@ func serveMCPHTTP(ctx context.Context, bc *bootstrap.Context, options mcpHTTPOpt
 	}
 }
 
-func validateListenAddress(addr string, provider *auth.Provider) error {
+func validateListenAddress(addr string, provider *auth.Provider, trustedNetwork bool) error {
 	if provider != nil && provider.Mode() != "none" {
+		return nil
+	}
+	if trustedNetwork {
 		return nil
 	}
 	host, _, err := net.SplitHostPort(addr)
@@ -1306,16 +1324,6 @@ func newStashHTTPHandler(bc *bootstrap.Context) http.Handler {
 	mux.Handle("/mcp", authenticatedHTTP(bc.Auth, newStashSkillsHTTPTransport(streamableServer, sessionResolver)))
 	mux.Handle("/sse", authenticatedHTTP(bc.Auth, sseServer.SSEHandler()))
 	mux.Handle("/message", authenticatedHTTP(bc.Auth, limitRequestBody(sseServer.MessageHandler(), maxMCPRequestBodyBytes)))
-	mux.HandleFunc("/.well-known/oauth-protected-resource", bc.Auth.HandleProtectedResourceMetadata)
-	mux.HandleFunc("/.well-known/oauth-protected-resource/mcp", bc.Auth.HandleProtectedResourceMetadata)
-	mux.HandleFunc("/.well-known/oauth-protected-resource/sse", bc.Auth.HandleProtectedResourceMetadata)
-	mux.HandleFunc("/.well-known/oauth-protected-resource/message", bc.Auth.HandleProtectedResourceMetadata)
-	mux.HandleFunc("/.well-known/oauth-authorization-server", bc.Auth.HandleAuthorizationServerMetadata)
-	mux.HandleFunc("/.well-known/openid-configuration", bc.Auth.HandleAuthorizationServerMetadata)
-	mux.HandleFunc("/authorize", bc.Auth.HandleAuthorize)
-	mux.HandleFunc("/oauth/token", bc.Auth.HandleOAuthToken)
-	mux.HandleFunc("/oauth/register", bc.Auth.HandleOAuthRegister)
-	mux.HandleFunc("/oauth/consent", bc.Auth.HandleConsent)
 	mux.HandleFunc("/auth/login", bc.Auth.HandleLogin)
 	mux.HandleFunc("/auth/callback", bc.Auth.HandleCallback)
 	mux.HandleFunc("/oauth/callback", bc.Auth.HandleCallback)
@@ -1324,6 +1332,8 @@ func newStashHTTPHandler(bc *bootstrap.Context) http.Handler {
 	mux.HandleFunc("/auth/token", bc.Auth.HandleGenerateToken)
 	mux.HandleFunc("/auth/tokens", bc.Auth.HandleTokens)
 	mux.HandleFunc("/auth/tokens/", bc.Auth.HandleRevokeToken)
+	mux.HandleFunc("/auth/password", bc.Auth.HandlePassword)
+	mux.HandleFunc("/auth/setup", bc.Auth.HandleSetup)
 	registerDocumentationRoutes(mux)
 	registerOperationalRoutes(mux, bc)
 	registerAdminRoutes(mux, bc)
@@ -1347,7 +1357,7 @@ func mcpExecuteCmd(ctx context.Context, cmd *cli.Command) error {
 	workerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
 	go func() {
 		defer wg.Done()
 		runEmbeddingRetryTicker(workerCtx, bc)
@@ -1355,6 +1365,10 @@ func mcpExecuteCmd(ctx context.Context, cmd *cli.Command) error {
 	go func() {
 		defer wg.Done()
 		runWorkspaceLifecycleTicker(workerCtx, bc)
+	}()
+	go func() {
+		defer wg.Done()
+		runLLMReloadTicker(workerCtx, bc)
 	}()
 
 	if consolidation != nil {
@@ -1371,13 +1385,10 @@ func mcpExecuteCmd(ctx context.Context, cmd *cli.Command) error {
 	return err
 }
 
-func mcpTokenCmd(_ context.Context, cmd *cli.Command) error {
-	secret := os.Getenv("STASH_AUTH_API_SECRET")
-	if strings.TrimSpace(secret) == "" {
-		secret = os.Getenv("STASH_AUTH_OAUTH_API_SECRET")
-	}
-	if strings.TrimSpace(secret) == "" {
-		return fmt.Errorf("STASH_AUTH_API_SECRET must be set")
+func mcpTokenCmd(ctx context.Context, cmd *cli.Command) error {
+	bc := getBootstrap(cmd)
+	if bc == nil || bc.Auth == nil {
+		return fmt.Errorf("API tokens need STASH_AUTH_MODE=token or oauth")
 	}
 	subject := strings.TrimSpace(cmd.String("subject"))
 	if subject == "" {
@@ -1388,24 +1399,20 @@ func mcpTokenCmd(_ context.Context, cmd *cli.Command) error {
 	}
 	ttl := cmd.Duration("ttl")
 	if !cmd.IsSet("ttl") {
-		rawTTL := strings.TrimSpace(os.Getenv("STASH_AUTH_TOKEN_TTL"))
-		if rawTTL == "" {
-			rawTTL = strings.TrimSpace(os.Getenv("STASH_AUTH_OAUTH_TOKEN_TTL"))
-		}
-		if rawTTL != "" {
-			parsed, err := time.ParseDuration(rawTTL)
-			if err != nil {
-				return fmt.Errorf("STASH_AUTH_TOKEN_TTL is invalid: %w", err)
-			}
-			ttl = parsed
-		}
+		ttl = bc.Config.AuthTokenTTL
 	}
-	token, err := auth.GenerateAPIToken(subject, secret, ttl)
+	if ttl < 0 {
+		return fmt.Errorf("--ttl must not be negative (0 means no expiry)")
+	}
+	token, metadata, err := bc.Auth.IssueAPIToken(ctx, subject, cmd.String("name"), ttl)
 	if err != nil {
-		return fmt.Errorf("generate MCP token: %w", err)
+		return fmt.Errorf("issue API token: %w", err)
 	}
 	// This is an explicit credential-generation command; do not log it from
 	// the server or include it in any durable work record.
+	if cmd.Bool("json") {
+		return printJSON(map[string]any{"token": token, "id": metadata.ID, "name": metadata.Name, "subject": subject, "expires_at": metadata.ExpiresAt, "created_at": metadata.CreatedAt})
+	}
 	fmt.Println(token)
 	return nil
 }
@@ -1459,6 +1466,31 @@ func runEmbeddingRetryTicker(ctx context.Context, bc *bootstrap.Context) {
 			run()
 		case <-wake:
 			run()
+		}
+	}
+}
+
+// runLLMReloadTicker picks up provider changes made by another process, such
+// as the CLI or a second replica. In-process admin changes reload directly.
+func runLLMReloadTicker(ctx context.Context, bc *bootstrap.Context) {
+	if bc == nil || bc.LLM == nil {
+		return
+	}
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if _, err := bc.LLM.ReloadIfChanged(ctx); err != nil && ctx.Err() == nil && bc.Logger != nil {
+				bc.Logger.Error("reload model routing", "error", err)
+			}
+			if bc.Auth != nil {
+				if _, err := bc.Auth.ReloadSSOIfChanged(ctx); err != nil && ctx.Err() == nil && bc.Logger != nil {
+					bc.Logger.Error("reload SSO providers", "error", err)
+				}
+			}
 		}
 	}
 }
