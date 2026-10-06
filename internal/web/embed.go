@@ -14,6 +14,8 @@ var uiFS embed.FS
 
 var uiPageFiles = map[string]string{
 	"/":                  "vue-console.html",
+	"/ui/wiki":           "vue-console.html",
+	"/ui/wiki/page":      "vue-console.html",
 	"/index.html":        "vue-console.html",
 	"/ui/goal-map":       "vue-console.html",
 	"/ui/plan":           "vue-console.html",

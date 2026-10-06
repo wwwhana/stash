@@ -262,3 +262,73 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,su
 .stash-llm-form { display:grid; gap:12px; padding:16px; border:1px solid var(--app-border); border-radius:8px; background:var(--app-bg); max-width:560px; }
 .stash-check { display:flex; align-items:center; gap:8px; }
 .stash-button.is-danger { color:var(--app-danger, #c0392b); }
+
+/* Wiki */
+.stash-wiki-home { display:grid; gap:16px; }
+.stash-wiki-intro { margin:0; color:var(--app-muted); }
+.stash-wiki-toolbar { align-items:end; }
+.stash-wiki-notice { margin:0; color:var(--app-muted); }
+.stash-wiki-list { display:grid; gap:10px; grid-template-columns:repeat(auto-fill, minmax(300px, 1fr)); }
+.stash-wiki-card { display:grid; gap:6px; padding:14px 16px; text-align:left; border:1px solid var(--app-border); border-radius:9px; background:var(--app-surface); color:var(--app-ink); cursor:pointer; }
+.stash-wiki-card:hover { border-color:var(--app-accent); }
+.stash-wiki-card-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.stash-wiki-card-head strong { font-size:15px; }
+.stash-wiki-card-summary { color:var(--app-muted); font-size:13px; }
+.stash-wiki-card-meta { display:flex; flex-wrap:wrap; gap:8px; align-items:center; font-size:12px; color:var(--app-faint); }
+.stash-wiki-card-meta code, .stash-wiki-page-head code { font-size:12px; background:var(--app-raised); padding:1px 6px; border-radius:4px; }
+.stash-wiki-kind { font-size:11px; padding:1px 7px; border-radius:999px; border:1px solid var(--app-border); color:var(--app-muted); }
+.stash-wiki-kind[data-kind="index"] { border-color:var(--app-accent); color:var(--app-accent); }
+.stash-wiki-kind[data-kind="decision"] { border-color:var(--app-success); color:var(--app-success); }
+.stash-wiki-stale { font-size:11px; padding:1px 7px; border-radius:999px; background:var(--app-danger-soft); color:var(--app-danger); }
+.stash-wiki-tag { font-size:11px; padding:1px 7px; border-radius:999px; background:var(--app-accent-soft); color:var(--app-accent); }
+.stash-wiki-lint { display:grid; gap:8px; padding:12px 14px; border:1px solid var(--app-border); border-radius:9px; background:var(--app-surface); }
+.stash-wiki-lint header { display:flex; align-items:center; gap:12px; }
+.stash-wiki-lint header span { flex:1; color:var(--app-muted); }
+.stash-wiki-lint ul, .stash-wiki-log ul, .stash-wiki-sources, .stash-wiki-linklist, .stash-wiki-history { list-style:none; margin:0; padding:0; display:grid; gap:6px; }
+.stash-wiki-lint li { display:flex; gap:10px; flex-wrap:wrap; align-items:center; font-size:13px; }
+.stash-wiki-lint li[data-severity="warning"]::before { content:'!'; color:var(--app-danger); font-weight:700; }
+.stash-wiki-lint li[data-severity="info"]::before { content:'·'; color:var(--app-muted); }
+.stash-wiki-linkbutton { padding:0; border:0; background:none; color:var(--app-accent); cursor:pointer; text-align:left; font:inherit; }
+.stash-wiki-linkbutton.is-active { font-weight:700; }
+.stash-wiki-log summary { cursor:pointer; color:var(--app-muted); }
+.stash-wiki-log li { display:flex; gap:10px; flex-wrap:wrap; align-items:baseline; font-size:13px; padding:4px 0; border-bottom:1px solid var(--app-border); }
+.stash-wiki-log-time { color:var(--app-faint); font-size:12px; white-space:nowrap; }
+.stash-wiki-log-action { font-size:11px; padding:1px 7px; border-radius:999px; background:var(--app-raised); }
+.stash-wiki-page { display:grid; gap:18px; }
+.stash-wiki-page-head { display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap; align-items:flex-start; }
+.stash-wiki-page-head h2 { margin:4px 0; font-size:24px; }
+.stash-wiki-summary { margin:0 0 6px; color:var(--app-muted); }
+.stash-wiki-meta { margin:0; display:flex; gap:8px; flex-wrap:wrap; align-items:center; font-size:12px; color:var(--app-faint); }
+.stash-wiki-page-grid { display:grid; grid-template-columns:minmax(0, 1fr) 300px; gap:24px; align-items:start; }
+.stash-wiki-article { line-height:1.65; font-size:15px; overflow-wrap:anywhere; }
+.stash-wiki-article h1, .stash-wiki-article h2, .stash-wiki-article h3 { margin:1.4em 0 .5em; line-height:1.3; }
+.stash-wiki-article h1 { font-size:22px; } .stash-wiki-article h2 { font-size:19px; } .stash-wiki-article h3 { font-size:16px; }
+.stash-wiki-article p, .stash-wiki-article ul, .stash-wiki-article ol { margin:0 0 .9em; }
+.stash-wiki-article code { font-size:13px; background:var(--app-raised); padding:1px 5px; border-radius:4px; }
+.stash-wiki-article pre { padding:12px 14px; overflow:auto; background:var(--app-raised); border-radius:8px; }
+.stash-wiki-article pre code { background:none; padding:0; }
+.stash-wiki-article blockquote { margin:0 0 .9em; padding:4px 14px; border-left:3px solid var(--app-border); color:var(--app-muted); }
+.stash-wiki-article table { border-collapse:collapse; margin:0 0 .9em; font-size:14px; }
+.stash-wiki-article th, .stash-wiki-article td { border:1px solid var(--app-border); padding:6px 10px; text-align:left; }
+.stash-wiki-article a { color:var(--app-accent); }
+.stash-wiki-article a.stash-wiki-cite { font-size:11px; vertical-align:super; margin-left:2px; padding:0 5px; border-radius:999px; background:var(--app-accent-soft); text-decoration:none; }
+.stash-wiki-aside { display:grid; gap:18px; font-size:13px; }
+.stash-wiki-aside h4 { margin:0 0 8px; font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--app-muted); }
+.stash-wiki-sources li { display:grid; gap:4px; padding:8px 10px; border:1px solid var(--app-border); border-radius:7px; background:var(--app-surface); }
+.stash-wiki-sources li.is-focused { border-color:var(--app-accent); box-shadow:0 0 0 2px var(--app-accent-soft); }
+.stash-wiki-sources li > div { display:flex; justify-content:space-between; gap:8px; align-items:center; }
+.stash-wiki-sources small { color:var(--app-muted); overflow-wrap:anywhere; }
+.stash-wiki-source-status { font-size:11px; padding:1px 7px; border-radius:999px; background:var(--app-raised); color:var(--app-muted); }
+.stash-wiki-source-status[data-status="ok"] { color:var(--app-success); }
+.stash-wiki-source-status[data-status="changed"], .stash-wiki-source-status[data-status="superseded"], .stash-wiki-source-status[data-status="deleted"], .stash-wiki-source-status[data-status="missing"] { background:var(--app-danger-soft); color:var(--app-danger); }
+.stash-wiki-linklist li, .stash-wiki-history li { display:grid; gap:2px; }
+.stash-wiki-linklist small, .stash-wiki-history small, .stash-wiki-history span { color:var(--app-muted); }
+.stash-wiki-editor { display:grid; gap:14px; }
+.stash-wiki-editor-fields { display:grid; gap:12px; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); }
+.stash-wiki-editor-fields .is-wide { grid-column:1 / -1; }
+.stash-wiki-editor-body { display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, 1fr); gap:16px; align-items:start; }
+.stash-wiki-editor textarea { width:100%; min-height:460px; padding:12px; border:1px solid var(--app-border); border-radius:7px; background:var(--app-bg); color:var(--app-ink); font:13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; resize:vertical; }
+.stash-wiki-editor small { color:var(--app-muted); }
+.stash-wiki-preview { padding:12px 16px; border:1px solid var(--app-border); border-radius:8px; background:var(--app-surface); min-height:460px; overflow:auto; }
+.stash-wiki-preview h4 { margin:0 0 8px; font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--app-muted); }
+@media (max-width: 980px) { .stash-wiki-page-grid, .stash-wiki-editor-body { grid-template-columns:1fr; } }

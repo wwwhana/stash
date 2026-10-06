@@ -113,6 +113,43 @@ type WorkPlanValidator interface {
 	ModelName() string
 }
 
+// WikiSourceInput is one piece of evidence a wiki draft may cite.
+type WikiSourceInput struct {
+	Ref     string // "fact:12", "episode:3", "work:W-000001"
+	Content string
+}
+
+// WikiPageRef lets a draft link existing pages with [[slug]].
+type WikiPageRef struct {
+	Slug  string
+	Title string
+}
+
+// WikiDraftRequest asks for a cited Markdown page.
+type WikiDraftRequest struct {
+	Slug     string
+	Title    string
+	Topic    string
+	Existing string
+	Sources  []WikiSourceInput
+	Pages    []WikiPageRef
+}
+
+// WikiDraft is the reasoner's page proposal.
+type WikiDraft struct {
+	Title   string   `json:"title"`
+	Summary string   `json:"summary"`
+	Content string   `json:"content"`
+	Tags    []string `json:"tags"`
+}
+
+// WikiAuthor is the optional server-side page writer. It is a separate
+// interface so test doubles and older reasoners need not implement it.
+type WikiAuthor interface {
+	DraftWikiPage(ctx context.Context, request WikiDraftRequest) (*WikiDraft, error)
+	ModelName() string
+}
+
 // Reasoner synthesizes structured reasoning over text input.
 type Reasoner interface {
 	// ReasonStructured takes a list of text inputs and returns a structured fact.

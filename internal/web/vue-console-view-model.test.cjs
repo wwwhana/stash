@@ -171,7 +171,7 @@ test('navigation keeps the workspace, resets incompatible filters, and restores 
 });
 
 test('work, goals and typed memories have bidirectional detail links without duplicate edges', async () => {
-    const { state } = setup('/', async () => map);
+    const { state } = setup('/ui/goal-map', async () => map);
     await state.loadRoute();
     state.selectObject('work', state.allWork[0]);
     assert.deepEqual(state.selectedConnections.map(item => item.kind).sort(), ['goal', 'memory']);

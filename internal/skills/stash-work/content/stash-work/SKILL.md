@@ -68,6 +68,7 @@ Use a new action key for each logical mutation. Reuse it only to retry the exact
 2. Use one `submit_work_evidence` call for every condition proved by the same observation.
 3. Put the successfully proved pending IDs in `finish_work.passed_condition_ids`; it accepts those conditions only when this attempt supplied linked evidence. Use `verify_work_condition` only for an explicit waiver or when acceptance must be recorded before finish.
 4. Confirm every blocker is finished and `result_memory_linked: true` is present in the response.
+5. Write the result where the next reader will look: update the project's wiki page (or a decision page) with `wiki_write`, citing `[@work:<issue_key>]` and the facts or episodes relied on, and pass the page's `revision` as `expected_revision`. The `stash-wiki` skill covers the page conventions.
 
 Read [evidence guidance](references/evidence.md) before claiming a condition passed.
 

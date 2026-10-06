@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/pgvector/pgvector-go"
 )
 
@@ -37,6 +38,10 @@ type RecallResult struct {
 	// cannot tell "this is my memory" from "this was merely the closest row".
 	VectorScore  float32 `json:"vector_score,omitempty"`
 	KeywordScore float32 `json:"keyword_score,omitempty"`
+
+	// Slug and Title identify a wiki page result; Content holds its summary.
+	Slug  string `json:"slug,omitempty"`
+	Title string `json:"title,omitempty"`
 }
 
 // Recall searches episodes and facts across the given namespaces, fusing vector and
@@ -61,6 +66,11 @@ type RecallOptions struct {
 	// Offset continues through the stable fused ranking without asking callers
 	// to retrieve an oversized first page.
 	Offset int
+	// IncludePages adds wiki pages as a third candidate pool. Pages are the
+	// compiled, human-reviewed layer, so agents usually want them first.
+	IncludePages bool
+	// PagesOnly restricts the search to wiki pages (SearchWiki).
+	PagesOnly bool
 }
 
 // RecallWithOptions is Recall with retrieval controls.
@@ -102,7 +112,7 @@ func (b *Brain) RecallWithOptions(ctx context.Context, namespaces []string, quer
 		// The original text remains searchable while an episode or fact waits
 		// for indexing. Do not make a provider outage hide that durable data:
 		// use the already-installed pg_trgm indexes as a bounded lexical fallback.
-		keywordResults, keywordErr := b.keywordCandidatesWithError(ctx, nsIDs, query, window)
+		keywordResults, keywordErr := b.keywordCandidatesWithError(ctx, nsIDs, query, window, opts)
 		if keywordErr != nil {
 			return nil, fmt.Errorf("embed query failed: %s; trigram fallback failed: %w", embeddingErrorText(err), keywordErr)
 		}
@@ -110,6 +120,19 @@ func (b *Brain) RecallWithOptions(ctx context.Context, namespaces []string, quer
 	}
 
 	pgVec := pgvector.NewVector(vec)
+
+	var results []RecallResult
+	if opts.IncludePages || opts.PagesOnly {
+		pages, err := b.vectorPageCandidates(ctx, nsIDs, pgVec, window, opts.MinScore)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, pages...)
+	}
+	if opts.PagesOnly {
+		keywordResults := b.keywordCandidates(ctx, nsIDs, query, window, opts)
+		return b.finishRecall(ctx, results, keywordResults, offset, limit, window), nil
+	}
 
 	// Collect facts and episodes as INDEPENDENT candidate pools, each up to `limit`.
 	//
@@ -129,7 +152,6 @@ func (b *Brain) RecallWithOptions(ctx context.Context, namespaces []string, quer
 	}
 	defer factRows.Close()
 
-	var results []RecallResult
 	for factRows.Next() {
 		var id int64
 		var namespaceID int64
@@ -199,9 +221,43 @@ func (b *Brain) RecallWithOptions(ctx context.Context, namespaces []string, quer
 	// Vectors match meaning; they do not reliably match literal tokens such as
 	// ticket keys ("FROMM-4414") or symbol names. Trigram search covers that gap
 	// and is language-neutral, which matters because the corpus is mixed Korean/English.
-	keywordResults := b.keywordCandidates(ctx, nsIDs, query, window)
+	keywordResults := b.keywordCandidates(ctx, nsIDs, query, window, opts)
 
 	return b.finishRecall(ctx, results, keywordResults, offset, limit, window), nil
+}
+
+// vectorPageCandidates runs the wiki page vector search.
+func (b *Brain) vectorPageCandidates(ctx context.Context, nsIDs []int64, vec pgvector.Vector, limit int, minScore float32) ([]RecallResult, error) {
+	sql, args, err := b.queries.RecallPages(nsIDs, vec, limit, minScore)
+	if err != nil {
+		return nil, fmt.Errorf("build page query: %w", err)
+	}
+	rows, err := b.pool.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query pages: %w", err)
+	}
+	defer rows.Close()
+	var out []RecallResult
+	for rows.Next() {
+		r, err := scanPageRecall(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func scanPageRecall(rows pgx.Rows) (RecallResult, error) {
+	var r RecallResult
+	var createdAt, updatedAt time.Time
+	if err := rows.Scan(&r.ID, &r.NamespaceID, &r.Slug, &r.Title, &r.Content, &createdAt, &updatedAt, &r.Score); err != nil {
+		return r, fmt.Errorf("scan page: %w", err)
+	}
+	r.Type = "page"
+	r.CreatedAt = createdAt.Format(time.RFC3339)
+	r.OccurredAt = updatedAt.Format(time.RFC3339)
+	return r, nil
 }
 
 // finishRecall applies the same ranking, pagination, and provenance lookup to
@@ -263,20 +319,47 @@ func (b *Brain) attachFactSources(ctx context.Context, results []RecallResult) {
 // keywordCandidates runs the trigram search over both pools.
 // Keyword search is a supplement: if it fails (e.g. pg_trgm missing), recall still
 // returns vector results rather than erroring out.
-func (b *Brain) keywordCandidates(ctx context.Context, nsIDs []int64, query string, limit int) []RecallResult {
-	out, _ := b.keywordCandidatesWithError(ctx, nsIDs, query, limit)
+func (b *Brain) keywordCandidates(ctx context.Context, nsIDs []int64, query string, limit int, opts RecallOptions) []RecallResult {
+	out, _ := b.keywordCandidatesWithError(ctx, nsIDs, query, limit, opts)
 	return out
 }
 
 // keywordCandidatesWithError runs both trigram pools and reports an error only
 // when no pool could be read. A partial result is still useful if one table is
 // temporarily unavailable, and preserves the old hybrid-search behaviour.
-func (b *Brain) keywordCandidatesWithError(ctx context.Context, nsIDs []int64, query string, limit int) ([]RecallResult, error) {
+func (b *Brain) keywordCandidatesWithError(ctx context.Context, nsIDs []int64, query string, limit int, opts RecallOptions) ([]RecallResult, error) {
 	var out []RecallResult
 	var firstErr error
 	recordErr := func(stage string, err error) {
 		if err != nil && firstErr == nil {
 			firstErr = fmt.Errorf("%s: %w", stage, err)
+		}
+	}
+
+	if opts.IncludePages || opts.PagesOnly {
+		if sql, args, err := b.queries.KeywordPages(nsIDs, query, limit); err == nil {
+			if rows, err := b.pool.Query(ctx, sql, args...); err == nil {
+				for rows.Next() {
+					r, err := scanPageRecall(rows)
+					if err != nil {
+						recordErr("scan trigram pages", err)
+						break
+					}
+					out = append(out, r)
+				}
+				recordErr("read trigram pages", rows.Err())
+				rows.Close()
+			} else {
+				recordErr("query trigram pages", err)
+			}
+		} else {
+			recordErr("build trigram pages query", err)
+		}
+		if opts.PagesOnly {
+			if len(out) == 0 && firstErr != nil {
+				return nil, firstErr
+			}
+			return out, nil
 		}
 	}
 

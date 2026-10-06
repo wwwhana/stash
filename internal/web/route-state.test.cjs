@@ -4,7 +4,7 @@ const { routePaths, readRoute, buildRoute, routeTitle } = require('./ui/route-st
 
 test('every workspace page has a stable address', () => {
     assert.deepEqual(routePaths, {
-        'goal-map': '/ui/goal-map', plan: '/ui/plan', monitor: '/ui/monitor', board: '/ui/issues', graph: '/ui/work-graph',
+        wiki: '/ui/wiki', wiki_page: '/ui/wiki/page', 'goal-map': '/ui/goal-map', plan: '/ui/plan', monitor: '/ui/monitor', board: '/ui/issues', graph: '/ui/work-graph',
         worktrees: '/ui/git', list_namespaces: '/ui/namespaces', list_memories: '/ui/memories', query_facts: '/ui/facts',
         list_hypotheses: '/ui/hypotheses', list_goals: '/ui/goals', agent: '/ui/agent-guide',
         llm: '/ui/llm', maintenance: '/ui/maintenance', tokens: '/ui/tokens'
@@ -25,7 +25,7 @@ test('work graph address restores namespace and filters', () => {
         query: 'Confluence', status: 'doing', agent: 'codex', memoryType: '',
         kinds: { goal: true, work: true, memory: true, resource: true },
         relations: { part_of: true, blocks: false, relates_to: false }, focus: '42', detail: false,
-        issueType: '', label: '', offset: 0, issueID: 0
+        issueType: '', label: '', offset: 0, issueID: 0, slug: '', revision: 0, edit: false, kind: '', tag: '', stale: false
     });
 });
 
@@ -73,14 +73,14 @@ test('fact, hypothesis, and goal list addresses restore their search', () => {
     assert.equal(route.offset, 50);
 });
 
-test('root and unknown paths safely select the goal map', () => {
+test('root and unknown paths safely select the wiki', () => {
     assert.deepEqual(
         { route: readRoute('/').route, matched: readRoute('/').matched },
-        { route: 'goal-map', matched: true }
+        { route: 'wiki', matched: true }
     );
     assert.deepEqual(
         { route: readRoute('/missing').route, matched: readRoute('/missing').matched },
-        { route: 'goal-map', matched: false }
+        { route: 'wiki', matched: false }
     );
 });
 

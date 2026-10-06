@@ -560,6 +560,7 @@ func main() {
 					&cli.BoolFlag{Name: "dry-run", Aliases: []string{"d"}, Usage: "Show how many rows would be re-embedded"},
 				},
 			},
+			wikiCommand(),
 			llmCommand(),
 			{
 				Name:  "mcp",

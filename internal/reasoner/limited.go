@@ -1011,3 +1011,41 @@ func decisionsForComponents(decisions []models.WorkPlanDecision, components []mo
 	}
 	return result
 }
+
+// DraftWikiPage forwards to the wrapped author, trimming the evidence list
+// to the model budget. Dropped sources are the ones recall ranked lowest,
+// so the draft keeps the strongest evidence; a context error from the
+// provider halves the list and retries.
+func (l *Limited) DraftWikiPage(ctx context.Context, request WikiDraftRequest) (*WikiDraft, error) {
+	author, ok := l.inner.(WikiAuthor)
+	if !ok {
+		return nil, errors.New("reasoner: wiki drafting is not supported")
+	}
+	return l.draftWikiPage(ctx, author, request, 0)
+}
+
+func (l *Limited) draftWikiPage(ctx context.Context, author WikiAuthor, request WikiDraftRequest, depth int) (*WikiDraft, error) {
+	if l.maxInputBytes > 0 {
+		budget := l.maxInputBytes - len(request.Existing) - len(request.Topic) - len(request.Title)
+		used := 0
+		kept := request.Sources[:0:0]
+		for _, source := range request.Sources {
+			size := len(source.Ref) + len(source.Content) + 8
+			if len(kept) > 0 && used+size > budget {
+				break
+			}
+			kept = append(kept, source)
+			used += size
+		}
+		request.Sources = kept
+	}
+	draft, err := author.DraftWikiPage(ctx, request)
+	if err == nil || !textbudget.IsContextLimitError(err) || len(request.Sources) < 2 || depth >= maxAdaptiveReasonerSplits {
+		return draft, err
+	}
+	request.Sources = request.Sources[:len(request.Sources)/2]
+	if budget, ok := textbudget.InputBudgetFromContextError(err, 0); ok && (l.maxInputBytes <= 0 || budget < l.maxInputBytes) {
+		return l.withBudget(budget).draftWikiPage(ctx, author, request, depth+1)
+	}
+	return l.draftWikiPage(ctx, author, request, depth+1)
+}

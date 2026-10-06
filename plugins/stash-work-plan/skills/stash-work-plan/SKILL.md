@@ -89,6 +89,14 @@ A `worktree_id` is optional connector metadata. Use a new action key for every l
 
 If unfinished, call `handoff_work` with the current observed result and exactly one next action. A comment, chat summary, status edit, or connector heartbeat does not release a lease.
 
+## Record the result in the wiki
+
+- After `finish_work` succeeds, update the project's wiki page (or create `projects/<name>`) with `wiki_write`: what was delivered, why, and what changed, citing `[@work:<issue_key>]` and the memory it relied on with `[@fact:id]` or `[@episode:id]`.
+- Record a plan-changing decision as a `decisions/<topic>` page (`kind: decision`) linked from the project page with `[[decisions/<topic>]]`.
+- Read the page first and pass its `revision` as `expected_revision`; a conflict means another author saved first, so read again and merge.
+- Before answering a project question, call `wiki_search` or `wiki_read`; prefer a page over raw episodes when both match.
+- Run `wiki_lint` after a batch of pages and fix broken links, orphans, and stale sources.
+
 ## Review plan meaning
 
 `get_work_plan` reports deterministic convention warnings without a model call. Resolve those first.

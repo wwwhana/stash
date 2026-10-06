@@ -13,14 +13,21 @@
   <aside class="stash-sidebar" :aria-label="t('nav.main')">
     <div class="stash-brand"><span class="stash-brand-mark">S</span><span>Stash</span></div>
     <label class="stash-root-select"><span>{{ t('nav.workspaces') }}</span><select v-model="rootSlug" :title="rootSlug" @change="changeRoot"><option v-for="item in rootOptions" :key="item.slug" :value="item.slug">{{ item.name || (item.slug === '/' ? t('workspace.default') : item.slug) }}</option></select></label>
-    <select class="stash-mobile-nav" :aria-label="t('nav.page')" :value="route.route" @change="navigate($event.target.value)"><option v-for="item in navItems" :key="item.route" :value="item.route">{{ item.label }}</option><option value="list_memories">{{ t('nav.memories') }}</option><option value="list_goals">{{ t('nav.goals') }}</option><option value="list_namespaces">{{ t('nav.manageWorkspaces') }}</option><option value="tokens">{{ t('nav.tokens') }}</option><option value="agent">{{ t('nav.agent') }}</option><option value="maintenance">{{ t('nav.maintenance') }}</option><option value="llm">{{ t('nav.llm') }}</option></select>
+    <select class="stash-mobile-nav" :aria-label="t('nav.page')" :value="route.route === 'wiki_page' ? 'wiki' : route.route" @change="navigate($event.target.value)"><optgroup :label="t('nav.sectionWiki')"><option value="wiki">{{ t('nav.wikiHome') }}</option></optgroup><optgroup :label="t('nav.sectionMemory')"><option value="list_memories">{{ t('nav.memories') }}</option><option value="list_goals">{{ t('nav.goals') }}</option><option v-for="item in navItems" :key="item.route" :value="item.route">{{ item.label }}</option></optgroup><optgroup :label="t('nav.sectionServer')"><option value="llm">{{ t('nav.llm') }}</option><option value="maintenance">{{ t('nav.maintenance') }}</option><option value="list_namespaces">{{ t('nav.manageWorkspaces') }}</option><option value="tokens">{{ t('nav.tokens') }}</option><option value="agent">{{ t('nav.agent') }}</option></optgroup></select>
     <nav class="stash-nav">
-      <span class="stash-nav-label">{{ t('nav.project') }}</span>
-      <a v-for="item in navItems" :key="item.route" :href="navHref(item.route)" :class="{'is-active': route.route === item.route}" :aria-current="route.route === item.route ? 'page' : null" @click.prevent="navigate(item.route)"><span class="stash-nav-icon">{{ item.icon }}</span><span>{{ item.label }}</span></a>
-      <a :href="navHref('list_goals')" :class="{'is-active': route.route === 'list_goals'}" @click.prevent="navigate('list_goals')"><span class="stash-nav-icon">↗</span><span>{{ t('nav.goals') }}</span></a>
+      <span class="stash-nav-label">{{ t('nav.sectionWiki') }}</span>
+      <a :href="navHref('wiki')" :class="{'is-active': ['wiki', 'wiki_page'].includes(route.route)}" :aria-current="['wiki', 'wiki_page'].includes(route.route) ? 'page' : null" @click.prevent="navigate('wiki')"><span class="stash-nav-icon">▤</span><span>{{ t('nav.wikiHome') }}</span></a>
+      <span class="stash-nav-label">{{ t('nav.sectionMemory') }}</span>
       <a :href="navHref('list_memories')" :class="{'is-active': ['list_memories', 'query_facts', 'list_hypotheses'].includes(route.route)}" @click.prevent="navigate('list_memories')"><span class="stash-nav-icon">✓</span><span>{{ t('nav.memories') }}</span></a>
+      <a :href="navHref('list_goals')" :class="{'is-active': route.route === 'list_goals'}" @click.prevent="navigate('list_goals')"><span class="stash-nav-icon">↗</span><span>{{ t('nav.goals') }}</span></a>
+      <a v-for="item in navItems" :key="item.route" :href="navHref(item.route)" :class="{'is-active': route.route === item.route}" :aria-current="route.route === item.route ? 'page' : null" @click.prevent="navigate(item.route)"><span class="stash-nav-icon">{{ item.icon }}</span><span>{{ item.label }}</span></a>
+      <span class="stash-nav-label">{{ t('nav.sectionServer') }}</span>
+      <a :href="navHref('llm')" :class="{'is-active': route.route === 'llm'}" @click.prevent="navigate('llm')"><span class="stash-nav-icon">⚙</span><span>{{ t('nav.llm') }}</span></a>
+      <a :href="navHref('maintenance')" :class="{'is-active': route.route === 'maintenance'}" @click.prevent="navigate('maintenance')"><span class="stash-nav-icon">↻</span><span>{{ t('nav.maintenance') }}</span></a>
+      <a :href="navHref('list_namespaces')" :class="{'is-active': route.route === 'list_namespaces'}" @click.prevent="navigate('list_namespaces')"><span class="stash-nav-icon">◌</span><span>{{ t('nav.manageWorkspaces') }}</span></a>
+      <a :href="navHref('tokens')" :class="{'is-active': route.route === 'tokens'}" @click.prevent="navigate('tokens')"><span class="stash-nav-icon">⚿</span><span>{{ t('nav.tokens') }}</span></a>
+      <a :href="navHref('agent')" :class="{'is-active': route.route === 'agent'}" @click.prevent="navigate('agent')"><span class="stash-nav-icon">☰</span><span>{{ t('nav.agent') }}</span></a>
     </nav>
-    <div class="stash-sidebar-foot"><a :href="navHref('list_namespaces')" :class="{'is-active': route.route === 'list_namespaces'}" @click.prevent="navigate('list_namespaces')"><span class="stash-nav-icon">◌</span><span>{{ t('nav.manageWorkspaces') }}</span></a><a :href="navHref('tokens')" :class="{'is-active': route.route === 'tokens'}" @click.prevent="navigate('tokens')">{{ t('nav.tokens') }}</a><a :href="navHref('agent')" @click.prevent="navigate('agent')">{{ t('nav.agent') }}</a><a :href="navHref('maintenance')" @click.prevent="navigate('maintenance')">{{ t('nav.maintenance') }}</a><a :href="navHref('llm')" :class="{'is-active': route.route === 'llm'}" @click.prevent="navigate('llm')">{{ t('nav.llm') }}</a></div>
     <div class="stash-sidebar-settings">
       <label><span>{{ t('theme.label') }}</span><select class="stash-theme-select" :value="themePreference" @change="changeTheme($event.target.value)"><option value="system">{{ t('theme.system') }}</option><option value="light">{{ t('theme.light') }}</option><option value="dark">{{ t('theme.dark') }}</option></select></label>
       <label><span>{{ t('language.label') }}</span><select class="stash-language-select" :value="locale" @change="changeLocale($event.target.value)"><option value="ko">한국어</option><option value="en">English</option></select></label>
@@ -77,6 +84,84 @@
             <div v-if="!mapLayout.nodes.length" class="stash-empty"><strong>{{ hasFilters ? t('empty.filtered') : t('empty.overview') }}</strong><button v-if="hasFilters" type="button" class="stash-button" @click="resetFilters">{{ t('action.clearFilters') }}</button></div>
             <div v-else-if="mapAsList" class="stash-list"><button v-for="node in mapLayout.nodes" :key="node.key" type="button" class="stash-list-item" :class="{'is-selected': selected && selected.key === node.key}" @click="selectMapNode(node)"><span><strong>{{ nodeTitle(node) }}</strong><small v-if="node.kind === 'goal'">{{ goalProgressLabel(node.item) }}</small><small v-else-if="node.kind === 'work'">{{ workNote(node.item) }}</small></span><span class="stash-list-meta"><span>{{ kindLabel(node.kind) }}</span><span v-if="node.kind === 'work'" class="stash-status" :data-status="displayStatus(node.item)">{{ statusLabel(displayStatus(node.item)) }}</span><span v-else-if="node.kind === 'memory'">{{ memoryTypeLabel(node.item.memory_type) }}</span></span></button></div>
             <div v-else class="stash-map-viewport"><div class="stash-map-canvas" :style="canvasStyle(mapLayout)"><svg class="stash-map-edge-layer" :viewBox="'0 0 ' + mapLayout.width + ' ' + mapLayout.height" aria-hidden="true"><defs><marker id="stash-map-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#818cf8"></path></marker></defs><path v-for="edge in mapLayout.edges" :key="edge.key" :d="edge.path" :stroke="edge.stroke" stroke-width="2" :stroke-dasharray="edge.dashArray || null" :marker-end="edge.marker ? 'url(#stash-map-arrow)' : null" fill="none"></path></svg><div v-for="ring in mapLayout.rings" :key="ring.key" class="stash-map-ring" :style="ring.style"><span>{{ t('map.ring.' + ring.key) }} · {{ formatNumber(ring.count) }}</span></div><button v-for="node in mapLayout.nodes" :key="node.key" type="button" class="stash-map-node" :class="mapNodeClasses(node)" :style="node.style" :aria-label="nodeAria(node)" @click="selectMapNode(node)"><span class="stash-node-meta"><span class="stash-node-key">{{ nodeKey(node) }}</span><span v-if="node.kind === 'work'" class="stash-status" :data-status="displayStatus(node.item)">{{ statusLabel(displayStatus(node.item)) }}</span><span v-else>{{ kindLabel(node.kind) }}</span></span><span class="stash-node-title">{{ nodeTitle(node) }}</span><span v-if="node.kind === 'goal'" class="stash-node-note">{{ goalProgressLabel(node.item) }}</span><span v-if="node.kind === 'work'" class="stash-node-note">{{ workNote(node.item) }}</span><span v-else-if="node.kind === 'resource'" class="stash-node-note">{{ node.item.source || t('resource.linked') }}</span><span v-else-if="node.kind === 'memory'" class="stash-node-note">{{ memoryTypeLabel(node.item.memory_type) }}</span></button></div></div>
+          </template>
+
+          <template v-else-if="route.route === 'wiki'">
+            <div class="stash-wiki-home">
+              <p class="stash-wiki-intro">{{ t('wiki.description') }}</p>
+              <div class="stash-toolbar stash-wiki-toolbar">
+                <label class="stash-field is-search"><span class="stash-sr-only">{{ t('action.search') }}</span><input v-model="filters.query" :placeholder="t('wiki.search')" @input="syncURL" @keydown.enter="searchList"></label>
+                <label class="stash-field"><span>{{ t('wiki.kind') }}</span><select v-model="wikiFilters.kind" @change="searchWiki"><option value="">{{ t('wiki.allKinds') }}</option><option v-for="kind in wikiKinds" :key="kind" :value="kind">{{ t('wiki.kind.' + kind) }}</option></select></label>
+                <label class="stash-check"><input v-model="wikiFilters.stale" type="checkbox" @change="searchWiki"><span>{{ t('wiki.staleOnly') }}</span></label>
+                <button type="button" class="stash-button" :disabled="wikiBusy" @click="lintWiki">{{ t('wiki.lint') }}</button>
+                <button type="button" class="stash-button is-primary" @click="newWikiPage">{{ t('wiki.newPage') }}</button>
+              </div>
+              <p v-if="wikiNotice" class="stash-wiki-notice" role="status">{{ t(wikiNotice) }}</p>
+              <p v-if="wikiError" class="stash-error" role="alert">{{ t(wikiError) }}</p>
+              <section v-if="wikiLint" class="stash-wiki-lint" :aria-label="t('wiki.lint')">
+                <header><strong>{{ t('wiki.lint') }}</strong><span>{{ t('wiki.lintSummary', { pages: wikiLint.pages, findings: wikiLint.findings.length }) }}</span><button type="button" class="stash-button" @click="wikiLint = null">×</button></header>
+                <p v-if="!wikiLint.findings.length">{{ t('wiki.lintClean') }}</p>
+                <ul v-else><li v-for="(finding, index) in wikiLint.findings" :key="index" :data-severity="finding.severity"><button v-if="finding.page_slug" type="button" class="stash-wiki-linkbutton" @click="openWikiPage(finding.page_slug)">{{ finding.page_slug }}</button><span>{{ t('wiki.lint.' + finding.code) }}</span><code v-if="finding.target">{{ finding.target }}</code></li></ul>
+              </section>
+              <div v-if="!wikiPages.length" class="stash-empty"><strong>{{ filters.query || wikiFilters.kind || wikiFilters.stale ? t('wiki.noMatches') : t('wiki.noPages') }}</strong><span v-if="!filters.query">{{ t('wiki.noPagesHint') }}</span></div>
+              <div v-else class="stash-wiki-list">
+                <button v-for="page in wikiPages" :key="page.id" type="button" class="stash-wiki-card" @click="openWikiPage(page.slug)">
+                  <span class="stash-wiki-card-head"><strong>{{ page.title }}</strong><span class="stash-wiki-kind" :data-kind="page.kind">{{ t('wiki.kind.' + page.kind) }}</span><span v-if="page.stale_at" class="stash-wiki-stale">{{ t('wiki.stale') }}</span></span>
+                  <span v-if="page.summary" class="stash-wiki-card-summary">{{ page.summary }}</span>
+                  <span class="stash-wiki-card-meta"><code>{{ page.slug }}</code><span>{{ t('wiki.updatedBy', { time: formatDateTime(page.updated_at), author: page.author || t('wiki.author.' + page.author_kind) }) }}</span><span v-for="tag in page.tags" :key="tag" class="stash-wiki-tag">{{ tag }}</span></span>
+                </button>
+              </div>
+              <div v-if="wikiPages.length" class="stash-pagination"><span>{{ t('view.shownCount', { count: wikiPages.length }) }}</span><button v-if="route.offset" type="button" class="stash-button" @click="searchList">{{ t('action.firstPage') }}</button><button v-if="page.hasMore" type="button" class="stash-button" @click="nextPage">{{ t('action.nextPage') }}</button></div>
+              <details class="stash-wiki-log" :open="!wikiPages.length"><summary>{{ t('wiki.log') }}</summary>
+                <p v-if="!wikiLog.length">{{ t('wiki.logEmpty') }}</p>
+                <ul v-else><li v-for="entry in wikiLog" :key="entry.id"><span class="stash-wiki-log-time">{{ formatDateTime(entry.created_at) }}</span><span class="stash-wiki-log-action" :data-action="entry.action">{{ t('wiki.action.' + entry.action) }}</span><button v-if="entry.page_slug" type="button" class="stash-wiki-linkbutton" @click="openWikiPage(entry.page_slug)">{{ entry.page_slug }}</button><span>{{ entry.summary }}</span><small v-if="entry.actor">{{ entry.actor }}</small></li></ul>
+              </details>
+            </div>
+          </template>
+
+          <template v-else-if="route.route === 'wiki_page' && wikiEdit">
+            <form class="stash-wiki-editor" @submit.prevent="saveWikiPage">
+              <div class="stash-wiki-editor-fields">
+                <label class="stash-field"><span>{{ t('wiki.title') }}</span><input v-model="wikiEdit.title" required :disabled="wikiBusy"></label>
+                <label class="stash-field"><span>{{ t('wiki.slug') }}</span><input v-model="wikiEdit.slug" required pattern="[a-z0-9][a-z0-9_-]*(/[a-z0-9][a-z0-9_-]*)*" :disabled="wikiBusy || !wikiEdit.isNew" :placeholder="t('wiki.slugHint')"></label>
+                <label class="stash-field"><span>{{ t('wiki.kind') }}</span><select v-model="wikiEdit.kind" :disabled="wikiBusy"><option v-for="kind in wikiKinds" :key="kind" :value="kind">{{ t('wiki.kind.' + kind) }}</option></select></label>
+                <label class="stash-field"><span>{{ t('wiki.tags') }}</span><input v-model="wikiEdit.tags" :disabled="wikiBusy"></label>
+                <label class="stash-field is-wide"><span>{{ t('wiki.summary') }}</span><input v-model="wikiEdit.summary" :disabled="wikiBusy"></label>
+              </div>
+              <div class="stash-wiki-editor-body">
+                <label class="stash-field"><span>{{ t('wiki.content') }}</span><textarea v-model="wikiEdit.content" required :disabled="wikiBusy" spellcheck="false"></textarea><small>{{ t('wiki.contentHint') }}</small></label>
+                <section class="stash-wiki-preview" :aria-label="t('wiki.preview')"><h4>{{ t('wiki.preview') }}</h4><article class="stash-wiki-article" v-html="renderWikiMarkdown(wikiEdit.content)"></article></section>
+              </div>
+              <label class="stash-field"><span>{{ t('wiki.changeNote') }}</span><input v-model="wikiEdit.changeNote" :disabled="wikiBusy"></label>
+              <p v-if="wikiNotice" class="stash-wiki-notice" role="status">{{ t(wikiNotice) }}</p>
+              <p v-if="wikiError" class="stash-error" role="alert">{{ t(wikiError) }}</p>
+              <div class="stash-llm-actions">
+                <button type="submit" class="stash-button is-primary" :disabled="wikiBusy">{{ t('wiki.save') }}</button>
+                <button type="button" class="stash-button" :disabled="wikiBusy" @click="cancelWikiEdit">{{ t('wiki.cancel') }}</button>
+                <button type="button" class="stash-button" :disabled="wikiBusy" :title="t('wiki.compileHint')" @click="compileWikiDraft">{{ wikiBusy && wikiCompiling ? t('wiki.compiling') : t('wiki.compile') }}</button>
+              </div>
+            </form>
+          </template>
+
+          <template v-else-if="route.route === 'wiki_page' && wikiPage">
+            <article class="stash-wiki-page">
+              <header class="stash-wiki-page-head">
+                <div><p class="stash-kicker"><code>{{ wikiPage.page.slug }}</code> · <span class="stash-wiki-kind" :data-kind="wikiPage.page.kind">{{ t('wiki.kind.' + wikiPage.page.kind) }}</span><span v-if="wikiPage.page.stale_at" class="stash-wiki-stale">{{ t('wiki.stale') }}</span></p><h2>{{ wikiPage.page.title }}</h2><p v-if="wikiPage.page.summary" class="stash-wiki-summary">{{ wikiPage.page.summary }}</p><p class="stash-wiki-meta">{{ t('wiki.revision', { revision: wikiPage.revision }) }} · {{ t('wiki.updatedBy', { time: formatDateTime(wikiPage.page.updated_at), author: wikiPage.page.author || t('wiki.author.' + wikiPage.page.author_kind) }) }} · {{ t('wiki.author.' + wikiPage.page.author_kind) }} · {{ wikiPage.page.indexed ? t('wiki.indexed') : t('wiki.unindexed') }}<span v-for="tag in wikiPage.page.tags" :key="tag" class="stash-wiki-tag">{{ tag }}</span></p></div>
+                <div class="stash-llm-actions"><button type="button" class="stash-button" @click="navigate('wiki')">{{ t('action.backToList') }}</button><button type="button" class="stash-button" @click="toggleWikiHistory">{{ t('wiki.history') }}</button><button type="button" class="stash-button is-primary" :disabled="wikiBusy || wikiPage.revision !== wikiPage.page.revision" @click="editWikiPage">{{ t('wiki.edit') }}</button><button type="button" class="stash-button is-danger" :disabled="wikiBusy" @click="deleteWikiPage">{{ t('wiki.delete') }}</button></div>
+              </header>
+              <p v-if="wikiPage.revision !== wikiPage.page.revision" class="stash-context-note">{{ t('wiki.viewingRevision', { revision: wikiPage.revision, current: wikiPage.page.revision }) }} <button type="button" class="stash-button" @click="openWikiPage(wikiPage.page.slug)">{{ t('wiki.current') }}</button></p>
+              <p v-if="wikiNotice" class="stash-wiki-notice" role="status">{{ t(wikiNotice) }}</p>
+              <p v-if="wikiError" class="stash-error" role="alert">{{ t(wikiError) }}</p>
+              <div class="stash-wiki-page-grid">
+                <div class="stash-wiki-article" @click="wikiArticleClick" v-html="wikiRendered"></div>
+                <aside class="stash-wiki-aside">
+                  <section v-if="wikiHistoryOpen" :aria-label="t('wiki.history')"><h4>{{ t('wiki.history') }}</h4><p v-if="!wikiHistory.length">{{ t('wiki.historyEmpty') }}</p><ul v-else class="stash-wiki-history"><li v-for="revision in wikiHistory" :key="revision.id"><button type="button" class="stash-wiki-linkbutton" :class="{ 'is-active': revision.revision === wikiPage.revision }" @click="openWikiPage(wikiPage.page.slug, { revision: revision.revision })">{{ t('wiki.revision', { revision: revision.revision }) }}</button><span>{{ formatDateTime(revision.created_at) }} · {{ revision.author || t('wiki.author.' + revision.author_kind) }}</span><small v-if="revision.change_note">{{ revision.change_note }}</small></li></ul></section>
+                  <section :aria-label="t('wiki.sources')"><h4>{{ t('wiki.sources') }}</h4><p v-if="!wikiPage.sources.length">{{ t('wiki.noSources') }}</p><ul v-else class="stash-wiki-sources"><li v-for="source in wikiPage.sources" :key="source.source_type + ':' + source.source_ref" :id="'source-' + source.source_type + ':' + source.source_ref" :class="{ 'is-focused': wikiFocusedSource === source.source_type + ':' + source.source_ref }"><div><code>{{ source.source_type }}:{{ source.source_ref }}</code><span class="stash-wiki-source-status" :data-status="source.status">{{ t('wiki.source.' + (source.status || 'ok')) }}</span></div><small v-if="source.excerpt">{{ source.excerpt }}</small><small v-if="source.note">{{ source.note }}</small></li></ul></section>
+                  <section v-if="wikiPage.links.length" :aria-label="t('wiki.links')"><h4>{{ t('wiki.links') }}</h4><ul class="stash-wiki-linklist"><li v-for="link in wikiPage.links" :key="link.target_slug"><button type="button" class="stash-wiki-linkbutton" @click="openWikiPage(link.target_slug)">{{ link.target_title || link.target_slug }}</button><small v-if="!link.target_page_id">{{ t('wiki.missingTarget') }}</small></li></ul></section>
+                  <section v-if="wikiPage.backlinks.length" :aria-label="t('wiki.backlinks')"><h4>{{ t('wiki.backlinks') }}</h4><ul class="stash-wiki-linklist"><li v-for="link in wikiPage.backlinks" :key="link.page_id"><button type="button" class="stash-wiki-linkbutton" @click="openWikiPage(link.target_slug)">{{ link.target_title || link.target_slug }}</button></li></ul></section>
+                </aside>
+              </div>
+            </article>
           </template>
 
           <template v-else-if="route.route === 'graph'">

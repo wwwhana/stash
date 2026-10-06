@@ -258,6 +258,30 @@ Stash는 AI 에이전트와 현실 세계 사이의 인지적 계층(Cognitive l
 
 9단계의 기억 통합(Consolidation) 파이프라인이 원시 관측 데이터를 팩트, 관계, 인과 고리(Causal links), 패턴, 모순(Contradictions), 목표 추적(Goal tracking), 실패 패턴(Failure patterns), 가설 검증(Hypothesis verification)과 같은 구조화된 지식으로 변환합니다. 각 단계는 마지막 실행 이후의 새로운 데이터만을 처리합니다.
 
+## 위키: 사람이 읽는 층
+
+기억은 원재료입니다. episode는 일어난 일, fact는 통합이 내린 결론입니다. 위키는
+프로젝트가 지금 믿고 있는 내용을 마크다운 페이지로 적어 둔 것이고, 각 페이지는
+근거가 된 기억과 작업을 인용합니다. 사람은 콘솔(`/ui/wiki`, 기본 화면)에서 읽고,
+에이전트는 MCP로 읽고 쓰며, `stash wiki export`로 네임스페이스 하나를 `.md` 폴더로
+내보낼 수 있습니다.
+
+- 페이지는 네임스페이스별로 `ops/deploys`, `decisions/postgres-16` 같은 `slug`,
+  종류(article, index, entity, decision, log), 태그, 전체 수정 이력을 가집니다.
+- `[[slug]]`로 페이지를 연결하고 `[@fact:12]`, `[@episode:3]`, `[@work:W-000123]`로
+  근거를 인용합니다. 인용은 읽을 때마다 다시 확인되므로 근거가 바뀌거나 대체·삭제되면
+  페이지에 표시되고, `wiki_lint`가 그런 페이지를 stale로 표시합니다.
+- 검색은 모델 없이 trigram으로 동작하고, 임베딩 제공자가 있으면 벡터가 더해집니다.
+  `recall`은 기본적으로 episode·fact와 함께 페이지도 돌려줍니다.
+- 누가 쓸지는 선택입니다. 에이전트는 `wiki_write`(번들 `stash-wiki` 스킬이 시점을
+  안내), 사람은 콘솔의 미리보기 편집기, 서버는 `wiki` 기능에 모델이 지정되어 있을 때
+  `wiki_compile`로 인용이 달린 초안을 씁니다.
+
+MCP 도구: `wiki_search`, `wiki_read`, `wiki_list`, `wiki_write`, `wiki_delete`,
+`wiki_history`, `wiki_log`, `wiki_lint`, `wiki_compile`. CLI: `stash wiki
+list|read|write|delete|history|lint|log|export|compile`. 자세한 내용은
+[docs/WIKI.md](docs/WIKI.md)를 참고하세요.
+
 ## 공통 작업 지도와 선택형 연결 기능
 
 작업 카드는 기억 데이터와 분리해 저장하고 목표·작업·의존성·연결 자료·작업 기록을 한 그래프로 묶습니다. 프로젝트마다 공통 최상위 목표 하나를 정하고 A-1·A-2와 더 작은 결과로 나눌 수 있습니다. 목표 지도는 기억과 외부 자료가 각 작업을 거쳐 공통 목표로 모이는 흐름, 진행률, 작업 중인 에이전트, 막힌 지점, 다음 행동, 최근 결과를 함께 보여줍니다. Jira, Confluence, Git, 브라우저, 문서, API, 데이터, 장치도 필요한 작업에만 연결할 수 있습니다.

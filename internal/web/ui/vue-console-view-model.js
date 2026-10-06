@@ -117,6 +117,8 @@
                     detailLoading: false, detailError: '', detailGeneration: 0,
                     maintenance: null, maintenanceAction: false, maintenanceNotice: '',
                     llm: null, llmBusy: false, llmNotice: '', llmError: '', llmProviderForm: null, llmProbe: {}, llmAssignmentForms: {},
+                    wikiPages: [], wikiLog: [], wikiLint: null, wikiPage: null, wikiRendered: '', wikiHistory: [], wikiHistoryOpen: false, wikiEdit: null, wikiBusy: false, wikiCompiling: false, wikiNotice: '', wikiError: '', wikiFocusedSource: '',
+                    wikiFilters: { kind: route.kind, tag: route.tag, stale: route.stale }, wikiKinds: ['article', 'index', 'entity', 'decision', 'log'],
                     copyStatus: 'action.copyGuide',
                     mapLoaded: false,
                     fitMap: true,
@@ -168,7 +170,7 @@
                 },
                 needsLogin() { return this.canLogin && !this.auth.authenticated; },
                 hasFilters() { return Object.values(this.filters).some(Boolean) || Object.values(this.kindFilters).some(value => !value); },
-                pageTitle() { return routeAPI.routeTitle(this.route.route, this.locale); },
+                pageTitle() { if (this.route.route === 'wiki_page') { if (this.wikiEdit) return this.wikiEdit.isNew ? this.t('wiki.newPage') : this.wikiEdit.title; if (this.wikiPage) return this.wikiPage.page.title; } return routeAPI.routeTitle(this.route.route, this.locale); },
                 rootOptions() {
                     const values = [{ slug: '/', label: this.t('workspace.default') }];
                     for (const item of this.namespaces) {
@@ -470,6 +472,131 @@
                     if (!window.confirm(this.t('llm.importConfirm'))) return;
                     if (await this.llmRequest('/admin/llm/import-environment', { method: 'POST' }, 'llm.imported')) await this.reloadLLM();
                 },
+                // Wiki pages: the readable layer. Content is read in windows and
+                // stitched locally so the reader always sees the whole page.
+                wikiTool(tool, args) { return api.invokeTool(tool, { namespace: this.rootSlug || '/', ...args }); },
+                async fetchWikiPage(slug, revision) {
+                    let content = ''; let offset = 0; let snapshot = ''; let document = null;
+                    for (let guard = 0; guard < 64; guard++) {
+                        const window = unwrap(await this.wikiTool('wiki_read', { slug, revision: revision || 0, offset, limit: 20000, snapshot }));
+                        document = window; content += window.content || ''; snapshot = window.snapshot || ''; offset = number(window.next_offset);
+                        if (!window.has_more) break;
+                    }
+                    if (!document) throw new Error('wiki_read returned nothing');
+                    return { page: document.page, revision: number(document.revision), content, links: arrayOf(document.links), backlinks: arrayOf(document.backlinks), sources: arrayOf(document.sources) };
+                },
+                async loadWikiHome(route, filters, generation) {
+                    const args = { q: filters.query, limit: 101, offset: route.offset };
+                    if (this.wikiFilters.kind) args.kind = this.wikiFilters.kind;
+                    if (this.wikiFilters.tag) args.tag = this.wikiFilters.tag;
+                    if (this.wikiFilters.stale) args.stale = true;
+                    const value = unwrap(await this.wikiTool('wiki_list', args));
+                    const page = api.pageSlice(value, 100, route.offset);
+                    let log = [];
+                    try { log = arrayOf(unwrap(await this.wikiTool('wiki_log', { limit: 20 }))); } catch (_) { /* the log is optional */ }
+                    if (generation !== this.loadGeneration) return null;
+                    this.wikiPages = route.offset && this.wikiPages.length ? [...this.wikiPages, ...page.items] : page.items;
+                    this.wikiLog = log; this.wikiPage = null; this.wikiEdit = null;
+                    return page;
+                },
+                async loadWikiPage(route, generation) {
+                    if (!route.slug) {
+                        if (generation === this.loadGeneration) { this.wikiPage = null; this.startWikiEdit(null); }
+                        return;
+                    }
+                    const document = await this.fetchWikiPage(route.slug, route.revision);
+                    if (generation !== this.loadGeneration) return;
+                    this.wikiPage = document; this.wikiRendered = this.renderWikiMarkdown(document.content); this.wikiHistory = []; this.wikiHistoryOpen = false; this.wikiFocusedSource = '';
+                    this.wikiEdit = route.edit && document.revision === document.page.revision ? this.editorFrom(document) : null;
+                },
+                renderWikiMarkdown(content) {
+                    const runtime = root.StashVueRuntime || {};
+                    if (!runtime.marked || !runtime.DOMPurify) return '';
+                    const namespace = this.rootSlug || '/';
+                    const prepared = String(content || '')
+                        .replace(/\[@(episode|fact|hypothesis|failure|goal|work|page|url):([^\]\s]+)\]/g, (_, kind, ref) => `<a class="stash-wiki-cite" href="#source-${kind}:${ref}" data-source="${kind}:${ref}">${kind}:${ref}</a>`)
+                        .replace(/\[\[([^\[\]|]+)(?:\|([^\[\]]*))?\]\]/g, (_, slug, label) => {
+                            const target = slug.trim().toLowerCase().replace(/^\/+|\/+$/g, '');
+                            return `[${(label || slug).trim()}](${routeAPI.buildRoute('wiki_page', { namespace, slug: target })})`;
+                        });
+                    const html = runtime.marked.parse(prepared, { gfm: true, async: false });
+                    return runtime.DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
+                },
+                wikiArticleClick(event) {
+                    const anchor = event.target && event.target.closest ? event.target.closest('a') : null;
+                    if (!anchor) return;
+                    const source = anchor.getAttribute('data-source');
+                    if (source) { event.preventDefault(); this.wikiFocusedSource = source; const target = document.getElementById('source-' + source); if (target && target.scrollIntoView) target.scrollIntoView({ block: 'nearest' }); return; }
+                    const href = anchor.getAttribute('href') || '';
+                    if (href.startsWith('/ui/wiki/page')) { event.preventDefault(); const route = routeAPI.readRoute(href); this.openWikiPage(route.slug); return; }
+                    if (/^https?:/i.test(href)) { anchor.setAttribute('target', '_blank'); anchor.setAttribute('rel', 'noopener'); }
+                },
+                async openWikiPage(slug, options = {}) {
+                    this.route = routeAPI.readRoute(routeAPI.buildRoute('wiki_page', { namespace: this.rootSlug, slug, revision: options.revision || 0, edit: !!options.edit }));
+                    this.wikiNotice = ''; this.wikiError = '';
+                    this.syncURL(true);
+                    await this.loadRoute();
+                },
+                editorFrom(document) {
+                    const page = document ? document.page : null;
+                    return {
+                        isNew: !page, slug: page ? page.slug : '', title: page ? page.title : '', kind: page ? page.kind : 'article', summary: page ? page.summary : '',
+                        tags: page ? page.tags.join(', ') : '', content: document ? document.content : '', changeNote: '', expectedRevision: page ? page.revision : 0
+                    };
+                },
+                startWikiEdit(document) { this.wikiEdit = this.editorFrom(document); this.wikiNotice = ''; this.wikiError = ''; },
+                newWikiPage() { this.route = routeAPI.readRoute(routeAPI.buildRoute('wiki_page', { namespace: this.rootSlug, slug: '', edit: true })); this.wikiPage = null; this.startWikiEdit(null); this.syncURL(true); },
+                editWikiPage() { if (!this.wikiPage) return; this.startWikiEdit(this.wikiPage); this.route = { ...this.route, edit: true }; this.syncURL(); },
+                cancelWikiEdit() { const slug = this.wikiEdit && this.wikiEdit.slug; this.wikiEdit = null; if (this.wikiPage) { this.route = { ...this.route, edit: false }; this.syncURL(); } else if (slug) this.openWikiPage(slug); else this.navigate('wiki'); },
+                async saveWikiPage() {
+                    const form = this.wikiEdit; if (!form) return;
+                    if (!text(form.title) || !text(form.content)) { this.wikiError = 'wiki.titleRequired'; return; }
+                    this.wikiBusy = true; this.wikiError = ''; this.wikiNotice = '';
+                    try {
+                        const args = { slug: text(form.slug), title: text(form.title), content: form.content, summary: text(form.summary), kind: form.kind, tags: form.tags, change_note: text(form.changeNote), expected_revision: form.isNew ? 0 : number(form.expectedRevision), author: this.auth.user || 'console', author_kind: 'human' };
+                        const result = unwrap(await this.wikiTool('wiki_write', args));
+                        if (result && result.error) throw new Error(result.error);
+                        this.wikiEdit = null; this.wikiNotice = 'wiki.saved';
+                        await this.openWikiPage(args.slug);
+                        this.wikiNotice = 'wiki.saved';
+                    } catch (error) {
+                        this.wikiError = /revision/i.test(error.message || '') ? 'wiki.conflict' : { key: 'wiki.failed', params: { message: error.message || String(error) } };
+                    } finally { this.wikiBusy = false; }
+                },
+                async deleteWikiPage() {
+                    if (!this.wikiPage || !window.confirm(this.t('wiki.deleteConfirm', { title: this.wikiPage.page.title }))) return;
+                    this.wikiBusy = true; this.wikiError = '';
+                    try { unwrap(await this.wikiTool('wiki_delete', { slug: this.wikiPage.page.slug, author: this.auth.user || 'console', author_kind: 'human' })); this.wikiNotice = 'wiki.deleted'; await this.navigate('wiki'); this.wikiNotice = 'wiki.deleted'; }
+                    catch (error) { this.wikiError = { key: 'wiki.failed', params: { message: error.message || String(error) } }; }
+                    finally { this.wikiBusy = false; }
+                },
+                async toggleWikiHistory() {
+                    this.wikiHistoryOpen = !this.wikiHistoryOpen;
+                    if (!this.wikiHistoryOpen || this.wikiHistory.length || !this.wikiPage) return;
+                    try { this.wikiHistory = arrayOf(unwrap(await this.wikiTool('wiki_history', { slug: this.wikiPage.page.slug, limit: 50 }))); }
+                    catch (error) { this.wikiError = { key: 'wiki.failed', params: { message: error.message || String(error) } }; }
+                },
+                async lintWiki() {
+                    this.wikiBusy = true; this.wikiError = '';
+                    try { this.wikiLint = unwrap(await this.wikiTool('wiki_lint', { author: this.auth.user || 'console' })); this.wikiLint.findings = arrayOf(this.wikiLint.findings); }
+                    catch (error) { this.wikiError = { key: 'wiki.failed', params: { message: error.message || String(error) } }; }
+                    finally { this.wikiBusy = false; }
+                },
+                async compileWikiDraft() {
+                    const form = this.wikiEdit; if (!form || !text(form.slug)) { this.wikiError = 'wiki.titleRequired'; return; }
+                    this.wikiBusy = true; this.wikiCompiling = true; this.wikiError = ''; this.wikiNotice = '';
+                    try {
+                        const result = unwrap(await this.wikiTool('wiki_compile', { slug: text(form.slug), title: text(form.title), topic: text(form.title) || text(form.slug), save: false }));
+                        if (result && result.error) throw new Error(result.error);
+                        const draft = result.draft || {};
+                        form.title = draft.title || form.title; form.summary = draft.summary || form.summary; form.content = draft.content || form.content;
+                        if (Array.isArray(draft.tags) && draft.tags.length) form.tags = draft.tags.join(', ');
+                        form.changeNote = form.changeNote || ('draft by ' + (result.model || 'model'));
+                        this.wikiNotice = 'wiki.compiled';
+                    } catch (error) { this.wikiError = { key: 'wiki.failed', params: { message: error.message || String(error) } }; }
+                    finally { this.wikiBusy = false; this.wikiCompiling = false; }
+                },
+                searchWiki() { this.route.offset = 0; this.syncURL(); this.loadRoute(); },
                 async runMaintenance(action) {
                     if (this.maintenanceAction || !this.maintenance || !['retry', 'reindex'].includes(action)) return;
                     if (action === 'reindex' && !window.confirm(this.t('maintenance.confirm'))) return;
@@ -537,7 +664,7 @@
                 navHref(route) { return routeAPI.buildRoute(route, { project: isProject(this.rootSlug) ? this.rootSlug : '', namespace: this.rootSlug }); },
                 issueHref(item) { return routeAPI.buildRoute('board', { project: isProject(this.rootSlug) ? this.rootSlug : '', namespace: this.rootSlug, issueID: number(item && item.id), focus: `work:${number(item && item.id)}`, detail: false }); },
                 routeState() {
-                    return { project: isProject(this.rootSlug) ? this.rootSlug : '', namespace: this.rootSlug, query: this.filters.query, status: this.filters.status, agent: this.filters.agent, memoryType: this.filters.memoryType, issueType: this.filters.issueType, label: this.filters.label, kinds: this.kindFilters, relations: this.relations, focus: this.selected ? this.selected.key : this.route.focus, issueID: this.selected && this.selected.kind === 'work' ? number(this.selected.item.id) : this.route.issueID, detail: this.route.detail, offset: this.route.offset };
+                    return { project: isProject(this.rootSlug) ? this.rootSlug : '', namespace: this.rootSlug, slug: this.route.slug, revision: this.route.revision, edit: this.route.edit, kind: this.wikiFilters.kind, tag: this.wikiFilters.tag, stale: this.wikiFilters.stale, query: this.filters.query, status: this.filters.status, agent: this.filters.agent, memoryType: this.filters.memoryType, issueType: this.filters.issueType, label: this.filters.label, kinds: this.kindFilters, relations: this.relations, focus: this.selected ? this.selected.key : this.route.focus, issueID: this.selected && this.selected.kind === 'work' ? number(this.selected.item.id) : this.route.issueID, detail: this.route.detail, offset: this.route.offset };
                 },
                 syncURL(push = false) {
                     const href = routeAPI.buildRoute(this.route.route, this.routeState());
@@ -547,6 +674,7 @@
                     document.title = this.pageTitle + ' · Stash';
                 },
                 syncFiltersFromRoute() {
+                    this.wikiFilters = { kind: this.route.kind, tag: this.route.tag, stale: this.route.stale };
                     this.filters.query = this.route.query; this.filters.status = this.route.status; this.filters.agent = this.route.agent; this.filters.memoryType = this.route.memoryType; this.filters.issueType = this.route.issueType; this.filters.label = this.route.label; this.kindFilters = { ...this.route.kinds }; this.relations = { ...this.route.relations };
                 },
                 async navigate(route) {
@@ -664,8 +792,8 @@
                     } catch (error) { this.error = i18n.errorMessage(error, 'error.page'); }
                     finally { this.authLoading = false; }
                 },
-                async searchList() { this.route.offset = 0; this.clearSelection(); await this.loadRoute(); },
-                async nextPage() { this.route.offset = this.page.nextOffset; this.clearSelection(); await this.loadRoute(true); },
+                async searchList() { this.route.offset = 0; if (this.route.route === 'wiki') { this.syncURL(); return this.loadRoute(); } this.clearSelection(); await this.loadRoute(); },
+                async nextPage() { this.route.offset = this.page.nextOffset; if (this.route.route === 'wiki') return this.loadRoute(true); this.clearSelection(); await this.loadRoute(true); },
                 async loadRoute(append = false, background = false) {
                     if (this.needsLogin) return;
                     const generation = ++this.loadGeneration;
@@ -679,7 +807,12 @@
                             try { map = await this.fetchGoalMap(namespace, generation); mapLoaded = true; }
                             catch (error) { if (background || mapRoute || error.status === 401) throw error; contextError = 'error.context'; }
                         }
-                        if (route.route === 'maintenance') {
+                        if (route.route === 'wiki') {
+                            const wikiPage = await this.loadWikiHome(route, filters, generation);
+                            if (wikiPage) page = wikiPage;
+                        } else if (route.route === 'wiki_page') {
+                            await this.loadWikiPage(route, generation);
+                        } else if (route.route === 'maintenance') {
                             const maintenance = await api.adminRequest('/admin/maintenance/embeddings');
                             if (generation === this.loadGeneration) this.maintenance = maintenance;
                         } else if (route.route === 'llm') {

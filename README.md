@@ -276,6 +276,34 @@ Stash is a cognitive layer between your AI agent and the world. Episodes become 
 
 A 9-stage consolidation pipeline turns raw observations into structured knowledge — facts, relationships, causal links, patterns, contradictions, goal tracking, failure patterns, and hypothesis verification. Each stage only processes new data since the last run.
 
+## Wiki: the readable layer
+
+Memory is raw: episodes are what happened and facts are what consolidation
+concluded. The wiki is what the project currently believes, written down as
+Markdown pages that cite the memory and work they were built from. People read
+it in the console (`/ui/wiki`, the default page), agents read and write it over
+MCP, and `stash wiki export` turns a namespace into a folder of `.md` files.
+
+- Pages live per namespace with a `slug` such as `ops/deploys` or
+  `decisions/postgres-16`, a kind (article, index, entity, decision, log),
+  tags, and a full revision history.
+- `[[slug]]` links pages; `[@fact:12]`, `[@episode:3]`, and `[@work:W-000123]`
+  cite evidence. Citations are resolved on every read, so a page shows when its
+  evidence changed, was superseded, or was deleted, and `wiki_lint` marks such
+  pages stale.
+- Search works without any model through trigram matching; vectors are added
+  when an embedding provider exists. `recall` returns pages next to episodes
+  and facts by default.
+- Who writes is a choice: agents use `wiki_write` (the bundled `stash-wiki`
+  skill says when), people edit in the console with a live preview, and
+  `wiki_compile` lets the server's reasoner draft a cited page from memory
+  when a model is assigned to the `wiki` feature.
+
+MCP tools: `wiki_search`, `wiki_read`, `wiki_list`, `wiki_write`, `wiki_delete`,
+`wiki_history`, `wiki_log`, `wiki_lint`, `wiki_compile`. CLI: `stash wiki
+list|read|write|delete|history|lint|log|export|compile`. See
+[docs/WIKI.md](docs/WIKI.md).
+
 ## Shared Work Map and Optional Connectors
 
 Work cards live separately from memory data and connect goals, tasks, dependencies, resources, and activity events in one graph. A project can select one shared top-level goal, decompose it into A-1, A-2, and deeper outcomes, and show memory and external resources flowing through work into that shared outcome. The Goal Map shows progress, active agents, blockers, next actions, recent results, and the Jira, Confluence, Git, browser, document, API, data, or device references attached to each item.

@@ -154,3 +154,16 @@ func (r routedReasoner) ModelName() string {
 	}
 	return ""
 }
+
+// DraftWikiPage implements reasoner.WikiAuthor over the wiki route.
+func (r routedReasoner) DraftWikiPage(ctx context.Context, request reasoner.WikiDraftRequest) (*reasoner.WikiDraft, error) {
+	inner, err := r.for_(FeatureWiki)
+	if err != nil {
+		return nil, err
+	}
+	author, ok := inner.(reasoner.WikiAuthor)
+	if !ok {
+		return nil, unavailable(reasoner.ErrUnavailable, FeatureWiki, nil)
+	}
+	return author.DraftWikiPage(ctx, request)
+}

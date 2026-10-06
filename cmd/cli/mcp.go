@@ -261,6 +261,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		mcp.WithNumber("limit", mcp.Description(render("limit_param")), mcp.DefaultNumber(10)),
 		mcp.WithNumber("offset", mcp.Description(render("pagination_offset")), mcp.DefaultNumber(0)),
 		mcp.WithNumber("min_score", mcp.Description(render("recall_min_score")), mcp.DefaultNumber(0)),
+		mcp.WithBoolean("include_pages", mcp.Description(render("recall_include_pages")), mcp.DefaultBool(true)),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		query := request.GetString("query", "")
 		limit := request.GetInt("limit", 10)
@@ -272,8 +273,9 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 		}
 
 		results, err := bc.Brain.RecallWithOptions(ctx, namespaces, query, limit, brain.RecallOptions{
-			MinScore: float32(request.GetFloat("min_score", 0)),
-			Offset:   offset,
+			MinScore:     float32(request.GetFloat("min_score", 0)),
+			Offset:       offset,
+			IncludePages: request.GetBool("include_pages", true),
 		})
 		if err != nil {
 			return nil, err
@@ -1075,6 +1077,7 @@ func newMCPServer(bc *bootstrap.Context) *server.MCPServer {
 	registerWorkExecutionTools(mcpServer, bc)
 	registerProjectCoordinationTools(mcpServer, bc)
 	registerWorkspaceTools(mcpServer, bc)
+	registerWikiTools(mcpServer, bc)
 	registerStashSkills(mcpServer)
 	return mcpServer
 }

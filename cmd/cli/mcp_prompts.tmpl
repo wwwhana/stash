@@ -8,6 +8,8 @@ Use the tracked-work tools only for an existing Stash work item or when the user
 When remember returns indexed=false, the original text is already safe and will be indexed automatically; do not submit a duplicate. Paginated responses may return items, has_more, and next_offset; continue with offset=next_offset. If Stash fails twice, tell the user memory is unavailable instead of pretending it worked.
 
 If a tracked attempt ends through finish_work, handoff_work, or lease expiry without a linked memory, Stash keeps one bounded result automatically and queues its indexing.
+
+The wiki (wiki_* tools) is the readable layer over memory. Search it before answering a project question, prefer a page result over raw episodes, write or update a page after a durable result with [[slug]] links and [@fact:12]-style citations, and lint it after a batch of writes. recall includes pages by default; the wiki works without an embedding provider.
 {{end}}
 
 {{define "server_instructions"}}
@@ -17,7 +19,7 @@ Do not call Stash merely because a session started. Call `init` only for first-t
 
 Do not call Stash after each shell command or file edit during uninterrupted work. Use `checkpoint_work` only before interruption, lease risk, or a partial result another agent must resume. Use one `submit_work_evidence` call for all condition IDs supported by the same observation. Pass the successfully proved pending IDs as `finish_work.passed_condition_ids`; `finish_work` accepts those evidence-backed conditions and saves one bounded final result in the same call. `remember_work` remains for a distinct durable decision, correction, failure, or lesson. Call `handoff_work` only when work remains unfinished.
 
-For memory-only work, use `recall` before history-dependent decisions and `remember` for durable observations. Treat capabilities as routing hints, never as authorization. Keep lease tokens, action keys, credentials, and secrets out of memory, evidence, comments, and logs. Follow `next_offset` or `next_query` for paginated results, and reuse an action key only to retry the exact same uncertain mutation.
+For memory-only work, use `recall` before history-dependent decisions and `remember` for durable observations. For project knowledge, read the wiki (`wiki_search`, `wiki_read`) before answering and update it (`wiki_write` with `expected_revision`, citing [@fact:id]/[@work:key]) after `finish_work` or a decision. Treat capabilities as routing hints, never as authorization. Keep lease tokens, action keys, credentials, and secrets out of memory, evidence, comments, and logs. Follow `next_offset` or `next_query` for paginated results, and reuse an action key only to retry the exact same uncertain mutation.
 {{end}}
 
 {{define "init_description"}}
@@ -284,4 +286,44 @@ Delete a failure record by ID.
 {{end}}
 {{define "delete_failure_id"}}
 Failure ID.
+{{end}}
+
+{{define "wiki_write_description"}}
+Create or update one wiki page in Markdown. Use after durable results: cite evidence with [@fact:12], [@episode:3], or [@work:W-000123] and link related pages with [[slug]]. On an update, pass the page's current revision as expected_revision; omitted tags, summary, and kind keep their stored values.
+{{end}}
+{{define "wiki_namespace"}}
+Exact namespace path that owns the wiki, such as /projects/myapp.
+{{end}}
+{{define "wiki_slug"}}
+Lowercase page path such as ops/deploys or decisions/postgres-16; segments use letters, numbers, hyphens, and underscores.
+{{end}}
+{{define "wiki_content"}}
+Full Markdown body. Start with a lead paragraph, use ## sections, [[slug]] links, and [@type:id] citations placed after the claims they support.
+{{end}}
+{{define "wiki_sources"}}
+Comma-separated extra evidence refs such as fact:12,episode:3,work:W-000123,page:index,url:https://example.com/doc; citations inside the content are recorded automatically.
+{{end}}
+{{define "wiki_expected_revision"}}
+Revision the page had when it was read. A different stored revision rejects the write so concurrent edits are not lost; 0 skips the check.
+{{end}}
+{{define "wiki_read_description"}}
+Read a wiki page with its links, backlinks, and resolved sources. Content comes in bounded windows: continue with offset=next_offset and the same snapshot while has_more is true.
+{{end}}
+{{define "wiki_list_description"}}
+List pages in a namespace with optional keyword, kind, tag, and stale filters. Content is omitted; read a page with wiki_read.
+{{end}}
+{{define "wiki_search_description"}}
+Search wiki pages by meaning and keyword across namespaces. Works without an embedding provider through trigram matching. Prefer a page over raw memory when both answer the question.
+{{end}}
+{{define "wiki_delete_description"}}
+Hide a wrong or obsolete page. History and the activity log are kept; restore=true brings it back.
+{{end}}
+{{define "wiki_lint_description"}}
+Check a namespace's wiki for broken [[links]], orphan pages, stale or missing cited evidence, thin pages, and a missing index page. Marks pages stale when their evidence changed.
+{{end}}
+{{define "wiki_compile_description"}}
+Ask the server's wiki model to draft or refresh a page from memory with citations. Needs a reasoning provider assigned to the wiki feature. Returns the draft; save=true stores it as a server-authored page.
+{{end}}
+{{define "recall_include_pages"}}
+Include wiki pages as results (default true). A page result has slug and title; it is the compiled answer and should usually be preferred over raw episodes.
 {{end}}

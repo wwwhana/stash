@@ -41,6 +41,36 @@ type EmbeddingRetryResult struct {
 	Error string `json:"error,omitempty"`
 }
 
+// embeddingTables lists every table the retry worker indexes. Each one has
+// the same embedding_* columns and a text expression to embed.
+var embeddingTables = []string{"episodes", "facts", "wiki_pages"}
+
+func isEmbeddingTable(table string) bool {
+	for _, candidate := range embeddingTables {
+		if candidate == table {
+			return true
+		}
+	}
+	return false
+}
+
+// embeddingTextExpr is the SQL expression embedded for a table's rows. Wiki
+// pages embed their title with the body (see wikiEmbeddingText).
+func embeddingTextExpr(table string) string {
+	if table == "wiki_pages" {
+		return "title || E'\\n\\n' || content"
+	}
+	return "content"
+}
+
+// embeddingTextExprFor qualifies every column in embeddingTextExpr with alias.
+func embeddingTextExprFor(table, alias string) string {
+	if table == "wiki_pages" {
+		return alias + ".title || E'\\n\\n' || " + alias + ".content"
+	}
+	return alias + ".content"
+}
+
 // embeddingWrite carries the embedding columns for a new episode or fact.
 // A row is written whether or not a vector was obtained: a failed or
 // unavailable embedding is queued for the retry worker instead of blocking
@@ -103,8 +133,10 @@ type EmbeddingMaintenanceStatus struct {
 	ProviderAvailable bool   `json:"provider_available"`
 	EpisodesTotal     int64  `json:"episodes_total"`
 	FactsTotal        int64  `json:"facts_total"`
+	PagesTotal        int64  `json:"pages_total"`
 	EpisodesPending   int64  `json:"episodes_pending"`
 	FactsPending      int64  `json:"facts_pending"`
+	PagesPending      int64  `json:"pages_pending"`
 	Pending           int64  `json:"pending"`
 	Due               int64  `json:"due"`
 	Failed            int64  `json:"failed"`
@@ -141,7 +173,7 @@ func (b *Brain) EmbeddingMaintenanceStatus(ctx context.Context) (EmbeddingMainte
 		return EmbeddingMaintenanceStatus{}, err
 	}
 	status := EmbeddingMaintenanceStatus{Model: b.embedder.Model(), Dimensions: b.embedder.Dims(), ProviderAvailable: b.embeddingAvailable()}
-	for _, table := range []string{"episodes", "facts"} {
+	for _, table := range embeddingTables {
 		var total, pending, due, failed, paused int64
 		query := fmt.Sprintf(`
 			SELECT count(*) FILTER (WHERE deleted_at IS NULL),
@@ -165,10 +197,13 @@ func (b *Brain) EmbeddingMaintenanceStatus(ctx context.Context) (EmbeddingMainte
 		if err := b.pool.QueryRow(ctx, query).Scan(&total, &pending, &due, &failed, &paused); err != nil {
 			return status, fmt.Errorf("read %s embedding status: %w", table, err)
 		}
-		if table == "episodes" {
+		switch table {
+		case "episodes":
 			status.EpisodesTotal, status.EpisodesPending = total, pending
-		} else {
+		case "facts":
 			status.FactsTotal, status.FactsPending = total, pending
+		default:
+			status.PagesTotal, status.PagesPending = total, pending
 		}
 		status.Pending += pending
 		status.Due += due
@@ -176,18 +211,15 @@ func (b *Brain) EmbeddingMaintenanceStatus(ctx context.Context) (EmbeddingMainte
 		status.Paused += paused
 	}
 
+	errorSources := make([]string, 0, len(embeddingTables))
+	for _, table := range embeddingTables {
+		errorSources = append(errorSources, fmt.Sprintf(`SELECT embedding_last_error, embedding_updated_at FROM %s
+				WHERE embedding IS NULL AND deleted_at IS NULL AND embedding_attempts > 0 AND embedding_last_error IS NOT NULL`, table))
+	}
 	if err := b.pool.QueryRow(ctx, `
 		SELECT coalesce((
 			SELECT embedding_last_error
-			FROM (
-				SELECT embedding_last_error, embedding_updated_at
-				FROM episodes
-				WHERE embedding IS NULL AND deleted_at IS NULL AND embedding_attempts > 0 AND embedding_last_error IS NOT NULL
-				UNION ALL
-				SELECT embedding_last_error, embedding_updated_at
-				FROM facts
-				WHERE embedding IS NULL AND deleted_at IS NULL AND embedding_attempts > 0 AND embedding_last_error IS NOT NULL
-			) errors
+			FROM (`+strings.Join(errorSources, " UNION ALL ")+`) errors
 			ORDER BY embedding_updated_at DESC NULLS LAST
 			LIMIT 1
 		), '')
@@ -212,7 +244,7 @@ func (b *Brain) ForceRetryPendingEmbeddings(ctx context.Context) (int64, error) 
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var woken int64
-	for _, table := range []string{"episodes", "facts"} {
+	for _, table := range embeddingTables {
 		result, err := tx.Exec(ctx, fmt.Sprintf(`
 			UPDATE %s
 			SET embedding_retry_at = now(),
@@ -250,7 +282,7 @@ func (b *Brain) QueueEmbeddingReindex(ctx context.Context) (int64, error) {
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var queued int64
-	for _, table := range []string{"episodes", "facts"} {
+	for _, table := range embeddingTables {
 		result, err := tx.Exec(ctx, fmt.Sprintf(`
 			UPDATE %s
 			SET embedding = NULL,
@@ -313,11 +345,19 @@ func (b *Brain) RetryPendingEmbeddings(ctx context.Context, batchSize int) (Embe
 	// Reserve capacity for both queues, then give unused capacity to the queue
 	// that still has work. Alternate the first queue so odd batch sizes stay fair
 	// while the configured size remains a strict per-pass maximum.
-	tables := []string{"episodes", "facts"}
-	if b.embeddingRetryPass.Add(1)%2 == 0 {
-		tables[0], tables[1] = tables[1], tables[0]
+	// Rotate the starting table each pass so a batch smaller than the number
+	// of queues cannot permanently starve the last one.
+	shift := int(b.embeddingRetryPass.Add(1) % uint64(len(embeddingTables)))
+	tables := make([]string, 0, len(embeddingTables))
+	tables = append(tables, embeddingTables[shift:]...)
+	tables = append(tables, embeddingTables[:shift]...)
+	limits := make([]int, len(tables))
+	for i := range tables {
+		limits[i] = batchSize / len(tables)
+		if i < batchSize%len(tables) {
+			limits[i]++
+		}
 	}
-	limits := []int{(batchSize + 1) / 2, batchSize / 2}
 	claimed := make(map[string][]pendingEmbedding, len(tables))
 	claimedTotal := 0
 	for i, table := range tables {
@@ -416,11 +456,11 @@ func (b *Brain) RetryPendingEmbeddings(ctx context.Context, batchSize int) (Embe
 // as rows that are currently leased by a worker.
 func (b *Brain) PendingEmbeddingCount(ctx context.Context) (int64, error) {
 	var count int64
-	err := b.pool.QueryRow(ctx, `
-		SELECT
-			(SELECT count(*) FROM episodes WHERE embedding IS NULL AND deleted_at IS NULL) +
-			(SELECT count(*) FROM facts WHERE embedding IS NULL AND deleted_at IS NULL)
-	`).Scan(&count)
+	parts := make([]string, 0, len(embeddingTables))
+	for _, table := range embeddingTables {
+		parts = append(parts, fmt.Sprintf("(SELECT count(*) FROM %s WHERE embedding IS NULL AND deleted_at IS NULL)", table))
+	}
+	err := b.pool.QueryRow(ctx, "SELECT "+strings.Join(parts, " + ")).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("count pending embeddings: %w", err)
 	}
@@ -428,7 +468,7 @@ func (b *Brain) PendingEmbeddingCount(ctx context.Context) (int64, error) {
 }
 
 func (b *Brain) claimPendingEmbeddings(ctx context.Context, table string, limit int) ([]pendingEmbedding, error) {
-	if table != "episodes" && table != "facts" {
+	if !isEmbeddingTable(table) {
 		return nil, fmt.Errorf("unsupported embedding table %q", table)
 	}
 	leaseUntil := time.Now().UTC().Add(embeddingClaimLease)
@@ -452,8 +492,8 @@ func (b *Brain) claimPendingEmbeddings(ctx context.Context, table string, limit 
 			embedding_updated_at = now()
 		FROM candidates
 		WHERE target.id = candidates.id
-		RETURNING target.id, target.content, target.embedding_attempts
-	`, table, embeddingRetryMaxAttempts, table)
+		RETURNING target.id, %s, target.embedding_attempts
+	`, table, embeddingRetryMaxAttempts, table, embeddingTextExprFor(table, "target"))
 
 	rows, err := b.pool.Query(ctx, query, limit, leaseUntil)
 	if err != nil {
@@ -476,7 +516,7 @@ func (b *Brain) claimPendingEmbeddings(ctx context.Context, table string, limit 
 }
 
 func (b *Brain) finishEmbedding(ctx context.Context, table string, id int64, vec []float32) (bool, error) {
-	if table != "episodes" && table != "facts" {
+	if !isEmbeddingTable(table) {
 		return false, fmt.Errorf("unsupported embedding table %q", table)
 	}
 	query := fmt.Sprintf(`
@@ -497,7 +537,7 @@ func (b *Brain) finishEmbedding(ctx context.Context, table string, id int64, vec
 }
 
 func (b *Brain) recordEmbeddingFailure(ctx context.Context, table string, id int64, cause error, retryAt time.Time) error {
-	if table != "episodes" && table != "facts" {
+	if !isEmbeddingTable(table) {
 		return fmt.Errorf("unsupported embedding table %q", table)
 	}
 	query := fmt.Sprintf(`
