@@ -1162,7 +1162,7 @@ func serveMCPHTTP(ctx context.Context, bc *bootstrap.Context, options mcpHTTPOpt
 	defer cancel()
 
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
 	go func() {
 		defer wg.Done()
 		runEmbeddingRetryTicker(ctx, bc)
@@ -1170,6 +1170,10 @@ func serveMCPHTTP(ctx context.Context, bc *bootstrap.Context, options mcpHTTPOpt
 	go func() {
 		defer wg.Done()
 		runWorkspaceLifecycleTicker(ctx, bc)
+	}()
+	go func() {
+		defer wg.Done()
+		runLLMReloadTicker(ctx, bc)
 	}()
 
 	if options.Consolidation != nil {
@@ -1343,7 +1347,7 @@ func mcpExecuteCmd(ctx context.Context, cmd *cli.Command) error {
 	workerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
 	go func() {
 		defer wg.Done()
 		runEmbeddingRetryTicker(workerCtx, bc)
@@ -1351,6 +1355,10 @@ func mcpExecuteCmd(ctx context.Context, cmd *cli.Command) error {
 	go func() {
 		defer wg.Done()
 		runWorkspaceLifecycleTicker(workerCtx, bc)
+	}()
+	go func() {
+		defer wg.Done()
+		runLLMReloadTicker(workerCtx, bc)
 	}()
 
 	if consolidation != nil {
@@ -1455,6 +1463,26 @@ func runEmbeddingRetryTicker(ctx context.Context, bc *bootstrap.Context) {
 			run()
 		case <-wake:
 			run()
+		}
+	}
+}
+
+// runLLMReloadTicker picks up provider changes made by another process, such
+// as the CLI or a second replica. In-process admin changes reload directly.
+func runLLMReloadTicker(ctx context.Context, bc *bootstrap.Context) {
+	if bc == nil || bc.LLM == nil {
+		return
+	}
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if _, err := bc.LLM.ReloadIfChanged(ctx); err != nil && ctx.Err() == nil && bc.Logger != nil {
+				bc.Logger.Error("reload model routing", "error", err)
+			}
 		}
 	}
 }

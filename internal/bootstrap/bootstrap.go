@@ -12,9 +12,9 @@ import (
 	"github.com/alash3al/stash/internal/brain"
 	"github.com/alash3al/stash/internal/config"
 	"github.com/alash3al/stash/internal/db"
-	"github.com/alash3al/stash/internal/embedder"
+	"github.com/alash3al/stash/internal/llm"
 	"github.com/alash3al/stash/internal/queries"
-	"github.com/alash3al/stash/internal/reasoner"
+	"github.com/alash3al/stash/internal/secrets"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -25,9 +25,12 @@ type Context struct {
 	Brain  *brain.Brain
 	Pool   *pgxpool.Pool
 	Logger *slog.Logger
+	// LLM resolves each feature to a provider; LLMStore edits that mapping.
+	LLM      *llm.Router
+	LLMStore *llm.Store
 }
 
-// New initializes all services: database, embedder, reasoner, queries, brain.
+// New initializes all services: database, model routing, queries, brain.
 func New(ctx context.Context) (*Context, error) {
 	cfg, err := loadConfig()
 	if err != nil {
@@ -56,48 +59,40 @@ func New(ctx context.Context) (*Context, error) {
 		return nil, fmt.Errorf("initialize authentication: %w", err)
 	}
 
-	pool, embeddingReport, err := db.OpenWithReport(ctx, cfg.StoreDSN, cfg.EmbeddingModel, cfg.VectorDim)
+	pool, err := db.OpenPool(ctx, cfg.StoreDSN)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 	if authProvider != nil {
 		authProvider.SetTokenPool(pool)
 	}
-	if embeddingReport.DimensionChanged || embeddingReport.ModelChanged || embeddingReport.ReindexQueued > 0 {
-		logger.Warn("embedding reindex queued",
-			"dimension_changed", embeddingReport.DimensionChanged,
-			"model_changed", embeddingReport.ModelChanged,
-			"rows", embeddingReport.ReindexQueued,
-		)
-	}
 
-	emb, err := buildEmbedder(cfg, logger)
+	keyring, err := secrets.NewKeyring(cfg.SecretsKey, strings.Split(cfg.SecretsKeyPrevious, ",")...)
 	if err != nil {
 		pool.Close()
-		return nil, fmt.Errorf("build embedder: %w", err)
+		return nil, fmt.Errorf("load secrets key: %w", err)
+	}
+	if keyring == nil {
+		logger.Warn("STASH_SECRETS_KEY is not set; provider API keys cannot be stored in the database")
 	}
 
-	// Split oversized passages before the cache/API boundary. The cache still
-	// stores the final vector under the original full memory text.
-	limitedEmb := embedder.NewLimited(emb, cfg.EmbeddingContextTokens)
-	// Wrap embedder with pgx-backed cache
-	cachedEmb := embedder.NewCached(limitedEmb, pool)
-
-	reas, err := buildReasoner(cfg, logger)
-	if err != nil {
+	store := llm.NewStore(pool, keyring)
+	router := llm.NewRouter(pool, store, envProvider(cfg), llm.Options{
+		Logger:         logger,
+		EmbeddingCache: cfg.EmbeddingCache,
+		PrepareStorage: func(ctx context.Context, model string, dims int) (db.EmbeddingStorageReport, error) {
+			return db.PrepareEmbeddingStorage(ctx, pool, model, dims)
+		},
+	})
+	if err := router.Reload(ctx); err != nil {
 		pool.Close()
-		return nil, fmt.Errorf("build reasoner: %w", err)
+		return nil, fmt.Errorf("load model routing: %w", err)
 	}
-	// Keep model-sized batching at the reasoner boundary so every consolidation
-	// stage uses the same context rules.
-	limitedReasoner := reasoner.NewLimited(reas, cfg.ReasonerContextTokens, cfg.ReasonerReservedTokens)
-	reas = limitedReasoner
 	logger.Info("model input limits",
 		"reasoner_context_tokens", cfg.ReasonerContextTokens,
 		"reasoner_reserved_tokens", cfg.ReasonerReservedTokens,
-		"reasoner_input_bytes", limitedReasoner.MaxInputBytes(),
 		"embedding_context_tokens", cfg.EmbeddingContextTokens,
-		"embedding_input_bytes", limitedEmb.MaxInputBytes(),
+		"embedding_cache", cfg.EmbeddingCache,
 		"openai_request_timeout", cfg.OpenAIRequestTimeout,
 		"mcp_tool_timeout", cfg.MCPToolTimeout,
 	)
@@ -114,7 +109,7 @@ func New(ctx context.Context) (*Context, error) {
 		return nil, fmt.Errorf("parse consolidation window: %w", err)
 	}
 
-	br, err := brain.New(pool, cachedEmb, reas, q, brain.Config{
+	br, err := brain.New(pool, router.Embedder(), router.Reasoner(), q, brain.Config{
 		MaxResultSize:                  cfg.MaxResultSize,
 		BatchSize:                      cfg.ConsolidationBatchSize,
 		SimilarityThreshold:            cfg.ConsolidationSimilarityThreshold,
@@ -133,12 +128,34 @@ func New(ctx context.Context) (*Context, error) {
 	}
 
 	return &Context{
-		Config: cfg,
-		Auth:   authProvider,
-		Brain:  br,
-		Pool:   pool,
-		Logger: logger,
+		Config:   cfg,
+		Auth:     authProvider,
+		Brain:    br,
+		Pool:     pool,
+		Logger:   logger,
+		LLM:      router,
+		LLMStore: store,
 	}, nil
+}
+
+// envProvider turns the STASH_OPENAI_* variables into the fallback provider.
+// It is nil when no base URL is configured, which makes every feature depend
+// on database assignments alone.
+func envProvider(cfg *config.Config) *llm.EnvProvider {
+	if strings.TrimSpace(cfg.OpenAIBaseURL) == "" {
+		return nil
+	}
+	return &llm.EnvProvider{
+		BaseURL:                cfg.OpenAIBaseURL,
+		APIKey:                 cfg.OpenAIAPIKey,
+		RequestTimeout:         cfg.OpenAIRequestTimeout,
+		EmbeddingModel:         cfg.EmbeddingModel,
+		VectorDim:              cfg.VectorDim,
+		EmbeddingContextTokens: cfg.EmbeddingContextTokens,
+		ReasonerModel:          cfg.ReasonerModel,
+		ReasonerContextTokens:  cfg.ReasonerContextTokens,
+		ReasonerReservedTokens: cfg.ReasonerReservedTokens,
+	}
 }
 
 // Close releases all resources.
@@ -181,25 +198,4 @@ func buildLogger(cfg *config.Config) *slog.Logger {
 		return slog.New(slog.NewJSONHandler(os.Stdout, opts))
 	}
 	return slog.New(slog.NewTextHandler(os.Stdout, opts))
-}
-
-func buildEmbedder(cfg *config.Config, logger *slog.Logger) (embedder.Embedder, error) {
-	return embedder.NewOpenAIWithTimeoutAndLogger(
-		cfg.OpenAIBaseURL,
-		cfg.OpenAIAPIKey,
-		cfg.EmbeddingModel,
-		cfg.VectorDim,
-		cfg.OpenAIRequestTimeout,
-		logger,
-	)
-}
-
-func buildReasoner(cfg *config.Config, logger *slog.Logger) (reasoner.Reasoner, error) {
-	return reasoner.NewOpenAIWithTimeoutAndLogger(
-		cfg.OpenAIBaseURL,
-		cfg.OpenAIAPIKey,
-		cfg.ReasonerModel,
-		cfg.OpenAIRequestTimeout,
-		logger,
-	)
 }

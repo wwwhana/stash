@@ -24,6 +24,7 @@ func registerAdminRoutes(mux *http.ServeMux, bc *bootstrap.Context) {
 	mux.Handle("/admin/maintenance/embeddings/reindex", adminOnlyHTTP(bc, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		adminEmbeddingReindexHandler(bc, w, r)
 	})))
+	registerLLMAdminRoutes(mux, bc)
 }
 
 func adminOnlyHTTP(bc *bootstrap.Context, next http.Handler) http.Handler {
@@ -32,12 +33,19 @@ func adminOnlyHTTP(bc *bootstrap.Context, next http.Handler) http.Handler {
 			writeAdminError(w, http.StatusServiceUnavailable, "service is not initialized")
 			return
 		}
-		if strings.TrimSpace(bc.Config.AdminToken) == "" && strings.TrimSpace(bc.Config.AdminSubjects) == "" {
-			writeAdminError(w, http.StatusServiceUnavailable, "admin maintenance is not configured")
-			return
-		}
 		if err := adminRequestProtection.Check(r); err != nil {
 			writeAdminError(w, http.StatusForbidden, "cross-origin request denied")
+			return
+		}
+		if strings.TrimSpace(bc.Config.AdminToken) == "" && strings.TrimSpace(bc.Config.AdminSubjects) == "" {
+			// STASH_AUTH_MODE=none already trusts everyone who can reach the
+			// loopback listener with full memory access; the admin pages are
+			// the same trust level, so they open without a separate credential.
+			if unauthenticatedDeployment(bc) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			writeAdminError(w, http.StatusServiceUnavailable, "admin maintenance is not configured")
 			return
 		}
 
@@ -61,6 +69,19 @@ func adminOnlyHTTP(bc *bootstrap.Context, next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// unauthenticatedDeployment reports STASH_AUTH_MODE=none, where the server
+// refuses to listen beyond loopback and performs no HTTP authentication.
+func unauthenticatedDeployment(bc *bootstrap.Context) bool {
+	mode := ""
+	if bc.Config != nil {
+		mode = strings.ToLower(strings.TrimSpace(bc.Config.AuthMode))
+	}
+	if mode != "" && mode != "none" {
+		return false
+	}
+	return bc.Auth == nil || bc.Auth.Mode() == "none"
 }
 
 func adminTokenMatches(r *http.Request, expected string) bool {

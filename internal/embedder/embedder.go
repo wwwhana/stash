@@ -4,7 +4,12 @@ package embedder
 
 import (
 	"context"
+	"errors"
 )
+
+// ErrUnavailable is returned when no embedding provider is configured for
+// the server. Callers keep the raw memory and treat vectors as optional.
+var ErrUnavailable = errors.New("embedder: no embedding provider is available")
 
 // Embedder converts text into a fixed-dimension vector.
 // Implementations: OpenAI (production), Fake (tests).

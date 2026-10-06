@@ -245,6 +245,13 @@ func (b *Brain) RetryPendingEmbeddings(ctx context.Context, batchSize int) (Embe
 	if batchSize <= 0 {
 		return result, fmt.Errorf("embedding retry batch size must be greater than zero")
 	}
+	// Without a provider there is nothing to try. Leave the rows untouched so
+	// they are not counted as failed attempts or paused before a provider is
+	// assigned.
+	if probe, ok := b.embedder.(interface{ Available() bool }); ok && !probe.Available() {
+		result.Pending, _ = b.PendingEmbeddingCount(ctx)
+		return result, nil
+	}
 
 	// Reserve capacity for both queues, then give unused capacity to the queue
 	// that still has work. Alternate the first queue so odd batch sizes stay fair

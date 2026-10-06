@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/alash3al/stash/internal/secrets"
 	"github.com/caarlos0/env/v11"
 	"github.com/joho/godotenv"
 )
@@ -34,6 +35,16 @@ type Config struct {
 	ReasonerContextTokens  int `env:"STASH_REASONER_CONTEXT_TOKENS" envDefault:"0"`
 	ReasonerReservedTokens int `env:"STASH_REASONER_RESERVED_TOKENS" envDefault:"4096"`
 	EmbeddingContextTokens int `env:"STASH_EMBEDDING_CONTEXT_TOKENS" envDefault:"0"`
+
+	// EmbeddingCache keeps computed vectors in embedding_cache so identical
+	// text is not sent to the provider twice. It is an optimization only.
+	EmbeddingCache bool `env:"STASH_EMBEDDING_CACHE" envDefault:"true"`
+
+	// Secrets seal provider API keys stored in the database. The active key
+	// seals new values; previous keys (comma-separated) only open old ones so
+	// rotation never needs every credential re-entered at once.
+	SecretsKey         string `env:"STASH_SECRETS_KEY" envDefault:""`
+	SecretsKeyPrevious string `env:"STASH_SECRETS_KEY_PREVIOUS" envDefault:""`
 
 	// Memory
 	ContextTTL time.Duration `env:"STASH_CONTEXT_TTL,required"`
@@ -173,6 +184,19 @@ func (c *Config) Validate() error {
 	}
 	if c.VectorDim <= 0 {
 		return fmt.Errorf("STASH_VECTOR_DIM must be greater than zero")
+	}
+	if strings.TrimSpace(c.SecretsKey) != "" {
+		if _, err := secrets.ParseKey(c.SecretsKey); err != nil {
+			return fmt.Errorf("STASH_SECRETS_KEY must be 64 hexadecimal characters (openssl rand -hex 32)")
+		}
+	}
+	for _, previous := range strings.Split(c.SecretsKeyPrevious, ",") {
+		if strings.TrimSpace(previous) == "" {
+			continue
+		}
+		if _, err := secrets.ParseKey(previous); err != nil {
+			return fmt.Errorf("STASH_SECRETS_KEY_PREVIOUS entries must be 64 hexadecimal characters")
+		}
 	}
 	if c.MaxResultSize <= 0 {
 		return fmt.Errorf("STASH_MAX_RESULT_SIZE must be greater than zero")

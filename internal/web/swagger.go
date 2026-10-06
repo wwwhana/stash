@@ -16,7 +16,8 @@ const openAPISpec = `{
   "servers": [{"url": "/"}],
   "tags": [
     {"name": "MCP", "description": "Stash 도구 호출"},
-    {"name": "Service", "description": "상태와 운영 정보"}
+    {"name": "Service", "description": "상태와 운영 정보"},
+    {"name": "Admin", "description": "운영자 전용 설정. X-Stash-Admin-Token 또는 STASH_ADMIN_SUBJECTS 로그인 주체가 필요하며, STASH_AUTH_MODE=none에서는 열려 있습니다."}
   ],
   "paths": {
     "/mcp": {
@@ -208,6 +209,88 @@ const openAPISpec = `{
         }
       }
     },
+    "/admin/llm/status": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "모델 라우팅 상태",
+        "description": "기능별로 어떤 프로바이더와 모델이 쓰이는지, 등록된 프로바이더와 지정 목록을 돌려줍니다.",
+        "operationId": "adminLlmStatus",
+        "security": [{"adminToken": []}, {"bearerAuth": []}],
+        "responses": {
+          "200": {"description": "라우팅 상태", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/LlmStatus"}}}},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "503": {"description": "관리 기능이 설정되지 않음"}
+        }
+      }
+    },
+    "/admin/llm/providers": {
+      "get": {
+        "tags": ["Admin"], "summary": "프로바이더 목록", "operationId": "adminLlmListProviders",
+        "security": [{"adminToken": []}, {"bearerAuth": []}],
+        "responses": {"200": {"description": "프로바이더 목록", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/LlmProvider"}}}}}}
+      },
+      "post": {
+        "tags": ["Admin"], "summary": "프로바이더 등록",
+        "description": "OpenAI 호환 엔드포인트를 등록합니다. api_key는 STASH_SECRETS_KEY로 봉인되어 저장되며 다시 읽을 수 없습니다.",
+        "operationId": "adminLlmCreateProvider",
+        "security": [{"adminToken": []}, {"bearerAuth": []}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/LlmProviderInput"}}}},
+        "responses": {
+          "201": {"description": "등록된 프로바이더", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/LlmProvider"}}}},
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "409": {"description": "이름 중복"},
+          "412": {"description": "STASH_SECRETS_KEY가 없어 API 키를 저장할 수 없음"}
+        }
+      }
+    },
+    "/admin/llm/providers/{id}": {
+      "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer", "format": "int64"}}],
+      "put": {
+        "tags": ["Admin"], "summary": "프로바이더 수정", "description": "보낸 필드만 바뀝니다. api_key를 빈 문자열로 보내면 키를 지웁니다.",
+        "operationId": "adminLlmUpdateProvider",
+        "security": [{"adminToken": []}, {"bearerAuth": []}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/LlmProviderInput"}}}},
+        "responses": {"200": {"description": "수정된 프로바이더", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/LlmProvider"}}}}, "404": {"description": "프로바이더 없음"}}
+      },
+      "delete": {
+        "tags": ["Admin"], "summary": "프로바이더 삭제", "operationId": "adminLlmDeleteProvider",
+        "security": [{"adminToken": []}, {"bearerAuth": []}],
+        "responses": {"200": {"description": "삭제됨"}, "404": {"description": "프로바이더 없음"}, "409": {"description": "기능에 지정되어 있어 삭제할 수 없음"}}
+      }
+    },
+    "/admin/llm/probe": {
+      "post": {
+        "tags": ["Admin"], "summary": "연결 확인과 모델 목록",
+        "description": "엔드포인트의 /models를 호출해 연결·자격 증명을 확인하고 모델 ID를 돌려줍니다. provider_id를 주면 저장된 키를 사용합니다.",
+        "operationId": "adminLlmProbe",
+        "security": [{"adminToken": []}, {"bearerAuth": []}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "properties": {"provider_id": {"type": "integer", "format": "int64"}, "base_url": {"type": "string"}, "api_key": {"type": "string"}}}}}},
+        "responses": {"200": {"description": "확인 결과", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/LlmProbeResult"}}}}}
+      }
+    },
+    "/admin/llm/assignments/{feature}": {
+      "parameters": [{"name": "feature", "in": "path", "required": true, "schema": {"type": "string", "enum": ["embedding", "consolidation", "plan_validation", "wiki"]}}],
+      "put": {
+        "tags": ["Admin"], "summary": "기능에 프로바이더·모델 지정", "operationId": "adminLlmSetAssignment",
+        "security": [{"adminToken": []}, {"bearerAuth": []}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/LlmAssignmentInput"}}}},
+        "responses": {"200": {"description": "저장된 지정", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/LlmAssignment"}}}}, "400": {"$ref": "#/components/responses/BadRequest"}}
+      },
+      "delete": {
+        "tags": ["Admin"], "summary": "지정 해제", "description": "기능을 STASH_OPENAI_* 환경 프로바이더로 되돌립니다.", "operationId": "adminLlmClearAssignment",
+        "security": [{"adminToken": []}, {"bearerAuth": []}],
+        "responses": {"200": {"description": "해제됨"}}
+      }
+    },
+    "/admin/llm/import-environment": {
+      "post": {
+        "tags": ["Admin"], "summary": "환경 설정 가져오기",
+        "description": "STASH_OPENAI_* 설정을 'environment' 프로바이더로 저장하고, 다른 프로바이더가 지정되지 않은 기능을 그 프로바이더에 지정합니다.",
+        "operationId": "adminLlmImportEnvironment",
+        "security": [{"adminToken": []}, {"bearerAuth": []}],
+        "responses": {"200": {"description": "가져온 프로바이더와 지정"}}
+      }
+    },
     "/openapi.json": {
       "get": {
         "tags": ["Service"],
@@ -221,13 +304,65 @@ const openAPISpec = `{
   },
   "components": {
     "securitySchemes": {
-      "bearerAuth": {"type": "http", "scheme": "bearer", "bearerFormat": "Stash token or OAuth access token"}
+      "bearerAuth": {"type": "http", "scheme": "bearer", "bearerFormat": "Stash token or OAuth access token"},
+      "adminToken": {"type": "apiKey", "in": "header", "name": "X-Stash-Admin-Token"}
     },
     "parameters": {
       "McpSessionId": {"name": "Mcp-Session-Id", "in": "header", "required": false, "schema": {"type": "string"}, "description": "Streamable HTTP 세션 ID"},
       "SseSessionId": {"name": "sessionId", "in": "query", "required": true, "schema": {"type": "string"}, "description": "SSE 연결에서 받은 세션 ID"}
     },
     "schemas": {
+      "LlmProvider": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "integer", "format": "int64"}, "name": {"type": "string"}, "kind": {"type": "string", "enum": ["openai_compatible"]},
+          "base_url": {"type": "string"}, "has_api_key": {"type": "boolean"}, "request_timeout_seconds": {"type": "integer"},
+          "enabled": {"type": "boolean"}, "created_at": {"type": "string", "format": "date-time"}, "updated_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "LlmProviderInput": {
+        "type": "object",
+        "properties": {
+          "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"}, "kind": {"type": "string", "enum": ["openai_compatible"]},
+          "base_url": {"type": "string"}, "api_key": {"type": "string", "description": "봉인되어 저장됩니다. 빈 문자열은 키 삭제입니다."},
+          "request_timeout_seconds": {"type": "integer", "minimum": 1}, "enabled": {"type": "boolean"}
+        }
+      },
+      "LlmAssignmentInput": {
+        "type": "object", "required": ["provider_id", "model"],
+        "properties": {
+          "provider_id": {"type": "integer", "format": "int64"}, "model": {"type": "string"},
+          "dimensions": {"type": "integer", "description": "embedding 기능에만 필요 (1~2000)"},
+          "context_tokens": {"type": "integer", "minimum": 0}, "reserved_tokens": {"type": "integer", "minimum": 0}
+        }
+      },
+      "LlmAssignment": {
+        "allOf": [{"$ref": "#/components/schemas/LlmAssignmentInput"}, {"type": "object", "properties": {"feature": {"type": "string"}, "updated_at": {"type": "string", "format": "date-time"}}}]
+      },
+      "LlmRoute": {
+        "type": "object",
+        "properties": {
+          "feature": {"type": "string"}, "kind": {"type": "string", "enum": ["embedding", "reasoning"]},
+          "source": {"type": "string", "enum": ["database", "environment", "none"]},
+          "provider_id": {"type": "integer", "format": "int64"}, "provider_name": {"type": "string"}, "model": {"type": "string"},
+          "dimensions": {"type": "integer"}, "context_tokens": {"type": "integer"}, "reserved_tokens": {"type": "integer"},
+          "available": {"type": "boolean"}, "error": {"type": "string"}
+        }
+      },
+      "LlmStatus": {
+        "type": "object",
+        "properties": {
+          "features": {"type": "array", "items": {"type": "object", "properties": {"feature": {"type": "string"}, "kind": {"type": "string"}, "description": {"type": "string"}}}},
+          "routes": {"type": "array", "items": {"$ref": "#/components/schemas/LlmRoute"}},
+          "providers": {"type": "array", "items": {"$ref": "#/components/schemas/LlmProvider"}},
+          "assignments": {"type": "array", "items": {"$ref": "#/components/schemas/LlmAssignment"}},
+          "version": {"type": "integer", "format": "int64"}, "secrets_enabled": {"type": "boolean"}, "environment_base_url": {"type": "string"}
+        }
+      },
+      "LlmProbeResult": {
+        "type": "object",
+        "properties": {"ok": {"type": "boolean"}, "status_code": {"type": "integer"}, "latency_ms": {"type": "integer"}, "models": {"type": "array", "items": {"type": "string"}}, "error": {"type": "string"}}
+      },
       "JsonRpcRequest": {
         "type": "object",
         "required": ["jsonrpc", "method"],

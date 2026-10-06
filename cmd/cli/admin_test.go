@@ -78,3 +78,33 @@ func TestAdminOnlyHTTPRejectsCrossOriginWrite(t *testing.T) {
 		t.Fatalf("cross-origin admin write status=%d called=%v, want 403 and no handler call", response.Code, called)
 	}
 }
+
+func TestAdminOnlyHTTPOpensWithoutCredentialWhenAuthIsDisabled(t *testing.T) {
+	called := false
+	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true })
+
+	open := adminOnlyHTTP(&bootstrap.Context{Config: &config.Config{AuthMode: "none"}, Brain: &brain.Brain{}}, next)
+	response := httptest.NewRecorder()
+	open.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/admin/llm/status", nil))
+	if response.Code != http.StatusOK || !called {
+		t.Fatalf("auth mode none without admin credential status=%d called=%v, want 200", response.Code, called)
+	}
+
+	// Any configured credential is still required, even without HTTP auth.
+	called = false
+	gated := adminOnlyHTTP(&bootstrap.Context{Config: &config.Config{AuthMode: "none", AdminToken: "secret"}, Brain: &brain.Brain{}}, next)
+	response = httptest.NewRecorder()
+	gated.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/admin/llm/status", nil))
+	if response.Code != http.StatusUnauthorized || called {
+		t.Fatalf("configured admin token ignored: status=%d called=%v", response.Code, called)
+	}
+
+	// With authentication on and nothing configured, the page stays closed.
+	called = false
+	closed := adminOnlyHTTP(&bootstrap.Context{Config: &config.Config{AuthMode: "token"}, Brain: &brain.Brain{}}, next)
+	response = httptest.NewRecorder()
+	closed.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/admin/llm/status", nil))
+	if response.Code != http.StatusServiceUnavailable || called {
+		t.Fatalf("token mode without admin config status=%d called=%v, want 503", response.Code, called)
+	}
+}

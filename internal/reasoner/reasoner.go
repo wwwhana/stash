@@ -3,9 +3,14 @@ package reasoner
 
 import (
 	"context"
+	"errors"
 
 	"github.com/alash3al/stash/internal/models"
 )
+
+// ErrUnavailable is returned when no reasoning provider is configured for
+// the feature that was called.
+var ErrUnavailable = errors.New("reasoner: no reasoning provider is available")
 
 // StructuredFact represents an extracted fact with entity, property, and value.
 type StructuredFact struct {
