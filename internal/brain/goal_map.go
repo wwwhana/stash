@@ -107,10 +107,6 @@ func (b *Brain) ProjectGoalRootID(ctx context.Context, namespaceID int64) (*int6
 	return &root.ID, nil
 }
 
-func (b *Brain) resolveProjectGoalForWork(ctx context.Context, namespaceID int64, requested, fallback *int64) (*int64, error) {
-	return b.resolveProjectGoalForWorkWith(ctx, b.pool, namespaceID, requested, fallback)
-}
-
 func (b *Brain) resolveProjectGoalForWorkTx(ctx context.Context, tx pgx.Tx, namespaceID int64, requested, fallback *int64) (*int64, error) {
 	return b.resolveProjectGoalForWorkWith(ctx, tx, namespaceID, requested, fallback)
 }
@@ -907,12 +903,4 @@ func (b *Brain) GetGoalMap(ctx context.Context, namespaceID int64, includeDone b
 	}
 	result.Attention = goalMapAttention(result, time.Now())
 	return result, nil
-}
-
-func mapKeys(values map[int64]struct{}) []int64 {
-	keys := make([]int64, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	return keys
 }

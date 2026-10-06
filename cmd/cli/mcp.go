@@ -29,10 +29,6 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-func stdioContextFunc(ctx context.Context) context.Context {
-	return context.WithValue(ctx, keyMode, "local")
-}
-
 func stdioContextFuncFor(provider *auth.Provider) server.StdioContextFunc {
 	return func(ctx context.Context) context.Context {
 		if provider == nil || provider.Mode() == "none" {

@@ -27,15 +27,6 @@ type Context struct {
 	Logger *slog.Logger
 }
 
-// MustNew panics on bootstrap failure.
-func MustNew(ctx context.Context) *Context {
-	bc, err := New(ctx)
-	if err != nil {
-		panic(fmt.Sprintf("bootstrap failed: %v", err))
-	}
-	return bc
-}
-
 // New initializes all services: database, embedder, reasoner, queries, brain.
 func New(ctx context.Context) (*Context, error) {
 	cfg, err := loadConfig()

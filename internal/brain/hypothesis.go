@@ -36,15 +36,6 @@ func isValidTransition(from, to string) bool {
 	return false
 }
 
-func scanHypothesis(h *models.Hypothesis, row pgx.Row) error {
-	return row.Scan(
-		&h.ID, &h.NamespaceID, &h.Content, &h.Confidence, &h.Status,
-		&h.VerificationPlan, &h.Method, &h.ConfirmedFactID, &h.RejectionReason,
-		&h.SourceFactIDs, &h.TestedAt, &h.ConfirmedAt, &h.RejectedAt,
-		&h.CreatedAt, &h.UpdatedAt, &h.DeletedAt,
-	)
-}
-
 func scanHypothesisRows(rows pgx.Rows) ([]models.Hypothesis, error) {
 	var result []models.Hypothesis
 	for rows.Next() {

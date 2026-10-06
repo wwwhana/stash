@@ -1752,10 +1752,7 @@ func (p *Provider) protectedResourceMetadataURL(r *http.Request) string {
 }
 
 func metadataResourcePath(path string) string {
-	const prefix = "/.well-known/oauth-protected-resource"
-	if strings.HasPrefix(path, prefix) {
-		path = strings.TrimPrefix(path, prefix)
-	}
+	path = strings.TrimPrefix(path, "/.well-known/oauth-protected-resource")
 	if path == "" || path == "/" {
 		return "/mcp"
 	}
@@ -2328,11 +2325,6 @@ func (p *Provider) client(clientID string) (oauthClient, bool) {
 	return client, ok
 }
 
-func (p *Provider) clientExists(clientID string) bool {
-	_, ok := p.client(clientID)
-	return ok
-}
-
 func oauthClientCredentials(r *http.Request) (clientID, clientSecret string, fromBasic bool) {
 	if id, secret, ok := r.BasicAuth(); ok {
 		return id, secret, true
@@ -2489,10 +2481,6 @@ func generateOAuthAccessToken(user, secret, resource, scope string, ttl time.Dur
 	return oauthTokenPrefix + payload + "." + sign(payload, secret), nil
 }
 
-func generateSessionToken(user, secret string, expiresAt time.Time) (string, error) {
-	return signSessionToken(user, secret, expiresAt, false)
-}
-
 // signSessionToken encodes user.expiry[.r]; the optional "r" marks a session
 // that RenewSession may slide forward. Legacy three-part tokens stay valid
 // and are treated as non-renewable.
@@ -2592,11 +2580,6 @@ func parseOAuthAccessToken(token, secret, expectedResource string) (string, erro
 		return "", errors.New("invalid OAuth access token scope")
 	}
 	return string(decodedUser), nil
-}
-
-func parseStashToken(token, secret string) (string, error) {
-	user, _, err := parseStashTokenClaims(token, secret)
-	return user, err
 }
 
 func parseStashTokenClaims(token, secret string) (string, time.Time, error) {

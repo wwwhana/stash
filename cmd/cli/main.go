@@ -119,6 +119,14 @@ func main() {
 							&cli.BoolFlag{Name: "hard", Usage: "Irreversibly DELETE the row instead of setting deleted_at"},
 						},
 					},
+					{
+						Name:   "fact",
+						Usage:  "Delete a fact by ID (soft by default)",
+						Action: purgeFactCmd,
+						Flags: []cli.Flag{
+							&cli.BoolFlag{Name: "hard", Usage: "Irreversibly DELETE the row instead of setting deleted_at"},
+						},
+					},
 				},
 			},
 			{

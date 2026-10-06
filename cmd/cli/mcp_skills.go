@@ -600,7 +600,7 @@ func invalidSkillsParams(id mcp.RequestId, message string) mcp.JSONRPCError {
 func paginateSkillValues[T any](values []T, cursor string, pageSize int, scope string) ([]T, string, error) {
 	start, err := decodeSkillsCursor(cursor, scope)
 	if err != nil || start > len(values) {
-		return nil, "", fmt.Errorf("Invalid pagination cursor")
+		return nil, "", fmt.Errorf("invalid pagination cursor")
 	}
 	end := start + pageSize
 	if end > len(values) {

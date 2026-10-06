@@ -135,7 +135,7 @@ func worktreeSyncCmd(ctx context.Context, cmd *cli.Command) error {
 				return err
 			}
 		} else if facts.ProjectNamespace != projectNamespace {
-			return fmt.Errorf("Git worktrees resolve to different project namespaces")
+			return fmt.Errorf("git worktrees resolve to different project namespaces")
 		}
 		facts.Branch = item.Branch
 		facts.HeadSHA = item.HeadSHA
