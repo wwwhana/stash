@@ -6,16 +6,32 @@
     <div class="stash-login-language"><select class="stash-language-select" :aria-label="t('language.label')" :value="locale" @change="changeLocale($event.target.value)"><option value="ko">한국어</option><option value="en">English</option></select></div>
     <p v-if="authLoading" role="status">{{ t('auth.checking') }}</p>
     <template v-else-if="!authChecked"><p class="stash-error" role="alert">{{ t(error) }}</p><button type="button" class="stash-button" @click="bootstrap">{{ t('action.retry') }}</button></template>
+    <template v-else-if="setupRequired"><h1>{{ t('setup.heading') }}</h1><p class="stash-setup-hint">{{ t('setup.hint') }}</p>
+      <form class="stash-login-form" @submit.prevent="submitSetup">
+        <label class="stash-field"><span>{{ t('setup.username') }}</span><input v-model="setupForm.username" name="username" autocomplete="username" autocapitalize="off" spellcheck="false" required autofocus pattern="[a-z0-9][a-z0-9._\\-]{0,63}" placeholder="admin" :disabled="setupBusy"></label>
+        <label class="stash-field"><span>{{ t('users.displayName') }}</span><input v-model="setupForm.display_name" name="display_name" autocomplete="name" :disabled="setupBusy"></label>
+        <label class="stash-field"><span>{{ t('setup.password') }}</span><input v-model="setupForm.password" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required :disabled="setupBusy"></label>
+        <label class="stash-field"><span>{{ t('auth.confirmPassword') }}</span><input v-model="setupForm.confirm" name="password_confirm" type="password" autocomplete="new-password" required :disabled="setupBusy"></label>
+        <p v-if="setupError" class="stash-error" role="alert">{{ t(setupError) }}</p>
+        <button type="submit" class="stash-button is-primary" :disabled="setupBusy">{{ setupBusy ? t('setup.creating') : t('setup.create') }}</button>
+      </form>
+      <a class="stash-login-alt" href="/auth/login?provider=token" @click.prevent="auth = { ...auth, setup_required: false }; loginMode = 'token'">{{ t('auth.withToken') }}</a>
+    </template>
     <template v-else><h1>{{ t('auth.heading') }}</h1>
-      <form v-if="canLocalLogin" class="stash-login-form" @submit.prevent="submitLogin">
+      <form v-if="loginMode === 'password'" class="stash-login-form" @submit.prevent="submitLogin">
         <label class="stash-field"><span>{{ t('auth.username') }}</span><input v-model="loginForm.username" name="username" autocomplete="username" autocapitalize="off" spellcheck="false" required autofocus :disabled="loginBusy"></label>
         <label class="stash-field"><span>{{ t('auth.password') }}</span><input v-model="loginForm.password" name="password" type="password" autocomplete="current-password" required :disabled="loginBusy"></label>
         <p v-if="loginError" class="stash-error" role="alert">{{ t(loginError) }}</p>
         <button type="submit" class="stash-button is-primary" :disabled="loginBusy">{{ loginBusy ? t('auth.loggingIn') : t('auth.login') }}</button>
       </form>
-      <a v-for="provider in ssoProviders" :key="provider.slug" class="stash-button" :class="{'is-primary': !canLocalLogin}" :href="'/auth/login?sso=' + encodeURIComponent(provider.slug)" @click.prevent="beginLogin('sso', provider.slug)">{{ t('auth.ssoWith', { name: provider.name }) }}</a>
-      <a v-if="!canLocalLogin && !canSSOLogin" class="stash-button is-primary" href="/auth/login" @click.prevent="beginLogin()">{{ t('auth.login') }}</a>
-      <a v-else class="stash-login-alt" href="/auth/login?provider=token" @click.prevent="beginLogin('token')">{{ t('auth.withToken') }}</a>
+      <form v-else class="stash-login-form" @submit.prevent="submitLogin">
+        <label class="stash-field"><span>{{ t('auth.token') }}</span><input v-model="loginForm.token" name="token" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" required autofocus :placeholder="t('auth.tokenPlaceholder')" :disabled="loginBusy"></label>
+        <p v-if="loginError" class="stash-error" role="alert">{{ t(loginError) }}</p>
+        <button type="submit" class="stash-button is-primary" :disabled="loginBusy">{{ loginBusy ? t('auth.loggingIn') : t('auth.loginWithToken') }}</button>
+      </form>
+      <a v-for="provider in ssoProviders" :key="provider.slug" class="stash-button" :href="'/auth/login?sso=' + encodeURIComponent(provider.slug)" @click.prevent="beginLogin('sso', provider.slug)">{{ t('auth.ssoWith', { name: provider.name }) }}</a>
+      <a v-if="loginMode === 'password'" class="stash-login-alt" href="/auth/login?provider=token" @click.prevent="loginMode = 'token'; loginError = ''">{{ t('auth.withToken') }}</a>
+      <a v-else-if="canLocalLogin" class="stash-login-alt" href="/auth/login?provider=local" @click.prevent="loginMode = 'password'; loginError = ''">{{ t('auth.withPassword') }}</a>
     </template>
   </div>
 </section>

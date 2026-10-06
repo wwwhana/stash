@@ -18,7 +18,11 @@ function setup(path = '/ui/goal-map', invoke = async () => ({})) {
     const options = createViewModel({ api, routeAPI, goalMap, workGraph, search, window });
     const state = options.data();
     for (const [key, method] of Object.entries(options.methods)) state[key] = method.bind(state);
-    for (const [key, get] of Object.entries(options.computed)) Object.defineProperty(state, key, { get: () => get.call(state) });
+    for (const [key, computed] of Object.entries(options.computed)) {
+        const get = typeof computed === 'function' ? computed : computed.get;
+        const set = typeof computed === 'function' ? undefined : value => computed.set.call(state, value);
+        Object.defineProperty(state, key, { get: () => get.call(state), set });
+    }
     return { state, window, api };
 }
 
@@ -572,6 +576,30 @@ test('password login submits the form, reads the failure reason, and reloads the
     assert.equal(state.loginForm.password, '');
 });
 
+test('the login card shows a form straight away: password when accounts exist, otherwise the API token form', async () => {
+    const { state, window } = setup('/');
+    const posted = [];
+    window.fetch = async (url, options = {}) => {
+        if (url === '/auth/status') return { ok: true, json: async () => ({ auth_mode: 'token', authenticated: false, local_login: false, sso_login: false }) };
+        if (url === '/auth/login') { posted.push(Object.fromEntries(options.body)); return { type: 'opaqueredirect', status: 0, ok: false, headers: { get: () => '' } }; }
+        return { ok: true, json: async () => ({}) };
+    };
+    await state.bootstrap();
+    assert.equal(state.needsLogin, true);
+    assert.equal(state.loginMode, 'token', 'no account has a password, so the token form is first');
+    state.loginForm.token = ' stash_api_abc ';
+    await state.submitLogin();
+    assert.deepEqual(posted, [{ token: 'stash_api_abc' }]);
+    // With accounts the password form comes first and the token form is one click away, on the same card.
+    state.auth = { auth_mode: 'token', authenticated: false, local_login: true, sso_login: false };
+    state.loginModeChoice = '';
+    assert.equal(state.loginMode, 'password');
+    state.loginMode = 'token';
+    assert.equal(state.loginMode, 'token');
+    state.loginMode = 'password';
+    assert.equal(state.loginMode, 'password');
+});
+
 test('server settings navigation is hidden from a signed-in user who is not an administrator', () => {
     const { state } = setup('/ui/wiki');
     assert.equal(state.showAdminNav, true, 'open without authentication');
@@ -669,4 +697,28 @@ test('the access page manages users and their tokens through the admin API', asy
         await state.toggleUserTokens(state.users[1]);
         assert.equal(state.userTokens.dana, undefined);
     } finally { delete globalThis.fetch; }
+});
+
+test('with no account at all the login card creates the first administrator and signs in', async () => {
+    const { state, window } = setup('/');
+    const posted = [];
+    let created = false;
+    window.fetch = async (url, options = {}) => {
+        if (url === '/auth/status') return { ok: true, json: async () => (created ? { auth_mode: 'token', authenticated: true, user: 'root', admin: true, has_password: true, local_login: true } : { auth_mode: 'token', authenticated: false, local_login: false, sso_login: false, setup_required: true }) };
+        if (url === '/auth/setup') { posted.push(JSON.parse(options.body)); created = true; return { status: 201, ok: true, json: async () => ({ username: 'root', admin: true }) }; }
+        return { ok: true, json: async () => ({ items: [], has_more: false }) };
+    };
+    await state.bootstrap();
+    assert.equal(state.setupRequired, true);
+    state.setupForm = { username: 'Root', display_name: 'Root', password: 'first-password-1', confirm: 'different' };
+    await state.submitSetup();
+    assert.equal(state.setupError, 'auth.passwordMismatch');
+    assert.equal(posted.length, 0);
+    state.setupForm.confirm = 'first-password-1';
+    await state.submitSetup();
+    assert.deepEqual(posted, [{ username: 'root', display_name: 'Root', password: 'first-password-1', password_confirm: 'first-password-1' }]);
+    assert.equal(state.auth.authenticated, true);
+    assert.equal(state.auth.user, 'root');
+    assert.equal(state.setupRequired, false);
+    assert.equal(state.needsLogin, false);
 });

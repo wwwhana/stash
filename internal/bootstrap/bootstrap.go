@@ -82,6 +82,9 @@ func New(ctx context.Context) (*Context, error) {
 		}
 	}
 
+	if authProvider != nil && authProvider.Mode() != "stdio" && strings.TrimSpace(cfg.AdminUser) == "" && authProvider.SetupRequired(ctx) {
+		logger.Warn("no user account exists yet; the first visitor of the console creates the administrator, or set STASH_ADMIN_USER and STASH_ADMIN_PASSWORD")
+	}
 	keyring, err := secrets.NewKeyring(cfg.SecretsKey, strings.Split(cfg.SecretsKeyPrevious, ",")...)
 	if err != nil {
 		pool.Close()

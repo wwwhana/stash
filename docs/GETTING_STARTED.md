@@ -251,9 +251,10 @@ authentication and is accepted only on a loopback address (or with
 ### Console login and users
 
 With `STASH_AUTH_MODE=token` or `oauth`, people sign in to the console with a
-username and password. Set `STASH_ADMIN_USER` and `STASH_ADMIN_PASSWORD` for
-the first administrator; it is created at the first start. Then manage users
-on the server host:
+username and password. The first administrator comes from either the
+console's first-run form (shown while no account exists; the account made
+there is the administrator) or `STASH_ADMIN_USER` and `STASH_ADMIN_PASSWORD`,
+created at the first start. Then manage users on the server host:
 
 ```bash
 stash user add alice --password-stdin --display-name "Alice"

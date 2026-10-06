@@ -180,6 +180,16 @@ const openAPISpec = `{
         "responses": {"303": {"description": "로그인 성공, 세션 쿠키 설정 후 / 로 이동"}, "401": {"description": "자격 증명이 틀리거나 잠시 차단됨", "headers": {"X-Stash-Login-Error": {"schema": {"type": "string", "enum": ["invalid", "throttled"]}}}}}
       }
     },
+    "/auth/setup": {
+      "post": {
+        "tags": ["Service"],
+        "summary": "첫 관리자 계정 만들기",
+        "description": "사용자가 한 명도 없을 때만 동작합니다(테이블 잠금으로 첫 요청만 성공). 만든 계정은 관리자이며 세션 쿠키가 바로 발급됩니다. JSON 또는 폼 전송 모두 받습니다. STASH_ADMIN_USER 환경 변수로 시드해도 됩니다.",
+        "operationId": "authSetup",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["username", "password"], "properties": {"username": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"}, "display_name": {"type": "string"}, "password": {"type": "string", "format": "password", "minLength": 8, "maxLength": 72}, "password_confirm": {"type": "string", "format": "password"}}}}, "application/x-www-form-urlencoded": {"schema": {"type": "object", "properties": {"username": {"type": "string"}, "display_name": {"type": "string"}, "password": {"type": "string"}, "password_confirm": {"type": "string"}}}}}},
+        "responses": {"201": {"description": "관리자 생성·로그인 완료(JSON)", "content": {"application/json": {"schema": {"type": "object", "properties": {"username": {"type": "string"}, "admin": {"type": "boolean"}}}}}}, "303": {"description": "폼 전송: 생성 후 / 로 이동"}, "400": {"$ref": "#/components/responses/BadRequest"}, "403": {"description": "교차 출처 요청"}, "404": {"description": "계정 기능을 사용할 수 없음"}, "409": {"description": "이미 계정이 있음"}}
+      }
+    },
     "/auth/password": {
       "post": {
         "tags": ["Service"],
@@ -563,6 +573,7 @@ const openAPISpec = `{
           "admin": {"type": "boolean", "description": "서버 설정 페이지를 열 수 있는지 (users.is_admin 또는 STASH_ADMIN_SUBJECTS)"},
           "has_password": {"type": "boolean", "description": "로그인한 사용자가 비밀번호를 가졌는지 (비밀번호 변경 가능 여부)"},
           "local_login": {"type": "boolean", "description": "아이디/비밀번호 로그인 폼을 보여 줄지"},
+          "setup_required": {"type": "boolean", "description": "사용자가 한 명도 없어 첫 관리자 만들기 폼을 보여 줄지"},
           "sso_login": {"type": "boolean", "description": "SSO(OIDC) 로그인이 설정됐는지"},
           "sso_providers": {"type": "array", "description": "로그인 버튼으로 보여 줄 제공자", "items": {"type": "object", "properties": {"slug": {"type": "string"}, "name": {"type": "string"}}}}
         }

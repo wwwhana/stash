@@ -352,3 +352,4 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,su
 .stash-user-tokens { display:grid; gap:6px; margin-top:10px; padding-top:8px; border-top:1px dashed var(--app-border); }
 .stash-user-token { display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:13px; }
 .stash-user-token small,.stash-user-token-empty { color:var(--app-muted); }
+.stash-setup-hint { margin:-8px 0 4px; color:var(--app-muted); font-size:13px; line-height:1.5; }

@@ -138,7 +138,11 @@
                     error: '',
                     auth: { auth_mode: 'none', authenticated: false, user: '' },
                     authPanelOpen: false,
-                    loginForm: { username: '', password: '' },
+                    loginForm: { username: '', password: '', token: '' },
+                    setupForm: { username: '', display_name: '', password: '', confirm: '' },
+                    setupBusy: false,
+                    setupError: '',
+                    loginModeChoice: '',
                     loginBusy: false,
                     loginError: '',
                     passwordForm: { current: '', next: '', confirm: '' },
@@ -180,6 +184,14 @@
                 },
                 needsLogin() { return this.canLogin && !this.auth.authenticated; },
                 canLocalLogin() { return this.auth.local_login === true; },
+                setupRequired() { return this.auth.setup_required === true; },
+                // The login card always shows a form, never a button that leads to
+                // another page: the password form when any account has one, else
+                // the API-token form. The person can switch between the two.
+                loginMode: {
+                    get() { return this.loginModeChoice || (this.canLocalLogin ? 'password' : 'token'); },
+                    set(value) { this.loginModeChoice = value === 'token' ? 'token' : 'password'; }
+                },
                 canSSOLogin() { return this.auth.sso_login === true && this.ssoProviders.length > 0; },
                 ssoProviders() { return Array.isArray(this.auth.sso_providers) ? this.auth.sso_providers.filter(item => item && item.slug) : []; },
                 ssoCallbackURL() { return window.location.origin + '/auth/callback'; },
@@ -1033,22 +1045,41 @@
                 },
                 async submitLogin() {
                     if (this.loginBusy) return;
-                    const username = text(this.loginForm.username); const password = this.loginForm.password || '';
-                    if (!username || !password) { this.loginError = 'auth.failed'; return; }
+                    const tokenMode = this.loginMode === 'token';
+                    const username = text(this.loginForm.username); const password = this.loginForm.password || ''; const token = text(this.loginForm.token);
+                    if (tokenMode ? !token : (!username || !password)) { this.loginError = tokenMode ? 'auth.tokenFailed' : 'auth.failed'; return; }
                     this.loginBusy = true; this.loginError = '';
                     try {
-                        const body = new URLSearchParams({ username, password });
+                        const body = tokenMode ? new URLSearchParams({ token }) : new URLSearchParams({ username, password });
                         const response = await window.fetch('/auth/login', { method: 'POST', credentials: 'same-origin', redirect: 'manual', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body });
                         // Success is a redirect to "/"; a manual redirect shows up as an opaque response.
                         if (response.type === 'opaqueredirect' || response.ok || response.status === 303) {
-                            this.loginForm = { username: '', password: '' };
+                            this.loginForm = { username: '', password: '', token: '' };
                             await this.bootstrap();
                             return;
                         }
                         const reason = response.headers && response.headers.get ? response.headers.get('X-Stash-Login-Error') : '';
-                        this.loginError = reason === 'throttled' ? 'auth.throttled' : response.status === 401 ? 'auth.failed' : 'error.login';
+                        this.loginError = reason === 'throttled' ? 'auth.throttled' : response.status === 401 ? (tokenMode ? 'auth.tokenFailed' : 'auth.failed') : 'error.login';
                     } catch (_) { this.loginError = 'error.login'; }
                     finally { this.loginBusy = false; }
+                },
+                // First run: no account exists, so the login card creates the
+                // administrator and signs them in.
+                async submitSetup() {
+                    if (this.setupBusy) return;
+                    const form = this.setupForm;
+                    if (!text(form.username) || !form.password) { this.setupError = 'setup.required'; return; }
+                    if (form.password !== form.confirm) { this.setupError = 'auth.passwordMismatch'; return; }
+                    this.setupBusy = true; this.setupError = '';
+                    try {
+                        const response = await window.fetch('/auth/setup', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ username: text(form.username).toLowerCase(), display_name: text(form.display_name), password: form.password, password_confirm: form.confirm }) });
+                        if (response.status === 201) { this.setupForm = { username: '', display_name: '', password: '', confirm: '' }; await this.bootstrap(); return; }
+                        let message = '';
+                        try { message = (await response.json()).error || ''; } catch (_) { /* no body */ }
+                        this.setupError = response.status === 409 ? 'setup.alreadyDone' : response.status === 400 ? { key: 'setup.rejected', params: { message } } : 'setup.failed';
+                        if (response.status === 409) await this.bootstrap();
+                    } catch (_) { this.setupError = 'setup.failed'; }
+                    finally { this.setupBusy = false; }
                 },
                 async changePassword() {
                     if (this.passwordBusy) return;

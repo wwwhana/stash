@@ -714,3 +714,137 @@ func (p *Provider) HandlePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// ErrSetupDone is returned when the first-run setup is attempted after an
+// account already exists.
+var ErrSetupDone = errors.New("auth: an account already exists; sign in instead")
+
+// SetupRequired reports whether no user exists yet. The console then offers
+// to create the first administrator instead of a login nobody can pass.
+func (p *Provider) SetupRequired(ctx context.Context) bool {
+	if !p.accountsEnabled() {
+		return false
+	}
+	var exists bool
+	if err := p.tokenPool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM users)`).Scan(&exists); err != nil {
+		return false
+	}
+	return !exists
+}
+
+// CreateFirstAdmin creates the administrator when, and only when, no user
+// exists. The table is locked for the check so two first visitors cannot
+// both become the administrator.
+func (p *Provider) CreateFirstAdmin(ctx context.Context, username, password, displayName string) (User, error) {
+	if !p.accountsEnabled() {
+		return User{}, ErrAccountsUnavailable
+	}
+	username, err := normalizeLocalUsername(username)
+	if err != nil {
+		return User{}, err
+	}
+	hash, err := hashLocalPassword(password)
+	if err != nil {
+		return User{}, err
+	}
+	tx, err := p.tokenPool.Begin(ctx)
+	if err != nil {
+		return User{}, fmt.Errorf("first-run setup: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+		return User{}, fmt.Errorf("first-run setup: %w", err)
+	}
+	var exists bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM users)`).Scan(&exists); err != nil {
+		return User{}, fmt.Errorf("first-run setup: %w", err)
+	}
+	if exists {
+		return User{}, ErrSetupDone
+	}
+	user, err := insertUser(ctx, tx, username, displayName, true)
+	if err != nil {
+		return User{}, err
+	}
+	if err := upsertPassword(ctx, tx, user.ID, username, hash); err != nil {
+		return User{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return User{}, fmt.Errorf("first-run setup: %w", err)
+	}
+	log.Printf("first administrator %q created through the console setup", username)
+	return getUser(ctx, p.tokenPool, username)
+}
+
+// HandleSetup is the first-run form: it creates the administrator while no
+// user exists and signs the browser in. It takes JSON from the console and a
+// classic form post from the server-rendered page.
+func (p *Provider) HandleSetup(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if p == nil || !p.accountsEnabled() {
+		http.Error(w, "user accounts are not available", http.StatusNotFound)
+		return
+	}
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if err := browserRequestProtection.Check(r); err != nil {
+		http.Error(w, "cross-origin request denied", http.StatusForbidden)
+		return
+	}
+	var input struct {
+		Username    string `json:"username"`
+		DisplayName string `json:"display_name"`
+		Password    string `json:"password"`
+		Confirm     string `json:"password_confirm"`
+	}
+	wantsJSON := strings.HasPrefix(r.Header.Get("Content-Type"), "application/json")
+	if wantsJSON {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&input); err != nil {
+			http.Error(w, `{"error":"invalid JSON body"}`, http.StatusBadRequest)
+			return
+		}
+	} else {
+		r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		input.Username, input.DisplayName = r.PostFormValue("username"), r.PostFormValue("display_name")
+		input.Password, input.Confirm = r.PostFormValue("password"), r.PostFormValue("password_confirm")
+	}
+	fail := func(status int, message string) {
+		if wantsJSON {
+			w.Header().Set("Content-Type", "application/json")
+			http.Error(w, `{"error":"`+message+`"}`, status)
+			return
+		}
+		writeLoginPage(w, loginPageOptions{Setup: true, SetupError: message, SSO: p.SSOOptions()})
+	}
+	if input.Confirm != "" && input.Confirm != input.Password {
+		fail(http.StatusBadRequest, "the passwords do not match")
+		return
+	}
+	user, err := p.CreateFirstAdmin(r.Context(), input.Username, input.Password, input.DisplayName)
+	switch {
+	case errors.Is(err, ErrSetupDone):
+		fail(http.StatusConflict, strings.TrimPrefix(err.Error(), "auth: "))
+		return
+	case errors.Is(err, ErrInvalidUsername), errors.Is(err, ErrWeakPassword):
+		fail(http.StatusBadRequest, strings.TrimPrefix(err.Error(), "auth: "))
+		return
+	case err != nil:
+		log.Printf("first-run setup failed: %v", err)
+		fail(http.StatusInternalServerError, "could not create the account")
+		return
+	}
+	p.setSessionCookie(w, user.Username, time.Now().Add(p.sessionTTL()), true)
+	if wantsJSON {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"username": user.Username, "admin": true})
+		return
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}

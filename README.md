@@ -96,9 +96,12 @@ Set `STASH_EMBEDDING_CACHE=false` to stop caching computed vectors in PostgreSQL
 
 ## Console login
 
-People sign in to the console with a username and password. The first
-administrator comes from the environment and is created at startup when it
-does not exist yet:
+People sign in to the console with a username and password. On a server
+with no account yet, the console opens on a **Create the first
+administrator** form: the account made there is the administrator and is
+signed in at once. The environment can do the same at startup, which is the
+better choice for an unattended deployment because the first-run form is
+open to whoever reaches the console first:
 
 ```dotenv
 STASH_ADMIN_USER=admin
@@ -128,9 +131,10 @@ it already had stay its own, and an administrator can later add a password to
 it or disable it. The username is the session subject everywhere: namespaces,
 API tokens, and wiki authorship are keyed by it.
 
-The login page offers the password form first, a button per registered SSO
-provider, and an API token form one link away. Signed-in users change their
-own password from the **Account** panel.
+The login card shows the password form straight away, a button per
+registered SSO provider, and switches to an API-token form on the same card;
+nothing sends you to another page first. Signed-in users change their own
+password from the **Account** panel.
 
 ### SSO providers
 

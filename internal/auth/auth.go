@@ -259,6 +259,9 @@ func (p *Provider) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	page := loginPageOptions{SSO: p.SSOOptions(), LocalEnabled: p.LocalLoginAvailable(r.Context())}
 	page.TokenForm = provider == "token" || !page.LocalEnabled
+	// With no account at all, the page creates the first administrator; a
+	// token form that nobody can pass would only send people away.
+	page.Setup = provider != "token" && !page.LocalEnabled && p.SetupRequired(r.Context())
 	startSSO := provider == "oidc" || provider == "sso"
 	if !startSSO && (provider != "" || page.LocalEnabled || len(page.SSO) == 0) {
 		// A deployment with local accounts shows the password form first;
@@ -325,6 +328,9 @@ type loginPageOptions struct {
 	SSO          []SSOOption
 	LocalEnabled bool
 	TokenForm    bool
+	// Setup shows the first-run form that creates the administrator.
+	Setup      bool
+	SetupError string
 }
 
 func (p *Provider) writeTokenLoginPage(w http.ResponseWriter, failed bool) {
@@ -352,6 +358,12 @@ func writeLoginPage(w http.ResponseWriter, o loginPageOptions) {
 	if !o.TokenForm {
 		message = "아이디와 비밀번호로 로그인하세요."
 	}
+	if o.Setup {
+		message = "아직 계정이 없습니다. 첫 관리자 계정을 만드세요."
+		if o.SetupError != "" {
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}
 	if failed {
 		message = "토큰이 올바르지 않거나 만료되었습니다."
 		if !o.TokenForm {
@@ -364,7 +376,13 @@ func writeLoginPage(w http.ResponseWriter, o loginPageOptions) {
 	_, _ = io.WriteString(w, `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Stash 로그인</title><style>
 :root{color-scheme:light dark;--bg:#eef2f7;--surface:#fff;--ink:#182235;--muted:#667085;--border:#d7dee8;--accent:#5b5bd6;--danger:#c83c56}*{box-sizing:border-box}body{min-height:100vh;margin:0;display:grid;place-items:center;padding:24px;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}@media(prefers-color-scheme:dark){:root{--bg:#0d131b;--surface:#151d27;--ink:#f4f7fb;--muted:#a8b5c7;--border:#2e3b4a;--accent:#a5b0ff;--danger:#ff8a9b}}main{width:min(420px,100%);padding:28px;border:1px solid var(--border);border-radius:16px;background:var(--surface);box-shadow:0 16px 40px #0002}h1{margin:0 0 6px;font-size:22px;letter-spacing:-.04em}p{margin:0 0 20px;color:var(--muted)}label{display:grid;gap:7px;font-weight:700}input{width:100%;min-height:42px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:transparent;color:var(--ink);font:inherit}input:focus{outline:3px solid color-mix(in srgb,var(--accent) 32%,transparent);border-color:var(--accent)}button{width:100%;min-height:42px;margin-top:14px;border:0;border-radius:10px;background:var(--accent);color:#fff;font:inherit;font-weight:800;cursor:pointer}.error{margin:-4px 0 14px;color:var(--danger);font-size:13px}a{display:block;margin-top:16px;color:var(--muted);text-align:center;text-decoration:none}
 </style></head><body><main><h1>Stash 로그인</h1><p>`+message+`</p>`)
-	if o.TokenForm {
+	if o.Setup {
+		_, _ = io.WriteString(w, `<form method="post" action="/auth/setup"><label for="stash-username">관리자 아이디</label><input id="stash-username" name="username" type="text" autocomplete="username" autocapitalize="off" spellcheck="false" required autofocus pattern="[a-z0-9][a-z0-9._\-]{0,63}" placeholder="admin"><label for="stash-display" style="margin-top:12px">표시 이름 (선택)</label><input id="stash-display" name="display_name" type="text" autocomplete="name"><label for="stash-password" style="margin-top:12px">비밀번호 (8자 이상)</label><input id="stash-password" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required><label for="stash-confirm" style="margin-top:12px">비밀번호 확인</label><input id="stash-confirm" name="password_confirm" type="password" autocomplete="new-password" required>`)
+		if o.SetupError != "" {
+			_, _ = io.WriteString(w, `<div class="error" role="alert">`+html.EscapeString(o.SetupError)+`</div>`)
+		}
+		_, _ = io.WriteString(w, `<button type="submit">관리자 계정 만들기</button></form><a href="/auth/login?provider=token">API 토큰으로 로그인</a>`)
+	} else if o.TokenForm {
 		_, _ = io.WriteString(w, `<form method="post" action="/auth/login"><label for="stash-token">토큰</label><input id="stash-token" name="token" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" required autofocus placeholder="stash_api_…">`)
 		if failed {
 			_, _ = io.WriteString(w, `<div class="error" role="alert">토큰을 확인하고 다시 시도하세요.</div>`)
@@ -722,6 +740,7 @@ func (p *Provider) HandleStatus(w http.ResponseWriter, r *http.Request) {
 		status["local_login"] = p.LocalLoginAvailable(r.Context())
 		status["sso_login"] = p.browserLoginConfigured()
 		status["sso_providers"] = p.SSOOptions()
+		status["setup_required"] = p.SetupRequired(r.Context())
 		if user, err := p.VerifyRequest(r); err == nil && user != "" {
 			status["authenticated"] = true
 			status["user"] = user

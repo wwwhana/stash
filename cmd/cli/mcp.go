@@ -1333,6 +1333,7 @@ func newStashHTTPHandler(bc *bootstrap.Context) http.Handler {
 	mux.HandleFunc("/auth/tokens", bc.Auth.HandleTokens)
 	mux.HandleFunc("/auth/tokens/", bc.Auth.HandleRevokeToken)
 	mux.HandleFunc("/auth/password", bc.Auth.HandlePassword)
+	mux.HandleFunc("/auth/setup", bc.Auth.HandleSetup)
 	registerDocumentationRoutes(mux)
 	registerOperationalRoutes(mux, bc)
 	registerAdminRoutes(mux, bc)
