@@ -37,6 +37,7 @@ services:
       # Set these to the actual model windows. Zero enables adaptive retry when
       # a provider reports a context error but does not publish its limit.
       STASH_EMBEDDING_CONTEXT_TOKENS: ${STASH_EMBEDDING_CONTEXT_TOKENS:-0}
+      STASH_EMBEDDING_CACHE: ${STASH_EMBEDDING_CACHE:-true}
       STASH_REASONER_MODEL: ${STASH_REASONER_MODEL:-gpt-4o-mini}
       STASH_REASONER_CONTEXT_TOKENS: ${STASH_REASONER_CONTEXT_TOKENS:-0}
       STASH_REASONER_RESERVED_TOKENS: ${STASH_REASONER_RESERVED_TOKENS:-4096}
@@ -54,6 +55,9 @@ services:
       STASH_AUTH_CLIENT_SECRET: ${STASH_AUTH_CLIENT_SECRET:-}
       STASH_AUTH_REDIRECT_URL: ${STASH_AUTH_REDIRECT_URL:-}
       STASH_AUTH_API_SECRET: ${STASH_AUTH_API_SECRET:-${STASH_AUTH_OAUTH_API_SECRET:-}}
+      # Seals provider API keys stored through Model settings / stash llm.
+      STASH_SECRETS_KEY: ${STASH_SECRETS_KEY:-}
+      STASH_SECRETS_KEY_PREVIOUS: ${STASH_SECRETS_KEY_PREVIOUS:-}
       STASH_AUTH_MCP_RESOURCE_URL: ${STASH_AUTH_MCP_RESOURCE_URL:-}
       # The published development URL is loopback HTTP. HTTPS deployments must
       # override this with true.
